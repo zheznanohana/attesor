@@ -8,10 +8,15 @@ Open problems, the bug list (so you recognise symptoms), and a short history.
    register cache inside a block) is done, see "JIT code quality work". Remaining: registers still reload at every
    block boundary (a loop iteration is one block), the TBI mask (`shl/shr 8`) on every access, block-exit/IBTC cost,
    flags kept as four bytes.
-2. Still-interpreted instructions: SHA-256 (`sha256h/h2/su0/su1`), `sys` (dc zva/cvau…), `tbl`,
-   FRINT*, FCVTZU, UCVTF vector, unsigned/other shifts (SQSHL…), FMAX/FMIN, FMADD (needs FMA or
-   double-double), LDXR/STXR exclusives, many rarer NEON ops. Use `ATTESOR_FALLBACK_HIST` on the
-   GPU (`--type=gpu-process`) and renderer processes to see what matters.
+2. Still-interpreted instructions. Done in Attesor: SHA-256, `dc` cache ops (DC ZVA native; the IC IVAU
+   terminator mask used to catch every DC op), TBL/TBX, FRINT*, FCVTZU, UCVTF/SCVTF vector,
+   [US]ADDL/ADDW/SUBL/SUBW/MLAL/MLSL, SUBHN, EXT, SQ(R)DMULH (16-bit), [US]AB[DA], [US]ADDLP/ADALP,
+   FCVTL/FCVTN (F16C for half), FMLA/FMLS/FMUL by element, vector FMLA/FMLS and scalar FMADD family
+   (FMA3; both detected at run time, else interpreted). Left, by DeepSeek Harness profile: USRA/SSRA,
+   64-bit UZP/ZIP, FMAXNM/FMINNM, FCVTMS and other rounding FCVT*, SQXTUN, UQSHRN, UADDLV/ADDV/
+   UMAXP/SMINV reductions, PMULL, PACGA, MUL/MLA by element, LDXR/STXR exclusives, FP16 arithmetic.
+   Use `ATTESOR_FALLBACK_HIST` on the GPU (`--type=gpu-process`), renderer and helper processes to see
+   what matters, and `bench/app-startup.sh` to measure (cold mode isolates the JIT).
 3. Startup: work is ~10 processes on 4 cores; per-process translation. Ideas: pre-warm AOT,
    fewer VS Code processes/features, check Chromium/Electron flags (`--in-process-gpu`,
    `--disable-features=…`), persistent V8 code cache (don't wipe the profile dir).

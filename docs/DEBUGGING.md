@@ -9,7 +9,10 @@ guest regs + disasm to `/tmp/attesor-fault-<pid>.log`), `ATTESOR_STATS=1`,
 to `/tmp/attesor-hist-<pid>.txt`, digit-normalised so exact forms show),
 `ATTESOR_JIT_THRESHOLD`, `ATTESOR_JIT_DISABLE=dpimm,branch,ldst,dpreg,simd,…`,
 `ATTESOR_SPIN_DEBUG=1` (reports a dispatcher spinning on one pc), `ATTESOR_AOT_SYNC`,
-`ATTESOR_NO_AOT_BUILD`, `ATTESOR_CACHE`, `ATTESOR_SYSROOT`.
+`ATTESOR_NO_AOT_BUILD`, `ATTESOR_CACHE`, `ATTESOR_SYSROOT`, `ATTESOR_JIT_OFF=fcvt,fpelem,fmla,fmadd,ext,qdmulh,abd,addlp,3diff,hn`
+(route single SIMD translation groups to the interpreter, for bisecting a bad translation),
+`ATTESOR_STDERR_LOG=1` (copy each guest's stderr to `~/Library/Logs/Attesor/stderr/<name>-<pid>.log`, capped at 4 MB:
+for helpers whose stderr a parent pipes away, e.g. Electron utility/host processes).
 Signals: `kill -USR1 <pid>` all guest threads (pc/regs/backtrace), `kill -USR2 <pid>` lock-free
 register dump of the interrupted thread + JIT counters (works in forked children).
 `attesor --jit-dump <hex insns…>` prints generated x86 hex for a block (disassemble via a `.byte`

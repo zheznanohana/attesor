@@ -36,9 +36,11 @@ a 64 GB arena (`syscalls.rs`, candidate bases tried in order). Every block that 
 (cold-interpreted or JIT-translated) is recorded; on exit `save_profile()` forks a builder that
 writes `<key>.aot` (position-independent x86 + index). Loaded by **copying into the JIT code
 cache** — do NOT mmap the files PROT_EXEC (macOS Gatekeeper pops "Apple could not verify…"
-dialogs for every file). Bump `TRANSLATOR_VERSION` (currently **15**) whenever codegen changes. Every
-version bump invalidates the *whole* cache (files are shared between binaries: two builds with different versions on
-the same machine keep overwriting each other's cache, so A/B-test translators with `--no-aot`).
+dialogs for every file). The file header carries a code generator id: `TRANSLATOR_VERSION` mixed with attesor's own
+`LC_UUID`, so a cache written by any other build is ignored (an intermediate build's stale cache once hung a guest),
+plus a flags word with the commpage-check mode and the host FMA/F16C bits the JIT relies on. Still bump
+`TRANSLATOR_VERSION` when codegen changes. Builds that differ keep overwriting each other's cache files, so A/B-test
+translators with `--no-aot` or separate `ATTESOR_CACHE` dirs (`bench/app-startup.sh` does).
 Processes that are killed (`kill -9`) do not save profiles; quit gracefully (e.g. DevTools
 `Browser.close`, see `wsonly.py`) to build the cache. Rebuilds can take several minutes.
 
@@ -60,6 +62,9 @@ Processes that are killed (`kill -9`) do not save profiles; quit gracefully (e.g
 - FP: ARM default NaN vs x86 "real indefinite" fixed up in JIT scalar+vector arithmetic. FPCR
   rounding/DN/FZ modes are ignored by JIT-native FP (assumes defaults). QC (saturation) flag
   not maintained by native saturating ops. sNaN-vs-qNaN operand priority differs (x86 prefers
-  qNaN) — 1 in ~15000 random self-test cases, not seen in practice.
+  qNaN) — 1 in ~15000 random self-test cases (~1 in 8000 for single-precision FMA), not seen in
+  practice. FMA translations pick the addend's NaN first as ARM does (x86 picks op1, op2, addend).
 - x86 baseline for JIT is SSE2 + selected SSE4.1/SSSE3 (pshufb, pmin/pmax, pmulld, pmovzx…);
-  the Haswell hack and Rosetta (dev Mac) both support these.
+  the Haswell hack and Rosetta (dev Mac) both support these. FMA3 and F16C are used when the host
+  has them (run-time detection): fused multiply-add cannot be emulated by mul+add without double
+  rounding, so without FMA3 those instructions stay in the interpreter.

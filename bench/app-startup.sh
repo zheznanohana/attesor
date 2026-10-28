@@ -37,9 +37,9 @@ cpu_of() {   # summed CPU seconds of every attesor process running $EXE
   ps -axo time=,command= | grep -F -- "$EXE" | grep -F "$ATTESOR" | grep -v grep | awk '{
     n = split($1, t, ":"); s = 0; for (i = 1; i <= n; i++) s = s * 60 + t[i]; sum += s } END { printf "%.1f", sum }'
 }
-stop_all() {   # only this run's processes: they carry its private --user-data-dir
-  pkill -9 -f -- "--user-data-dir=$1" 2>/dev/null
-  while pgrep -f -- "--user-data-dir=$1" >/dev/null; do sleep 0.5; done
+stop_all() {   # only this run's processes: each mentions its private data dir (--user-data-dir, DSH_HOME, crashpad db)
+  pkill -9 -f -- "$1" 2>/dev/null
+  while pgrep -f -- "$1" >/dev/null; do sleep 0.5; done
 }
 
 if pgrep -f -- "$EXE" >/dev/null; then
@@ -66,7 +66,7 @@ for r in $(seq "$RUNS"); do
   now=$(perl -MTime::HiRes=time -e 'printf "%.3f", time')
   wall=$(awk -v a="$now" -v b="$start" 'BEGIN { printf "%.1f", a - b }')
   cpu=$(cpu_of)
-  stop_all "$data/ud"
+  stop_all "$data"
   if [ $ok = 1 ]; then
     echo "run $r: ready in ${wall}s, cpu ${cpu}s"
     walls+=("$wall") cpus+=("$cpu")
