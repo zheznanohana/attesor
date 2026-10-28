@@ -20,6 +20,6 @@ int main(void) { @autoreleasepool {
     [cb presentDrawable:d]; [cb commit];
     [[NSRunLoop currentRunLoop] runUntilDate:[NSDate dateWithTimeIntervalSinceNow:0.016]];
   }
-  [[NSRunLoop currentRunLoop] runUntilDate:[NSDate dateWithTimeIntervalSinceNow:0.3]];
+  [[NSRunLoop currentRunLoop] runUntilDate:[NSDate dateWithTimeIntervalSinceNow:getenv("HOLD") ? atof(getenv("HOLD")) : 0.3]];
   printf("frames completed=%d/60\n", done); return done == 60 ? 0 : 3;
 }}
