@@ -2655,18 +2655,23 @@ impl<'a> E<'a> {
             }
             return true;
         }
-        // FRINTN/P/M/Z (scalar single/double). ROUND preserves signed
-        // zero and NaN payloads while quieting signaling NaNs, like frint().
-        if insn & 0xFF3C_7C00 == 0x1E24_4000 && ftype <= 1 {
+        // Scalar FRINT*, single/double; half precision keeps the interpreter.
+        if insn & 0xFF20_7C00 == 0x1E20_4000 && ftype <= 1 {
             let opcode = bits(insn, 20, 15);
-            if (8..=11).contains(&opcode) {
-                let mode = [0, 2, 1, 3][(opcode - 8) as usize] | 8;
-                if ftype == 1 {
-                    a!(self, movq(xmm0, qword_ptr(r15 + voff(rn))));
-                    a!(self, roundsd(xmm0, xmm0, mode));
-                } else {
-                    a!(self, movss(xmm0, dword_ptr(r15 + voff(rn))));
-                    a!(self, roundss(xmm0, xmm0, mode));
+            let mode = match opcode {
+                8..=12 => Some(opcode - 8),
+                14 | 15 => Some(5), // FPCR rounding
+                16 | 18 => Some(3),
+                17 | 19 => Some(5),
+                _ => None,
+            };
+            if let Some(mode) = mode {
+                let double = ftype == 1;
+                if double { a!(self, movq(xmm0, qword_ptr(r15 + voff(rn)))); }
+                else { a!(self, movss(xmm0, dword_ptr(r15 + voff(rn)))); }
+                self.frint_round(double, mode);
+                if opcode >= 16 {
+                    self.frint_limit(double, if opcode < 18 { 32 } else { 64 });
                 }
                 self.vfin(rd, true);
                 return true;
@@ -3013,6 +3018,77 @@ impl<'a> E<'a> {
         a!(self, punpcklqdq(x, x));
     }
 
+    /// ARM rounding modes 0=N, 1=P, 2=M, 3=Z, 4=A, 5=FPCR.
+    fn frint_round(&mut self, double: bool, mode: u32) {
+        if mode == 5 {
+            let mut labels = [self.new_label(), self.new_label(), self.new_label()];
+            let mut end = self.new_label();
+            a!(self, mov(eax, dword_ptr(r15 + off::FPCR)));
+            a!(self, shr(eax, 22));
+            a!(self, and(eax, 3));
+            for m in 0..3 {
+                a!(self, cmp(eax, m as i32));
+                a!(self, je(labels[m]));
+            }
+            self.frint_round(double, 3);
+            a!(self, jmp(end));
+            for m in 0..3 {
+                self.u.a.set_label(&mut labels[m]).unwrap();
+                self.frint_round(double, m as u32);
+                a!(self, jmp(end));
+            }
+            self.u.a.set_label(&mut end).unwrap();
+            a!(self, nop());
+        } else if mode == 4 {
+            // Work on magnitudes: trunc(x) + (fraction >= 0.5), then
+            // restore the original sign, including negative zero and NaNs.
+            self.vconst(xmm4, if double { 0x8000_0000_0000_0000 } else { 0x8000_0000_8000_0000 });
+            a!(self, movdqa(xmm3, xmm4));
+            a!(self, pand(xmm3, xmm0));
+            a!(self, pandn(xmm4, xmm0));
+            a!(self, movdqa(xmm0, xmm4));
+            if double {
+                a!(self, roundpd(xmm0, xmm0, 11));
+                a!(self, subpd(xmm4, xmm0));
+            } else {
+                a!(self, roundps(xmm0, xmm0, 11));
+                a!(self, subps(xmm4, xmm0));
+            }
+            self.vconst(xmm2, if double { 0x3FE0_0000_0000_0000 } else { 0x3F00_0000_3F00_0000 });
+            if double { a!(self, cmppd(xmm2, xmm4, 2)); }
+            else { a!(self, cmpps(xmm2, xmm4, 2)); }
+            self.vconst(xmm1, if double { 0x3FF0_0000_0000_0000 } else { 0x3F80_0000_3F80_0000 });
+            a!(self, pand(xmm1, xmm2));
+            if double { a!(self, addpd(xmm0, xmm1)); }
+            else { a!(self, addps(xmm0, xmm1)); }
+            a!(self, por(xmm0, xmm3));
+        } else {
+            let imm = [0, 2, 1, 3][mode as usize] | 8;
+            if double { a!(self, roundpd(xmm0, xmm0, imm)); }
+            else { a!(self, roundps(xmm0, xmm0, imm)); }
+        }
+    }
+
+    /// FRINT32/64 return -2^(n-1) for NaN, infinity or rounded overflow.
+    fn frint_limit(&mut self, double: bool, n: i32) {
+        let lim = 2f64.powi(n - 1);
+        self.vconst(xmm1, if double { lim.to_bits() } else { (lim as f32).to_bits() as u64 * 0x1_0000_0001 });
+        self.vconst(xmm2, if double { (-lim).to_bits() } else { (-lim as f32).to_bits() as u64 * 0x1_0000_0001 });
+        a!(self, movdqa(xmm3, xmm0));
+        a!(self, movdqa(xmm4, xmm2));
+        if double {
+            a!(self, cmppd(xmm3, xmm1, 1)); // r < lim (ordered)
+            a!(self, cmppd(xmm4, xmm0, 2)); // -lim <= r
+        } else {
+            a!(self, cmpps(xmm3, xmm1, 1));
+            a!(self, cmpps(xmm4, xmm0, 2));
+        }
+        a!(self, pand(xmm3, xmm4));
+        a!(self, pand(xmm0, xmm3));
+        a!(self, pandn(xmm3, xmm2));
+        a!(self, por(xmm0, xmm3));
+    }
+
     fn simd_more(&mut self, insn: u32) -> bool {
         let rd = bits(insn, 4, 0);
         let rn = bits(insn, 9, 5);
@@ -3021,22 +3097,25 @@ impl<'a> E<'a> {
         let u = bit(insn, 29) != 0;
         let size = bits(insn, 23, 22);
 
-        // FRINTN/P/M/Z (vector single/double), with explicit SSE4.1
-        // rounding modes rather than the host MXCSR rounding setting.
-        if insn & 0xBF3E_0C00 == 0x0E20_0800 {
+        // Vector FRINT* (single/double).
+        if insn & 0x9F3E_0C00 == 0x0E20_0800 {
             let opcode = bits(insn, 16, 12);
-            if opcode == 0b11000 || opcode == 0b11001 {
+            let fa = bit(insn, 23);
+            let mode = match (u, fa, opcode) {
+                (false, 0, 24) => Some(0), (false, 1, 24) => Some(1),
+                (false, 0, 25) => Some(2), (false, 1, 25) => Some(3),
+                (true, 0, 24) => Some(4), (true, _, 25) => Some(5),
+                (_, 0, 30 | 31) => Some(if u { 5 } else { 3 }),
+                _ => None,
+            };
+            if let Some(mode) = mode {
                 let double = bit(insn, 22) != 0;
                 if double && !q { return false; }
-                let mode = match (bit(insn, 23), opcode) {
-                    (0, 0b11000) => 0,
-                    (1, 0b11000) => 2,
-                    (0, _) => 1,
-                    _ => 3,
-                } | 8;
                 self.vld(xmm0, rn, q);
-                if double { a!(self, roundpd(xmm0, xmm0, mode)); }
-                else { a!(self, roundps(xmm0, xmm0, mode)); }
+                self.frint_round(double, mode);
+                if opcode >= 30 {
+                    self.frint_limit(double, if opcode == 30 { 32 } else { 64 });
+                }
                 self.vfin(rd, q);
                 return true;
             }

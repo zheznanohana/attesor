@@ -370,6 +370,11 @@ pub fn run_selftest(class: &str, count: usize) {
         for i in 0..32 {
             init.v[i] = [rng.val(), rng.val()];
         }
+        // Opt-in FPCR rounding coverage for instructions that honor it. Keep
+        // the general arithmetic suite at its documented default FPCR.
+        if std::env::var_os("MACLATOR_SELFTEST_FPCR").is_some() {
+            init.fpcr = (rng.next() & 3) << 22;
+        }
         init.pc = pc;
         let mem0: Vec<u8> = buf.clone();
         let mut r = Cpu::new();
