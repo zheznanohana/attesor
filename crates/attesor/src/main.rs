@@ -176,6 +176,7 @@ fn main() {
             eprintln!("attesor: sandboxed guest, container {c}");
         }
     }
+    gpu::inject_ui(&exe, &mut envp);
     if gpu_active && !gpu::inject(&mut envp) {
         eprintln!("attesor: --gpu: libmclmetal.dylib not found (looked next to attesor, in ./gpu, ~/.attesor/gpu, $ATTESOR_GPU_DIR)");
     }

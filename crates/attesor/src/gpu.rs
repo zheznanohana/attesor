@@ -19,6 +19,7 @@ type CallFn = unsafe extern "C" fn(op: u64, input: *const u8, len: u64, outlen: 
 
 const SHIM_NAME: &str = "libmclmetal.dylib";
 const BRIDGE_NAME: &str = "libmclbridge.dylib";
+const UI_SHIM_NAME: &str = "libattesorui.dylib";
 
 /// Directories searched for the GPU libraries: $ATTESOR_GPU_DIR, next to the executable,
 /// then ~/.attesor/gpu.
@@ -49,16 +50,33 @@ pub fn shim_path() -> Option<String> {
 }
 
 /// Add the shim to the guest's DYLD_INSERT_LIBRARIES.
-pub fn inject(envp: &mut Vec<String>) -> bool {
-    let Some(shim) = shim_path() else { return false };
+pub fn ui_shim_path() -> Option<String> {
+    find(UI_SHIM_NAME).map(|p| p.to_string_lossy().into_owned())
+}
+
+/// Guests that are app bundles get the UI shim (Dock icon without the "prohibited" overlay).
+pub fn inject_ui(exe: &str, envp: &mut Vec<String>) {
+    if exe.contains(".app/Contents/MacOS/") {
+        if let Some(shim) = ui_shim_path() {
+            add_insert(envp, &shim);
+        }
+    }
+}
+
+fn add_insert(envp: &mut Vec<String>, shim: &str) {
     if let Some(e) = envp.iter_mut().find(|e| e.starts_with("DYLD_INSERT_LIBRARIES=")) {
-        if !e.contains(&shim) {
+        if !e.contains(shim) {
             e.push(':');
-            e.push_str(&shim);
+            e.push_str(shim);
         }
     } else {
         envp.push(format!("DYLD_INSERT_LIBRARIES={shim}"));
     }
+}
+
+pub fn inject(envp: &mut Vec<String>) -> bool {
+    let Some(shim) = shim_path() else { return false };
+    add_insert(envp, &shim);
     if let Some(dir) = find(BRIDGE_NAME) {
         if !envp.iter().any(|e| e.starts_with("ATTESOR_GPU_BRIDGE=")) {
             envp.push(format!("ATTESOR_GPU_BRIDGE={}", dir.to_string_lossy()));

@@ -74,20 +74,20 @@ unsafe fn read_argv(p: u64) -> Vec<String> {
 }
 
 /// Host processes (native children and the attesor re-launcher) must not inherit the arm64
-/// GPU shim in DYLD_INSERT_LIBRARIES; attesor injects it into guests itself (`--gpu`).
+/// GPU/UI shims in DYLD_INSERT_LIBRARIES; attesor injects them into guests itself.
 /// Returns the scrubbed environment (keep alive until the call), and points `args` at it.
 fn scrub_shim(n: u64, args: &mut [u64; 8]) -> Option<(Vec<CString>, Vec<u64>)> {
     let eidx = if n == SYS_EXECVE { 2 } else { 4 };
-    let shim = crate::gpu::shim_path()?;
+    let shims: Vec<String> = [crate::gpu::shim_path(), crate::gpu::ui_shim_path()].into_iter().flatten().collect();
     let env = unsafe { read_argv(args[eidx]) };
-    if !env.iter().any(|e| e.starts_with("DYLD_INSERT_LIBRARIES=") && e.contains(&shim)) {
+    if !env.iter().any(|e| e.starts_with("DYLD_INSERT_LIBRARIES=") && shims.iter().any(|s| e.contains(s.as_str()))) {
         return None;
     }
     let cleaned: Vec<CString> = env
         .into_iter()
         .filter_map(|e| {
             if let Some(v) = e.strip_prefix("DYLD_INSERT_LIBRARIES=") {
-                let rest: Vec<&str> = v.split(':').filter(|p| *p != shim && !p.is_empty()).collect();
+                let rest: Vec<&str> = v.split(':').filter(|p| !shims.iter().any(|s| s == p) && !p.is_empty()).collect();
                 if rest.is_empty() {
                     return None;
                 }
