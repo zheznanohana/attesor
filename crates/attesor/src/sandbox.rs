@@ -1,7 +1,7 @@
 //! App Sandbox containers for sandboxed guests.
 //!
 //! libsystem_secinit decides whether to enter the sandbox from the entitlements of the running
-//! process, which is maclator itself, so sandboxed arm64 apps used to run uncontained: their data
+//! process, which is attesor itself, so sandboxed arm64 apps used to run uncontained: their data
 //! landed in ~/Documents etc. instead of the container they use natively. When the guest's code
 //! signature carries com.apple.security.app-sandbox, point HOME/CFFIXED_USER_HOME/TMPDIR at the
 //! same container (~/Library/Containers/<identifier>/Data) the app gets on Apple Silicon.
@@ -85,7 +85,7 @@ fn set(envp: &mut Vec<String>, key: &str, val: &str) {
 
 /// Redirect a sandboxed guest into its container. Returns the container path when applied.
 pub fn apply(exe: &str, envp: &mut Vec<String>) -> Option<String> {
-    if std::env::var_os("MACLATOR_NO_CONTAINER").is_some() {
+    if std::env::var_os("ATTESOR_NO_CONTAINER").is_some() {
         return None;
     }
     let (ident, ents) = signature(exe)?;

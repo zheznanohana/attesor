@@ -5,7 +5,7 @@
 //! emulated CPU. When the architectural addresses can't be mapped (Rosetta
 //! reserves that range) guest accesses are redirected to the copy.
 
-use maclator_core::mem::{COMMPAGE_REDIRECT, COMMPAGE_RO, COMMPAGE_RW, COMMPAGE_SPAN_END, COMMPAGE_SPAN_START};
+use attesor_core::mem::{COMMPAGE_REDIRECT, COMMPAGE_RO, COMMPAGE_RW, COMMPAGE_SPAN_END, COMMPAGE_SPAN_START};
 use std::sync::atomic::Ordering;
 
 // Capability bits we can honour (see cpu_capabilities.h).
@@ -70,7 +70,7 @@ impl CommPage {
             // Try the architectural address first (as a hint, never clobbering).
             let p = libc::mmap(COMMPAGE_SPAN_START as *mut _, span, libc::PROT_READ | libc::PROT_WRITE,
                 libc::MAP_ANON | libc::MAP_PRIVATE, -1, 0);
-            let (base, in_place) = if p as u64 == COMMPAGE_SPAN_START && std::env::var_os("MACLATOR_NO_COMMPAGE").is_none() {
+            let (base, in_place) = if p as u64 == COMMPAGE_SPAN_START && std::env::var_os("ATTESOR_NO_COMMPAGE").is_none() {
                 (COMMPAGE_SPAN_START, true)
             } else {
                 if p != libc::MAP_FAILED {

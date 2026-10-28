@@ -1,13 +1,13 @@
 //! GPU passthrough: Metal calls made by the arm64 guest are executed on the host GPU.
 //!
 //! An injected arm64 shim (`libmclmetal.dylib`, DYLD_INSERT_LIBRARIES) turns Metal API use into
-//! RPCs and traps into Maclator with `svc #0x80` and x16 = `SYS_MCL_HOSTCALL`
+//! RPCs and traps into Attesor with `svc #0x80` and x16 = `SYS_MCL_HOSTCALL`
 //! (x0 = op, x1 = request pointer, x2 = request length; result x0 = reply pointer, x1 = length).
 //! The x86-64 half (`libmclbridge.dylib`, loaded lazily on the first call) owns the real Metal
 //! objects and performs the calls. The guest lives in this process's address space, so guest
 //! pointers (texture data, `MTLBuffer.contents`, ...) are valid on the host as they are.
 
-use maclator_core::cpu::Cpu;
+use attesor_core::cpu::Cpu;
 use std::ffi::CString;
 use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering};
 use std::sync::{Arc, OnceLock};
@@ -20,11 +20,11 @@ type CallFn = unsafe extern "C" fn(op: u64, input: *const u8, len: u64, outlen: 
 const SHIM_NAME: &str = "libmclmetal.dylib";
 const BRIDGE_NAME: &str = "libmclbridge.dylib";
 
-/// Directories searched for the GPU libraries: $MACLATOR_GPU_DIR, next to the executable,
-/// then ~/.maclator/gpu.
+/// Directories searched for the GPU libraries: $ATTESOR_GPU_DIR, next to the executable,
+/// then ~/.attesor/gpu (and the legacy ~/.maclator/gpu).
 fn search_dirs() -> Vec<std::path::PathBuf> {
     let mut v = Vec::new();
-    if let Some(d) = std::env::var_os("MACLATOR_GPU_DIR") {
+    if let Some(d) = std::env::var_os("ATTESOR_GPU_DIR") {
         v.push(d.into());
     }
     if let Ok(exe) = std::env::current_exe() {
@@ -34,6 +34,7 @@ fn search_dirs() -> Vec<std::path::PathBuf> {
         }
     }
     if let Some(h) = std::env::var_os("HOME") {
+        v.push(std::path::Path::new(&h).join(".attesor/gpu"));
         v.push(std::path::Path::new(&h).join(".maclator/gpu"));
     }
     v
@@ -60,8 +61,8 @@ pub fn inject(envp: &mut Vec<String>) -> bool {
         envp.push(format!("DYLD_INSERT_LIBRARIES={shim}"));
     }
     if let Some(dir) = find(BRIDGE_NAME) {
-        if !envp.iter().any(|e| e.starts_with("MACLATOR_GPU_BRIDGE=")) {
-            envp.push(format!("MACLATOR_GPU_BRIDGE={}", dir.to_string_lossy()));
+        if !envp.iter().any(|e| e.starts_with("ATTESOR_GPU_BRIDGE=")) {
+            envp.push(format!("ATTESOR_GPU_BRIDGE={}", dir.to_string_lossy()));
         }
     }
     true
@@ -71,19 +72,19 @@ static BRIDGE: OnceLock<Option<(CallFn, Option<extern "C" fn()>)>> = OnceLock::n
 
 fn bridge() -> Option<(CallFn, Option<extern "C" fn()>)> {
     *BRIDGE.get_or_init(|| {
-        let path = std::env::var("MACLATOR_GPU_BRIDGE").ok().or_else(|| find(BRIDGE_NAME).map(|p| p.to_string_lossy().into_owned()))?;
+        let path = std::env::var("ATTESOR_GPU_BRIDGE").ok().or_else(|| find(BRIDGE_NAME).map(|p| p.to_string_lossy().into_owned()))?;
         let c = CString::new(path.clone()).ok()?;
         unsafe {
             let h = libc::dlopen(c.as_ptr(), libc::RTLD_NOW | libc::RTLD_LOCAL);
             if h.is_null() {
                 let e = libc::dlerror();
                 let msg = if e.is_null() { String::new() } else { std::ffi::CStr::from_ptr(e).to_string_lossy().into_owned() };
-                eprintln!("maclator: cannot load GPU bridge {path}: {msg}");
+                eprintln!("attesor: cannot load GPU bridge {path}: {msg}");
                 return None;
             }
             let f = libc::dlsym(h, b"mcl_call\0".as_ptr() as *const libc::c_char);
             if f.is_null() {
-                eprintln!("maclator: GPU bridge {path} has no mcl_call");
+                eprintln!("attesor: GPU bridge {path} has no mcl_call");
                 return None;
             }
             let w = libc::dlsym(h, b"mcl_warmup\0".as_ptr() as *const libc::c_char);
@@ -118,11 +119,11 @@ struct BridgeThread {
     caller: std::thread::Thread,
 }
 
-/// Spin budgets in microseconds, `MACLATOR_GPU_SPIN=caller,bridge` (default 20,20; 0,0 = always park).
+/// Spin budgets in microseconds, `ATTESOR_GPU_SPIN=caller,bridge` (default 20,20; 0,0 = always park).
 fn spin_budgets() -> (Duration, Duration) {
     static B: OnceLock<(Duration, Duration)> = OnceLock::new();
     *B.get_or_init(|| {
-        let (c, b) = std::env::var("MACLATOR_GPU_SPIN")
+        let (c, b) = std::env::var("ATTESOR_GPU_SPIN")
             .ok()
             .and_then(|v| {
                 let mut it = v.split(',').filter_map(|x| x.trim().parse::<u64>().ok());
@@ -171,7 +172,7 @@ impl BridgeThread {
         let caller = std::thread::current();
         let sh2 = sh.clone();
         let h = std::thread::Builder::new()
-            .name("maclator-gpu".into())
+            .name("attesor-gpu".into())
             .stack_size(8 << 20)
             .spawn({
                 let caller = caller.clone();

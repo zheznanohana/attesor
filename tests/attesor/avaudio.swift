@@ -13,9 +13,9 @@ Thread.sleep(forTimeInterval: secs); e.stop()
 print("engine sr", sr, "frames/s", Int(Double(rendered) / secs))
 // WAV file → AVAudioPlayer (660 Hz)
 let url = URL(fileURLWithPath: NSTemporaryDirectory() + "attesor-tone.wav")
-let f = try! AVAudioFile(forWriting: url, settings: [AVFormatIDKey: kAudioFormatLinearPCM, AVSampleRateKey: 44100, AVNumberOfChannelsKey: 1])
+do { let f = try! AVAudioFile(forWriting: url, settings: [AVFormatIDKey: kAudioFormatLinearPCM, AVSampleRateKey: 44100, AVNumberOfChannelsKey: 1])
 let buf = AVAudioPCMBuffer(pcmFormat: f.processingFormat, frameCapacity: AVAudioFrameCount(44100 * secs))!; buf.frameLength = buf.frameCapacity
 for i in 0..<Int(buf.frameLength) { buf.floatChannelData![0][i] = Float(0.2 * sin(2 * .pi * 660 * Double(i) / 44100)) }
-try! f.write(from: buf)
+try! f.write(from: buf) }  // AVAudioFile finalizes the file when released
 let p = try! AVAudioPlayer(contentsOf: url); print("player duration", p.duration, "play", p.play())
 Thread.sleep(forTimeInterval: secs + 0.3); print("player time", p.currentTime > 0 || !p.isPlaying ? "advanced" : "stuck")

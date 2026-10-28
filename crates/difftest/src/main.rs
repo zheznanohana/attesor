@@ -1,5 +1,5 @@
 //! Differential tester: executes random AArch64 instructions natively (on an
-//! Apple Silicon host) and in the Maclator interpreter, and compares the
+//! Apple Silicon host) and in the Attesor interpreter, and compares the
 //! resulting architectural state.
 //!
 //! Usage: difftest [class] [count] [seed]

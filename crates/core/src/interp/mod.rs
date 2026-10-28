@@ -1,6 +1,6 @@
 //! Reference AArch64 interpreter.
 //!
-//! This is the semantic ground truth for Maclator: the JIT falls back to it
+//! This is the semantic ground truth for Attesor: the JIT falls back to it
 //! for anything it does not translate natively, and the differential tester
 //! checks it against real hardware.
 

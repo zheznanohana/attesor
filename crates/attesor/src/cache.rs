@@ -5,7 +5,7 @@
 //! and later asks where it is (`shared_region_check_np`). We perform the
 //! mapping ourselves at a fixed address inside our process (so AOT
 //! translations of cache code stay valid across runs) and apply the slide
-//! info (rebasing; pointer-auth signing is the identity in Maclator).
+//! info (rebasing; pointer-auth signing is the identity in Attesor).
 
 use crate::hostsys;
 use std::sync::Mutex;
@@ -95,7 +95,7 @@ pub fn map_and_slide_2(files_count: u32, files: u64, mappings_count: u32, mappin
                     libc::mmap(addr as *mut _, size, wprot, libc::MAP_PRIVATE | libc::MAP_FIXED, f.fd, m.file_offset as i64)
                 };
                 if p == libc::MAP_FAILED || p as u64 != addr {
-                    eprintln!("maclator: failed to map shared cache region {:#x}+{:#x}: {}", addr, size, std::io::Error::last_os_error());
+                    eprintln!("attesor: failed to map shared cache region {:#x}+{:#x}: {}", addr, size, std::io::Error::last_os_error());
                     return libc::ENOMEM as i64;
                 }
                 if m.slide_size == 0 {
@@ -115,14 +115,14 @@ pub fn map_and_slide_2(files_count: u32, files: u64, mappings_count: u32, mappin
         let addr = m.address.wrapping_add(slide);
         let info = unsafe { std::slice::from_raw_parts(m.slide_start.wrapping_add(slide) as *const u8, m.slide_size as usize) };
         if let Err(e) = unsafe { apply_slide_info(info, addr, m.size, slide, unslid_base) } {
-            eprintln!("maclator: slide info: {e}");
+            eprintln!("attesor: slide info: {e}");
             return libc::EINVAL as i64;
         }
         let prot = (m.init_prot & 3) as i32;
         unsafe { libc::mprotect(addr as *mut _, m.size as usize, if prot == 0 { libc::PROT_NONE } else { prot }) };
     }
-    if std::env::var_os("MACLATOR_TRACE").is_some() {
-        eprintln!("[maclator] mapped arm64 shared cache at {:#x} (slide {:#x}), {} regions", CACHE_BASE, slide, ranges.len());
+    if std::env::var_os("ATTESOR_TRACE").is_some() {
+        eprintln!("[attesor] mapped arm64 shared cache at {:#x} (slide {:#x}), {} regions", CACHE_BASE, slide, ranges.len());
     }
     let end = ranges.iter().map(|(a, s)| a + s).max().unwrap_or(CACHE_BASE);
     *guard = Some(MappedCache { base: CACHE_BASE, slide, ranges });

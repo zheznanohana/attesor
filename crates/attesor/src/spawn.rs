@@ -1,5 +1,5 @@
 //! execve / posix_spawn. Native (x86-64 or universal) programs run directly on
-//! the host; arm64-only programs are re-launched through Maclator, carrying over
+//! the host; arm64-only programs are re-launched through Attesor, carrying over
 //! the sysroot and options so children (e.g. Chromium/Electron helper processes)
 //! run in the same environment.
 
@@ -73,8 +73,8 @@ unsafe fn read_argv(p: u64) -> Vec<String> {
     v
 }
 
-/// Host processes (native children and the maclator re-launcher) must not inherit the arm64
-/// GPU shim in DYLD_INSERT_LIBRARIES; maclator injects it into guests itself (`--gpu`).
+/// Host processes (native children and the attesor re-launcher) must not inherit the arm64
+/// GPU shim in DYLD_INSERT_LIBRARIES; attesor injects it into guests itself (`--gpu`).
 /// Returns the scrubbed environment (keep alive until the call), and points `args` at it.
 fn scrub_shim(n: u64, args: &mut [u64; 8]) -> Option<(Vec<CString>, Vec<u64>)> {
     let eidx = if n == SYS_EXECVE { 2 } else { 4 };

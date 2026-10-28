@@ -4,7 +4,7 @@ All numbers: Intel Core i5-4440 (Haswell, 4 cores), 12 GB, macOS 26.7.
 
 ## Performance work & measurements (VS Code, hack, warm)
 
-Benchmark scripts (in the session scratchpad, easily rebuilt from `~/maclator-run/typebench.py`):
+Benchmark scripts (in the session scratchpad, easily rebuilt from `~/attesor-run/typebench.py`):
 launch VS Code with `--remote-debugging-port=9222`, wait for idle, measure in-page JS/DOM time,
 per-key dispatch latency and `2×requestAnimationFrame` time after a key (the felt latency).
 
@@ -49,7 +49,7 @@ and is not directly comparable).
    (`x86_cc` maps ARM conditions per producer kind; add-HI/LS and logic-carry conditions are constant/unmappable and
    fall back). The stored NZCV bytes are still written unless (3) applies.
 2. **Write-through guest register cache** (`RegCache`, `CREGS = rbx, rbp, r12, r13, r14` — callee-saved x86 registers the
-   JIT never used; `maclator_jit_enter` already saves them). All guest GPR access goes through `ldx/ldw/ld_nf/stx/st_imm`
+   JIT never used; `attesor_jit_enter` already saves them). All guest GPR access goes through `ldx/ldw/ld_nf/stx/st_imm`
    plus three base-register writeback sites; each read/write updates a per-block, compile-time map guest reg → x86 reg.
    Memory stays authoritative (every write is still stored), so faults, signals and helper calls see current state;
    the cache only removes reloads (store-forwarding latency on dependent chains). It is cleared at block start and after
@@ -61,7 +61,7 @@ and is not directly comparable).
 3. **Dead flag store elimination.** For `setter; b.cond` where both successors overwrite NZCV before reading it
    (`flags_dead_at`: straight-line scan ≤ 24 instructions, follows ≤ 3 unconditional `b`), the four `setcc` stores
    are skipped (`Unit::dead_flags`). Guards: the branch must not be a unit leader, must fit in the block, and
-   `MACLATOR_JIT_DISABLE=branch` disables it.
+   `ATTESOR_JIT_DISABLE=branch` disables it.
 Ideas not done: carry the register cache across chained blocks/loops (loop-carried values still reload at every
 iteration), keep flags in `lahf`/`seto` form, fuse `cmp + cset`, use cache registers as direct operands.
 One unexplained event: a single Chromium launch right after the AOT version bump hung at 0 % CPU (parent in `wait4`,

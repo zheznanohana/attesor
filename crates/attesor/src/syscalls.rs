@@ -8,7 +8,7 @@
 use crate::cache;
 use crate::hostsys::{self, SysResult};
 use crate::threads;
-use maclator_core::cpu::Cpu;
+use attesor_core::cpu::Cpu;
 use std::sync::atomic::{AtomicBool, Ordering};
 
 pub static TRACE: AtomicBool = AtomicBool::new(false);

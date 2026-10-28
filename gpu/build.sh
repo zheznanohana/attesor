@@ -1,6 +1,6 @@
 #!/bin/bash
-# Builds the Maclator Metal bridge:
-#   libmclbridge.dylib   x86-64 host side (loaded by maclator on first GPU call)
+# Builds the Attesor Metal bridge:
+#   libmclbridge.dylib   x86-64 host side (loaded by attesor on first GPU call)
 #   libmclmetal.dylib    arm64 guest shim (injected into the guest with DYLD_INSERT_LIBRARIES)
 #   libmclloop.dylib     arm64 shim + bridge in one dylib for native testing on an Apple Silicon Mac
 #   metaltri (arm64)     guest smoke test

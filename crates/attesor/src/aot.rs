@@ -1,8 +1,8 @@
 //! Ahead-of-time translation cache.
 //!
-//! Images that Maclator maps at fixed addresses (the main executable and the
+//! Images that Attesor maps at fixed addresses (the main executable and the
 //! arm64 shared cache) get a persistent translation file in
-//! `~/Library/Caches/Maclator/aot/`. Each file holds position-independent x86
+//! `~/Library/Caches/Attesor/aot/`. Each file holds position-independent x86
 //! code for a set of guest blocks plus an index.
 //!
 //! Where the blocks come from:
@@ -47,11 +47,11 @@ pub fn set_enabled(on: bool) {
 }
 
 fn cache_dir() -> std::path::PathBuf {
-    if let Ok(d) = std::env::var("MACLATOR_CACHE") {
+    if let Ok(d) = std::env::var("ATTESOR_CACHE") {
         return d.into();
     }
     let home = std::env::var("HOME").unwrap_or_else(|_| "/tmp".into());
-    std::path::Path::new(&home).join("Library/Caches/Maclator/aot")
+    std::path::Path::new(&home).join("Library/Caches/Attesor/aot")
 }
 
 fn hex(b: &[u8]) -> String {
@@ -105,8 +105,8 @@ pub fn register_image_at(addr: u64) {
     let rd = |o: u64| unsafe { std::ptr::read_unaligned((addr + o) as *const u32) };
     // mach_header_64: magic, cputype, ..., ncmds at +16, sizeofcmds at +20
     if rd(0) != 0xfeed_facf || rd(4) != 0x0100_000c {
-        if std::env::var_os("MACLATOR_STATS").is_some() {
-            eprintln!("[maclator] aot: mmap exec at {addr:#x} not an arm64 mach-o ({:#x} {:#x})", rd(0), rd(4));
+        if std::env::var_os("ATTESOR_STATS").is_some() {
+            eprintln!("[attesor] aot: mmap exec at {addr:#x} not an arm64 mach-o ({:#x} {:#x})", rd(0), rd(4));
         }
         return;
     }
@@ -149,8 +149,8 @@ pub fn register_image_at(addr: u64) {
     let slide = addr.wrapping_sub(text_vm);
     let (start, end) = (lo.wrapping_add(slide), hi.wrapping_add(slide));
     let key = format!("lib-{}-{:x}", hex(&uuid), start);
-    if std::env::var_os("MACLATOR_STATS").is_some() {
-        eprintln!("[maclator] aot: registered image {key} [{start:#x}, {end:#x})");
+    if std::env::var_os("ATTESOR_STATS").is_some() {
+        eprintln!("[attesor] aot: registered image {key} [{start:#x}, {end:#x})");
     }
     add_image(Image { name: format!("lib-{}", &hex(&uuid)[..8]), key, start, end, entries: vec![], loaded: false });
     ensure_loaded();
@@ -234,8 +234,8 @@ pub fn ensure_loaded() {
         img.loaded = true;
         match load_file(&file_for(img, "aot")) {
             Ok(n) if n > 0 => {
-                if std::env::var_os("MACLATOR_TRACE").is_some() || std::env::var_os("MACLATOR_STATS").is_some() {
-                    eprintln!("[maclator] aot: loaded {n} blocks for {}", img.name);
+                if std::env::var_os("ATTESOR_TRACE").is_some() || std::env::var_os("ATTESOR_STATS").is_some() {
+                    eprintln!("[attesor] aot: loaded {n} blocks for {}", img.name);
                 }
             }
             _ => {}
@@ -322,10 +322,10 @@ pub fn save_profile() {
             rebuild.push((img.clone(), prof));
         }
     }
-    if rebuild.is_empty() || std::env::var_os("MACLATOR_NO_AOT_BUILD").is_some() {
+    if rebuild.is_empty() || std::env::var_os("ATTESOR_NO_AOT_BUILD").is_some() {
         return;
     }
-    let sync = std::env::var_os("MACLATOR_AOT_SYNC").is_some();
+    let sync = std::env::var_os("ATTESOR_AOT_SYNC").is_some();
     // Fork: the child still has the guest's memory mapped, so it can read
     // the code it needs to translate.
     let pid = if sync { 0 } else { unsafe { libc::fork() } };
@@ -460,7 +460,7 @@ fn build(img: &Image, profile: &BTreeSet<u64>) -> std::io::Result<()> {
     Ok(())
 }
 
-/// `maclator --aot <exe>`: translate the main executable ahead of time
+/// `attesor --aot <exe>`: translate the main executable ahead of time
 /// without running it.
 pub fn build_standalone(path: &str) -> std::io::Result<usize> {
     let m = crate::macho::MachO::open_arm64(path, false)?;

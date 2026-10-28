@@ -1,7 +1,7 @@
 //! Diagnostics: map guest addresses to "image+offset" and walk frame chains.
 
 use crate::cache;
-use maclator_core::cpu::Cpu;
+use attesor_core::cpu::Cpu;
 use std::sync::Mutex;
 
 #[derive(Clone)]

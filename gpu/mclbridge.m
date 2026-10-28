@@ -1,4 +1,4 @@
-// Host side of the Maclator Metal bridge (x86-64, runs inside the maclator process).
+// Host side of the Attesor Metal bridge (x86-64, runs inside the attesor process).
 //
 // The guest (arm64) shim forwards Objective-C messages sent to Metal proxy objects
 // as binary-plist RPCs. This side owns the real Metal objects (handle table), performs

@@ -3,9 +3,9 @@
 //! Tiering: translated host code (AOT cache or JIT) when available, with the
 //! reference interpreter as the fallback for anything not translated.
 
-use maclator_core::cpu::Cpu;
-use maclator_core::disasm::disasm;
-use maclator_core::interp::{self, Exit};
+use attesor_core::cpu::Cpu;
+use attesor_core::disasm::disasm;
+use attesor_core::interp::{self, Exit};
 use std::cell::Cell;
 
 thread_local! {
@@ -116,7 +116,7 @@ extern "C" fn dump_threads(_: i32) {
 pub fn install_debug_handler() {
     unsafe { libc::signal(libc::SIGUSR1, dump_threads as usize) };
     unsafe { libc::signal(libc::SIGUSR2, dump_current as usize) };
-    if std::env::var_os("MACLATOR_DUMP_ON_FAULT").is_some() {
+    if std::env::var_os("ATTESOR_DUMP_ON_FAULT").is_some() {
         unsafe {
             libc::signal(libc::SIGSEGV, fault_dump as usize);
             libc::signal(libc::SIGBUS, fault_dump as usize);
@@ -127,13 +127,13 @@ pub fn install_debug_handler() {
 extern "C" fn fault_dump(sig: i32) {
     // Helper processes often have stderr closed or /dev/null: write the dump to a file.
     unsafe {
-        let path = format!("/tmp/maclator-fault-{}.log\0", libc::getpid());
+        let path = format!("/tmp/attesor-fault-{}.log\0", libc::getpid());
         let fd = libc::open(path.as_ptr() as *const libc::c_char, libc::O_WRONLY | libc::O_CREAT | libc::O_TRUNC, 0o644);
         if fd >= 0 {
             libc::dup2(fd, 2);
         }
     }
-    eprintln!("maclator: host signal {sig} in emulator; guest state:");
+    eprintln!("attesor: host signal {sig} in emulator; guest state:");
     dump_threads(sig);
     unsafe { libc::_exit(128 + sig) };
 }
@@ -165,11 +165,11 @@ pub fn handle_exit(cpu: &mut Cpu, e: Exit) -> bool {
 }
 
 pub fn crash(cpu: &Cpu, why: &str) -> ! {
-    eprintln!("\nmaclator: {why}");
+    eprintln!("\nattesor: {why}");
     eprintln!("  at pc {:#x} {}", cpu.pc, crate::symbols::describe(cpu.pc));
     eprintln!("{}", cpu.dump());
     eprintln!("  lr {}", crate::symbols::describe(cpu.x[30]));
-    let n: u64 = std::env::var("MACLATOR_DISAS").ok().and_then(|v| v.parse().ok()).unwrap_or(12);
+    let n: u64 = std::env::var("ATTESOR_DISAS").ok().and_then(|v| v.parse().ok()).unwrap_or(12);
     let start = cpu.pc.wrapping_sub(n * 4);
     for i in 0..(n + 4) {
         let a = start + i * 4;

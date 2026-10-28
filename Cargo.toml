@@ -1,6 +1,6 @@
 [workspace]
 resolver = "2"
-members = ["crates/core", "crates/maclator", "crates/difftest"]
+members = ["crates/core", "crates/attesor", "crates/difftest"]
 
 [profile.release]
 debug = 1

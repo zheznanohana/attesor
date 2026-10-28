@@ -3,7 +3,7 @@
 //! (mach header, argc/argv/envp/apple strings) and point the CPU at dyld.
 
 use crate::macho::MachO;
-use maclator_core::cpu::Cpu;
+use attesor_core::cpu::Cpu;
 use std::ffi::CString;
 use std::os::unix::io::AsRawFd;
 

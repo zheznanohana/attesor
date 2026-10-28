@@ -1,8 +1,8 @@
-// Guest side of the Maclator Metal bridge (arm64, injected with DYLD_INSERT_LIBRARIES).
+// Guest side of the Attesor Metal bridge (arm64, injected with DYLD_INSERT_LIBRARIES).
 //
 // Replaces MTLCreateSystemDefaultDevice/MTLCopyAllDevices with proxies of the host's real
 // Metal objects. Every message sent to a proxy is marshalled (binary plist) and executed on
-// the host GPU by libmclbridge (x86-64) through a Maclator trap; MTL* descriptor objects that
+// the host GPU by libmclbridge (x86-64) through a Attesor trap; MTL* descriptor objects that
 // live in the guest are serialized by property introspection. Compiled without ARC.
 #import <Foundation/Foundation.h>
 #import <Metal/Metal.h>
@@ -1357,7 +1357,7 @@ static void stats_maybe_dump(void) {
 
 #ifndef MCL_LOOPBACK
 // dyld has already processed DYLD_INSERT_LIBRARIES; leaving it in the environment confuses
-// LaunchServices/XPC in AppKit apps. Children are re-injected by maclator itself.
+// LaunchServices/XPC in AppKit apps. Children are re-injected by attesor itself.
 __attribute__((constructor)) static void mcl_scrub_env(void) {
     unsetenv("DYLD_INSERT_LIBRARIES");
 }

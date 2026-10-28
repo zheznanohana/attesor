@@ -3,16 +3,16 @@
 ## Command line
 
 ```
-maclator [options] ./arm64-binary [args...]
+attesor [options] ./arm64-binary [args...]
 
-  --dyld PATH        arm64 dyld to use (default /usr/lib/dyld; $MACLATOR_DYLD)
+  --dyld PATH        arm64 dyld to use (default /usr/lib/dyld; $ATTESOR_DYLD)
   --sysroot DIR      directory with the arm64e dyld shared cache (else auto-discovered, see SETUP.md)
   --gpu              route the guest's Metal API to the host GPU
   --gpu-only SUBSTR  give the GPU only to guest processes whose arguments contain SUBSTR (e.g. --type=gpu-process)
   --interp           interpreter only (no JIT/AOT): slow, useful to rule out JIT bugs
   --no-aot           do not load or save the translation cache
   --trace            log syscalls / Mach messages / path redirections
-  --dump-on-fault    on a crash write registers + disassembly to /tmp/maclator-fault-<pid>.log
+  --dump-on-fault    on a crash write registers + disassembly to /tmp/attesor-fault-<pid>.log
 ```
 
 More flags, environment variables and signals: [DEBUGGING.md](DEBUGGING.md).
@@ -23,10 +23,10 @@ Notes that apply to every app:
   (App Store / iOS-on-Mac) binaries do not work.
 - Run **ad-hoc re-signed** copies if a binary complains about signatures: `codesign -f -s - file`.
 - First launch of a big app is slow (translation happens on the fly). **Quit apps normally** (Cmd+Q, or a
-  graceful `Browser.close` over DevTools): the translation cache (`~/Library/Caches/Maclator/aot/`) is written on
+  graceful `Browser.close` over DevTools): the translation cache (`~/Library/Caches/Attesor/aot/`) is written on
   a normal exit, and subsequent launches are several times faster. A killed process saves nothing.
-- Electron/Chromium apps need `--no-sandbox` (the Chromium sandbox cannot initialise under Maclator).
-- Every Maclator version bump that changes code generation invalidates the translation cache.
+- Electron/Chromium apps need `--no-sandbox` (the Chromium sandbox cannot initialise under Attesor).
+- Every Attesor version bump that changes code generation invalidates the translation cache.
 
 ## Chromium (with GPU acceleration)
 
@@ -43,7 +43,7 @@ CHROMIUM_DIR=/path/to/Chromium.app/Contents/MacOS chromium-gpu   # if it is some
 The launcher (`gpu/chromium-gpu`) runs:
 
 ```bash
-maclator --gpu --gpu-only --type=gpu-process ./Chromium --no-sandbox --disable-gpu-sandbox --disable-gpu-watchdog \
+attesor --gpu --gpu-only --type=gpu-process ./Chromium --no-sandbox --disable-gpu-sandbox --disable-gpu-watchdog \
   --use-angle=metal --use-gl=angle --enable-gpu --ignore-gpu-blocklist \
   --renderer-process-limit=1 --disable-extensions --disable-sync --disable-background-networking --disable-component-update \
   --disable-features=Translate,OptimizationHints,MediaRouter,AutofillServerCommunication,SpareRendererForSitePerProcess,GlobalMediaControls \
@@ -53,7 +53,7 @@ maclator --gpu --gpu-only --type=gpu-process ./Chromium --no-sandbox --disable-g
 Why these flags: only the GPU process loads the bridge (giving every helper process the bridge starved the
 renderers); `--disable-gpu-watchdog` because long first-time shader compiles trip Chromium's watchdog; the
 "lean" flags cut the process count from 13 to 10 and page load time by ~40 % on a 4-core machine.
-Without a GPU: `maclator ./Chromium --no-sandbox --disable-gpu --user-data-dir=/tmp/chromium-data …`.
+Without a GPU: `attesor ./Chromium --no-sandbox --disable-gpu --user-data-dir=/tmp/chromium-data …`.
 
 Check acceleration through DevTools: open `http://127.0.0.1:9333/json/version`, or in the browser `chrome://gpu`
 (should report "Metal" ANGLE, hardware accelerated compositing/rasterization).
@@ -66,7 +66,7 @@ Download the **darwin-arm64** zip (`https://update.code.visualstudio.com/latest/
 ```bash
 vscode-gpu   # also installed as `code`; by scripts/install.sh; VSCODE_DIR / VSCODE_DATA override locations
 # software rendering variant:
-cd ~/vscode-arm64 && maclator "./Visual Studio Code.app/Contents/MacOS/Code" --no-sandbox --disable-gpu \
+cd ~/vscode-arm64 && attesor "./Visual Studio Code.app/Contents/MacOS/Code" --no-sandbox --disable-gpu \
     --user-data-dir=$HOME/vscode-data --disable-workspace-trust
 ```
 
@@ -85,13 +85,13 @@ device, so either use the launcher or add `--disable-gpu`. Flashing drives (raw 
 ## Any other Electron/Chromium app
 
 ```bash
-maclator --gpu --gpu-only --type=gpu-process ./App --no-sandbox --disable-gpu-sandbox --disable-gpu-watchdog \
+attesor --gpu --gpu-only --type=gpu-process ./App --no-sandbox --disable-gpu-sandbox --disable-gpu-watchdog \
   --use-angle=metal --use-gl=angle --enable-gpu --ignore-gpu-blocklist
 ```
 
 ## Plain command line tools
 
 ```bash
-maclator ./fastfetch
-ELECTRON_RUN_AS_NODE=1 maclator "…/Code" -e "console.log(process.version)"
+attesor ./fastfetch
+ELECTRON_RUN_AS_NODE=1 attesor "…/Code" -e "console.log(process.version)"
 ```

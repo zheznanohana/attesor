@@ -3,7 +3,7 @@
 //! The guest's IOKit MIG messages normally pass straight through to the host
 //! kernel. Services that only exist on Apple Silicon (for example the
 //! diagnostic data access driver MobileGestalt reads syscfg from) don't exist
-//! on an Intel host, so Maclator answers for them: a lookup of such a service
+//! on an Intel host, so Attesor answers for them: a lookup of such a service
 //! returns a port we own, and messages sent to that port are answered here
 //! without ever reaching the kernel.
 

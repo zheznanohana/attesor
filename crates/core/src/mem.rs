@@ -1,7 +1,7 @@
 //! Guest memory access.
 //!
 //! Guest virtual addresses are identical to host virtual addresses: the guest
-//! image, stacks and heap live directly in the Maclator process. The only
+//! image, stacks and heap live directly in the Attesor process. The only
 //! exception is the arm64 commpage, which lives at fixed addresses that may
 //! not be mappable on the host (Rosetta reserves that range). When it can't be
 //! mapped in place, accesses are redirected to a host copy.

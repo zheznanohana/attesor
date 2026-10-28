@@ -1,4 +1,4 @@
-//! Maclator: run arm64 macOS programs on x86-64 Macs.
+//! Attesor: run arm64 macOS programs on x86-64 Macs.
 
 mod aot;
 mod cache;
@@ -23,8 +23,8 @@ mod workq;
 use std::sync::atomic::Ordering;
 
 fn usage() -> ! {
-    eprintln!("usage: maclator [options] <arm64-program> [args...]");
-    eprintln!("       maclator --aot <arm64-program>     translate ahead of time and exit");
+    eprintln!("usage: attesor [options] <arm64-program> [args...]");
+    eprintln!("       attesor --aot <arm64-program>     translate ahead of time and exit");
     eprintln!("options:");
     eprintln!("  --interp        interpreter only (no JIT/AOT)");
     eprintln!("  --no-aot        JIT only: don't load or build AOT translations");
@@ -35,19 +35,31 @@ fn usage() -> ! {
     std::process::exit(2);
 }
 
+/// Attesor was called Maclator: accept the old MACLATOR_* variables as ATTESOR_* (the new name wins).
+fn alias_legacy_env() {
+    for (k, v) in std::env::vars_os() {
+        let Some(rest) = k.to_str().and_then(|k| k.strip_prefix("MACLATOR_")) else { continue };
+        let new = format!("ATTESOR_{rest}");
+        if std::env::var_os(&new).is_none() {
+            std::env::set_var(new, v);
+        }
+    }
+}
+
 fn main() {
+    alias_legacy_env();
     let mut args: Vec<String> = std::env::args().skip(1).collect();
-    let mut dyld = std::env::var("MACLATOR_DYLD").unwrap_or_else(|_| "/usr/lib/dyld".to_string());
+    let mut dyld = std::env::var("ATTESOR_DYLD").unwrap_or_else(|_| "/usr/lib/dyld".to_string());
     while let Some(a) = args.first().cloned() {
         match a.as_str() {
             "--trace-file" => {
-                // Trace to /tmp/maclator-trace-<pid>.log (helper processes have no usable stderr).
+                // Trace to /tmp/attesor-trace-<pid>.log (helper processes have no usable stderr).
                 syscalls::TRACE.store(true, Ordering::Relaxed);
-                std::env::set_var("MACLATOR_TRACE_FILE", "1");
+                std::env::set_var("ATTESOR_TRACE_FILE", "1");
                 args.remove(0);
             }
             "--dump-on-fault" => {
-                std::env::set_var("MACLATOR_DUMP_ON_FAULT", "1");
+                std::env::set_var("ATTESOR_DUMP_ON_FAULT", "1");
                 args.remove(0);
             }
             "--trace" => {
@@ -63,7 +75,7 @@ fn main() {
             }
             "--gpu" => {
                 // Route the guest's Metal API to the host GPU (see gpu.rs).
-                std::env::set_var("MACLATOR_GPU", "1");
+                std::env::set_var("ATTESOR_GPU", "1");
                 args.remove(0);
             }
             "--gpu-only" => {
@@ -73,7 +85,7 @@ fn main() {
                 if args.is_empty() {
                     usage();
                 }
-                std::env::set_var("MACLATOR_GPU_ONLY", args.remove(0));
+                std::env::set_var("ATTESOR_GPU_ONLY", args.remove(0));
             }
             "--interp" => {
                 jit::JIT_ENABLED.store(false, Ordering::Relaxed);
@@ -99,11 +111,11 @@ fn main() {
                 let exe = resolve_path(&args[0]);
                 match aot::build_standalone(&exe) {
                     Ok(n) => {
-                        eprintln!("maclator: translated {n} blocks of {exe} ahead of time");
+                        eprintln!("attesor: translated {n} blocks of {exe} ahead of time");
                         std::process::exit(0);
                     }
                     Err(e) => {
-                        eprintln!("maclator: aot: {e}");
+                        eprintln!("attesor: aot: {e}");
                         std::process::exit(1);
                     }
                 }
@@ -143,45 +155,46 @@ fn main() {
         if !jit::JIT_ENABLED.load(Ordering::Relaxed) {
             fwd.push("--interp".into());
         }
-        if std::env::var_os("MACLATOR_GPU").is_some() {
+        if std::env::var_os("ATTESOR_GPU").is_some() {
             fwd.push("--gpu".into());
-            if let Ok(o) = std::env::var("MACLATOR_GPU_ONLY") {
+            if let Ok(o) = std::env::var("ATTESOR_GPU_ONLY") {
                 fwd.push("--gpu-only".into());
                 fwd.push(o);
             }
         }
-        if std::env::var_os("MACLATOR_TRACE_FILE").is_some() {
+        if std::env::var_os("ATTESOR_TRACE_FILE").is_some() {
             fwd.push("--trace-file".into());
         } else if syscalls::TRACE.load(Ordering::Relaxed) {
             fwd.push("--trace".into());
         }
-        if std::env::var_os("MACLATOR_DUMP_ON_FAULT").is_some() {
+        if std::env::var_os("ATTESOR_DUMP_ON_FAULT").is_some() {
             fwd.push("--dump-on-fault".into());
         }
         spawn::configure(fwd);
     }
-    if std::env::var_os("MACLATOR_TRACE").is_some() {
+    if std::env::var_os("ATTESOR_TRACE").is_some() {
         syscalls::TRACE.store(true, Ordering::Relaxed);
     }
     let exe = resolve_path(&args[0]);
-    let gpu_active = std::env::var_os("MACLATOR_GPU").is_some()
-        && std::env::var("MACLATOR_GPU_ONLY").map(|o| args.iter().skip(1).any(|a| a.contains(&o))).unwrap_or(true);
+    let gpu_active = std::env::var_os("ATTESOR_GPU").is_some()
+        && std::env::var("ATTESOR_GPU_ONLY").map(|o| args.iter().skip(1).any(|a| a.contains(&o))).unwrap_or(true);
     let mut envp: Vec<String> = std::env::vars()
-        .filter(|(k, _)| !k.starts_with("MACLATOR_") || matches!(k.as_str(), "MACLATOR_DUMP_ON_FAULT" | "MACLATOR_GPU_BRIDGE" | "MACLATOR_JIT_THRESHOLD" | "MACLATOR_STATS" | "MACLATOR_FALLBACK_HIST"))
+        .filter(|(k, _)| !k.starts_with("MACLATOR_"))
+        .filter(|(k, _)| !k.starts_with("ATTESOR_") || matches!(k.as_str(), "ATTESOR_DUMP_ON_FAULT" | "ATTESOR_GPU_BRIDGE" | "ATTESOR_JIT_THRESHOLD" | "ATTESOR_STATS" | "ATTESOR_FALLBACK_HIST"))
         .map(|(k, v)| format!("{k}={v}"))
         .collect();
 
     if let Some(c) = sandbox::apply(&exe, &mut envp) {
         if syscalls::TRACE.load(Ordering::Relaxed) {
-            eprintln!("maclator: sandboxed guest, container {c}");
+            eprintln!("attesor: sandboxed guest, container {c}");
         }
     }
     if gpu_active && !gpu::inject(&mut envp) {
-        eprintln!("maclator: --gpu: libmclmetal.dylib not found (looked next to maclator, in ./gpu, ~/.maclator/gpu, $MACLATOR_GPU_DIR)");
+        eprintln!("attesor: --gpu: libmclmetal.dylib not found (looked next to attesor, in ./gpu, ~/.attesor/gpu, $ATTESOR_GPU_DIR)");
     }
-    if std::env::var_os("MACLATOR_TRACE_FILE").is_some() {
+    if std::env::var_os("ATTESOR_TRACE_FILE").is_some() {
         unsafe {
-            let path = format!("/tmp/maclator-trace-{}.log\0", libc::getpid());
+            let path = format!("/tmp/attesor-trace-{}.log\0", libc::getpid());
             let fd = libc::open(path.as_ptr() as *const libc::c_char, libc::O_WRONLY | libc::O_CREAT | libc::O_TRUNC, 0o644);
             if fd >= 0 {
                 libc::dup2(fd, 2);
@@ -196,12 +209,12 @@ fn main() {
     engine::install_debug_handler();
     let cp = commpage::CommPage::install();
     if syscalls::TRACE.load(Ordering::Relaxed) {
-        eprintln!("[maclator] commpage {} at {:#x}", if cp.in_place { "in place" } else { "redirected" }, cp.base);
+        eprintln!("[attesor] commpage {} at {:#x}", if cp.in_place { "in place" } else { "redirected" }, cp.base);
     }
     let (loaded, mut cpu) = match loader::load(&exe, &dyld, &args, &envp) {
         Ok(v) => v,
         Err(e) => {
-            eprintln!("maclator: {e}");
+            eprintln!("attesor: {e}");
             std::process::exit(1);
         }
     };
@@ -210,7 +223,7 @@ fn main() {
     let (lo, hi) = loaded.dyld.macho.vm_range();
     symbols::add_image(lo.wrapping_add(loaded.dyld.slide), hi.wrapping_add(loaded.dyld.slide), "dyld");
     if syscalls::TRACE.load(Ordering::Relaxed) {
-        eprintln!("[maclator] main at {:#x}, dyld entry {:#x}, sp {:#x}", loaded.main.base, loaded.entry, loaded.sp);
+        eprintln!("[attesor] main at {:#x}, dyld entry {:#x}, sp {:#x}", loaded.main.base, loaded.entry, loaded.sp);
     }
     {
         let m = &loaded.main.macho;

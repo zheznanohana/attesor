@@ -14,7 +14,7 @@
 //! worker threads laid out exactly as the kernel lays them out.
 
 use crate::hostsys;
-use maclator_core::cpu::Cpu;
+use attesor_core::cpu::Cpu;
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicI32, Ordering};
 use std::sync::mpsc::{channel, Receiver, Sender};
@@ -380,7 +380,7 @@ static ANON_MONITOR: Once = Once::new();
 fn anon_kq() -> i32 {
     ANON_MONITOR.call_once(|| {
         ANON_KQ.store(host_kqueue(), Ordering::SeqCst);
-        std::thread::Builder::new().name("maclator-workq".into()).spawn(anon_monitor).unwrap();
+        std::thread::Builder::new().name("attesor-workq".into()).spawn(anon_monitor).unwrap();
     });
     ANON_KQ.load(Ordering::SeqCst)
 }
@@ -452,7 +452,7 @@ static WLOG: Mutex<std::collections::VecDeque<String>> = Mutex::new(std::collect
 
 pub fn wlog_enabled() -> bool {
     static V: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
-    *V.get_or_init(|| std::env::var_os("MACLATOR_WL_LOG").is_some())
+    *V.get_or_init(|| std::env::var_os("ATTESOR_WL_LOG").is_some())
 }
 
 pub fn wlog(msg: String) {
@@ -473,7 +473,7 @@ pub fn dump_log() {
 
 fn owner_tracking() -> bool {
     static V: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
-    *V.get_or_init(|| std::env::var_os("MACLATOR_WL_NO_OWNER").is_none())
+    *V.get_or_init(|| std::env::var_os("ATTESOR_WL_NO_OWNER").is_none())
 }
 
 /// Thread identity as stored in dispatch locks: the port name with its low
@@ -507,7 +507,7 @@ fn with_wl<R>(f: impl FnOnce(&mut WlState) -> R) -> R {
 fn wl_mon_kq() -> i32 {
     WL_MONITOR.call_once(|| {
         WL_MON_KQ.store(host_kqueue(), Ordering::SeqCst);
-        std::thread::Builder::new().name("maclator-workloops".into()).spawn(wl_monitor).unwrap();
+        std::thread::Builder::new().name("attesor-workloops".into()).spawn(wl_monitor).unwrap();
     });
     WL_MON_KQ.load(Ordering::SeqCst)
 }
@@ -859,8 +859,8 @@ pub fn kernreturn(_cpu: &mut Cpu, a: &[u64; 8]) -> Result<u64, u64> {
             Ok(0)
         }
         op => {
-            if std::env::var_os("MACLATOR_TRACE").is_some() {
-                eprintln!("[maclator] unhandled workq op {:#x}", op);
+            if std::env::var_os("ATTESOR_TRACE").is_some() {
+                eprintln!("[attesor] unhandled workq op {:#x}", op);
             }
             Ok(0)
         }

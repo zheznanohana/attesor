@@ -3,6 +3,23 @@
 version = 4
 
 [[package]]
+name = "attesor"
+version = "0.1.0"
+dependencies = [
+ "attesor-core",
+ "iced-x86",
+ "libc",
+]
+
+[[package]]
+name = "attesor-core"
+version = "0.1.0"
+dependencies = [
+ "yaxpeax-arch",
+ "yaxpeax-arm",
+]
+
+[[package]]
 name = "autocfg"
 version = "1.5.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -24,8 +41,8 @@ dependencies = [
 name = "difftest"
 version = "0.1.0"
 dependencies = [
+ "attesor-core",
  "libc",
- "maclator-core",
 ]
 
 [[package]]
@@ -54,23 +71,6 @@ name = "libc"
 version = "0.2.189"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "3eaf3ede3fee6db1a4c2ee091bf8a8b4dccdc6d17f656fb07896ee72867612f2"
-
-[[package]]
-name = "maclator"
-version = "0.1.0"
-dependencies = [
- "iced-x86",
- "libc",
- "maclator-core",
-]
-
-[[package]]
-name = "maclator-core"
-version = "0.1.0"
-dependencies = [
- "yaxpeax-arch",
- "yaxpeax-arm",
-]
 
 [[package]]
 name = "num-traits"

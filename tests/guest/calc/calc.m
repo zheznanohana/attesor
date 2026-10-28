@@ -1,4 +1,4 @@
-// Minimal AppKit calculator used to exercise Maclator with a real GUI app.
+// Minimal AppKit calculator used to exercise Attesor with a real GUI app.
 #import <Cocoa/Cocoa.h>
 
 @interface Calc : NSObject <NSApplicationDelegate>
@@ -39,7 +39,7 @@
 - (void)applicationDidFinishLaunching:(NSNotification *)n {
     _win = [[NSWindow alloc] initWithContentRect:NSMakeRect(200, 200, 260, 330)
         styleMask:NSWindowStyleMaskTitled | NSWindowStyleMaskClosable backing:NSBackingStoreBuffered defer:NO];
-    _win.title = @"Maclator Calc";
+    _win.title = @"Attesor Calc";
     NSView *v = _win.contentView;
     _display = [NSTextField labelWithString:@"0"];
     _display.frame = NSMakeRect(10, 270, 240, 44);

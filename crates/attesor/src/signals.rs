@@ -4,7 +4,7 @@
 //! signals to guest handlers is not implemented yet (the host default action
 //! applies unless the guest ignores the signal).
 
-use maclator_core::cpu::Cpu;
+use attesor_core::cpu::Cpu;
 use std::sync::Mutex;
 
 #[derive(Clone, Copy, Default)]
@@ -48,7 +48,7 @@ pub fn sigaction(sig: i32, nsa: u64, osa: u64) -> Result<(), i32> {
         acts[sig as usize] = a;
         // Mirror "ignore" and "default" dispositions on the host so that
         // e.g. SIGPIPE-ignoring programs keep working.
-        let keep_dump = matches!(sig, libc::SIGSEGV | libc::SIGBUS) && std::env::var_os("MACLATOR_DUMP_ON_FAULT").is_some();
+        let keep_dump = matches!(sig, libc::SIGSEGV | libc::SIGBUS) && std::env::var_os("ATTESOR_DUMP_ON_FAULT").is_some();
         unsafe {
             if keep_dump {
             } else if a.handler == SIG_IGN {
@@ -62,6 +62,6 @@ pub fn sigaction(sig: i32, nsa: u64, osa: u64) -> Result<(), i32> {
 }
 
 pub fn sigreturn(_cpu: &mut Cpu, _uctx: u64, _infostyle: i32) {
-    eprintln!("maclator: sigreturn without a delivered signal");
+    eprintln!("attesor: sigreturn without a delivered signal");
     std::process::abort();
 }

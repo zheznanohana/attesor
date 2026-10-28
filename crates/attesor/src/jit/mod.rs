@@ -6,8 +6,8 @@ pub mod selftest;
 
 use emit::{StubKind, Unit, EXIT_CONTINUE, EXIT_PENDING, EXIT_SVC, HELPER_COMMPAGE, HELPER_INTERP};
 use iced_x86::BlockEncoderOptions;
-use maclator_core::cpu::Cpu;
-use maclator_core::interp::{self, Exit};
+use attesor_core::cpu::Cpu;
+use attesor_core::interp::{self, Exit};
 use std::cell::{Cell, RefCell};
 use std::collections::HashMap;
 
@@ -37,10 +37,10 @@ pub const IBTC_SIZE: usize = 32768;
 const CODE_CACHE_SIZE: u64 = 4 << 30;
 
 std::arch::global_asm!(
-    ".globl _maclator_jit_enter",
-    ".globl _maclator_jit_exit",
+    ".globl _attesor_jit_enter",
+    ".globl _attesor_jit_exit",
     ".p2align 4",
-    "_maclator_jit_enter:",
+    "_attesor_jit_enter:",
     "push rbp",
     "mov rbp, rsp",
     "push rbx",
@@ -52,7 +52,7 @@ std::arch::global_asm!(
     "mov r15, rdi",
     "jmp rsi",
     ".p2align 4",
-    "_maclator_jit_exit:",
+    "_attesor_jit_exit:",
     "add rsp, 8",
     "pop r15",
     "pop r14",
@@ -64,8 +64,8 @@ std::arch::global_asm!(
 );
 
 extern "C" {
-    fn maclator_jit_enter(cpu: *mut Cpu, code: u64);
-    fn maclator_jit_exit();
+    fn attesor_jit_enter(cpu: *mut Cpu, code: u64);
+    fn attesor_jit_exit();
 }
 
 pub struct CodeCache {
@@ -119,7 +119,7 @@ static STATS_JIT_ENTRIES: AtomicU64 = AtomicU64::new(0);
 /// Executions of a block in the interpreter before it is JIT-compiled.
 fn hot_threshold() -> u32 {
     static T: OnceLock<u32> = OnceLock::new();
-    *T.get_or_init(|| std::env::var("MACLATOR_JIT_THRESHOLD").ok().and_then(|v| v.parse().ok()).unwrap_or(24))
+    *T.get_or_init(|| std::env::var("ATTESOR_JIT_THRESHOLD").ok().and_then(|v| v.parse().ok()).unwrap_or(24))
 }
 
 thread_local! {
@@ -145,7 +145,7 @@ impl CodeCache {
         let len = (len + 15) & !15;
         let p = self.code_ptr.fetch_add(len, Ordering::SeqCst);
         if p + len > self.slot_ptr.load(Ordering::SeqCst) {
-            panic!("maclator: JIT code cache exhausted");
+            panic!("attesor: JIT code cache exhausted");
         }
         p
     }
@@ -169,12 +169,12 @@ pub fn register_block(pc: u64, host: u64) {
 
 // ---------------- helpers called from generated code ----------------
 
-static HIST_ON: std::sync::LazyLock<bool> = std::sync::LazyLock::new(|| std::env::var_os("MACLATOR_FALLBACK_HIST").is_some());
+static HIST_ON: std::sync::LazyLock<bool> = std::sync::LazyLock::new(|| std::env::var_os("ATTESOR_FALLBACK_HIST").is_some());
 static HIST: Mutex<Option<HashMap<String, u64>>> = Mutex::new(None);
 static HIST_N: AtomicU64 = AtomicU64::new(0);
 
 /// Count executions of instructions that fall back to the interpreter, by mnemonic,
-/// and periodically write the top of the histogram to /tmp/maclator-hist-<pid>.txt.
+/// and periodically write the top of the histogram to /tmp/attesor-hist-<pid>.txt.
 fn note_fallback_exec(insn: u32) {
     thread_local! { static TICK: Cell<u32> = const { Cell::new(0) }; }
     // Sample 1 in 16 executions to keep the overhead small.
@@ -182,7 +182,7 @@ fn note_fallback_exec(insn: u32) {
     if t % 16 != 0 {
         return;
     }
-    let text = maclator_core::disasm::disasm(insn);
+    let text = attesor_core::disasm::disasm(insn);
     // mnemonic plus operand shape (register numbers and immediates collapsed)
     let mn: String = text.chars().map(|c| if c.is_ascii_digit() { 'N' } else { c }).collect::<String>().split_whitespace().collect::<Vec<_>>().join(" ");
     let mn = if mn.len() > 60 { mn[..60].to_string() } else { mn };
@@ -195,7 +195,7 @@ fn note_fallback_exec(insn: u32) {
         for (k, n) in v.iter().take(60) {
             out.push_str(&format!("{n:>12} {k}\n"));
         }
-        let _ = std::fs::write(format!("/tmp/maclator-hist-{}.txt", std::process::id()), out);
+        let _ = std::fs::write(format!("/tmp/attesor-hist-{}.txt", std::process::id()), out);
     }
 }
 
@@ -216,11 +216,11 @@ extern "C" fn helper_interp(cpu: *mut Cpu, insn: u32, pc: u64) -> u64 {
 }
 
 extern "C" fn helper_commpage(addr: u64) -> u64 {
-    maclator_core::mem::host(addr) as u64
+    attesor_core::mem::host(addr) as u64
 }
 
 pub fn commpage_checks() -> bool {
-    maclator_core::mem::COMMPAGE_REDIRECT.load(Ordering::Relaxed) != 0
+    attesor_core::mem::COMMPAGE_REDIRECT.load(Ordering::Relaxed) != 0
 }
 
 /// Read guest instruction words, verifying page readability once per page.
@@ -243,7 +243,7 @@ pub fn guest_reader() -> impl Fn(u64) -> Option<u32> {
 
 fn verify_mode() -> bool {
     static V: OnceLock<bool> = OnceLock::new();
-    *V.get_or_init(|| std::env::var_os("MACLATOR_JIT_VERIFY").is_some())
+    *V.get_or_init(|| std::env::var_os("ATTESOR_JIT_VERIFY").is_some())
 }
 
 fn emit_unit(pc: u64, slot_padding: usize) -> Unit {
@@ -355,8 +355,8 @@ pub fn invalidate_range(addr: u64, len: u64) {
     }
     victims.sort_unstable();
     victims.dedup();
-    if std::env::var_os("MACLATOR_TRACE").is_some() {
-        eprintln!("[maclator] invalidating {} units ({:#x}+{:#x})", victims.len(), addr, len);
+    if std::env::var_os("ATTESOR_TRACE").is_some() {
+        eprintln!("[attesor] invalidating {} units ({:#x}+{:#x})", victims.len(), addr, len);
     }
     let mut blocks = BLOCKS.write().unwrap();
     for id in victims {
@@ -418,9 +418,9 @@ pub fn stats_snapshot() -> (u64, u64, u64, u64, u64) {
 
 pub fn flush_profile() {
     crate::aot::save_profile();
-    if std::env::var_os("MACLATOR_STATS").is_some() {
+    if std::env::var_os("ATTESOR_STATS").is_some() {
         eprintln!(
-            "[maclator] jit: {} blocks, {} insns translated ({} via interpreter helper), {:.1} ms translating; {} block entries; {} blocks interpreted (cold)",
+            "[attesor] jit: {} blocks, {} insns translated ({} via interpreter helper), {:.1} ms translating; {} block entries; {} blocks interpreted (cold)",
             STATS_BLOCKS.load(Ordering::Relaxed),
             STATS_INSNS.load(Ordering::Relaxed),
             STATS_FALLBACK.load(Ordering::Relaxed),
@@ -434,7 +434,7 @@ pub fn flush_profile() {
 // ---------------- dispatcher ----------------
 
 fn setup_cpu(cpu: &mut Cpu) {
-    cpu.jit_exit = maclator_jit_exit as usize as u64;
+    cpu.jit_exit = attesor_jit_exit as usize as u64;
     cpu.helpers[HELPER_INTERP] = helper_interp as usize as u64;
     cpu.helpers[HELPER_COMMPAGE] = helper_commpage as usize as u64;
     IBTC.with(|t| {
@@ -484,7 +484,7 @@ fn cpu_clone(c: &Cpu) -> Box<Cpu> {
 /// Run one block in the interpreter (reference), undo its memory writes,
 /// then run the translated block and compare.
 fn verify_block(cpu: &mut Cpu, host: u64) {
-    use maclator_core::mem;
+    use attesor_core::mem;
     mem::LOGGING_ENABLED.store(true, Ordering::Relaxed);
     let start_pc = cpu.pc;
     let mut r = cpu_clone(cpu);
@@ -513,7 +513,7 @@ fn verify_block(cpu: &mut Cpu, host: u64) {
     for (a, old, n) in log.iter().rev() {
         unsafe { std::ptr::copy_nonoverlapping(old.as_ptr(), mem::host(*a), *n) };
     }
-    unsafe { maclator_jit_enter(cpu, host) };
+    unsafe { attesor_jit_enter(cpu, host) };
     // Blocks with atomics race with other threads between the two runs.
     let racy = executed.iter().any(|&(_, i)| {
         (i & 0x3F00_0000 == 0x0800_0000) || (i & 0x3B20_0C00 == 0x3820_0000 && (i >> 26) & 1 == 0)
@@ -552,7 +552,7 @@ fn verify_block(cpu: &mut Cpu, host: u64) {
     if !diffs.is_empty() {
         eprintln!("\n[verify] MISMATCH in block at {:#x} {}", start_pc, crate::symbols::describe(start_pc));
         for (pc, insn) in &executed {
-            eprintln!("    {:#x}: {:08x}  {}", pc, insn, maclator_core::disasm::disasm(*insn));
+            eprintln!("    {:#x}: {:08x}  {}", pc, insn, attesor_core::disasm::disasm(*insn));
         }
         for d in diffs.iter().take(12) {
             eprintln!("  {d}");
@@ -567,7 +567,7 @@ fn verify_block(cpu: &mut Cpu, host: u64) {
 /// Interpret one basic block. Returns false when the thread should stop.
 fn interp_block(cpu: &mut Cpu) -> bool {
     for _ in 0..emit::MAX_BLOCK_INSNS {
-        let insn = unsafe { maclator_core::mem::r32(cpu.pc) };
+        let insn = unsafe { attesor_core::mem::r32(cpu.pc) };
         let term = emit::is_terminator(insn);
         if let Err(e) = interp::exec(cpu, insn) {
             return crate::engine::handle_exit(cpu, e);
@@ -590,7 +590,7 @@ pub fn run(cpu: &mut Cpu) {
     loop {
         if cpu.pc == last_pc {
             repeats += 1;
-            if repeats == 20000 && std::env::var_os("MACLATOR_SPIN_DEBUG").is_some() {
+            if repeats == 20000 && std::env::var_os("ATTESOR_SPIN_DEBUG").is_some() {
                 let found = lookup(cpu.pc);
                 let hot = HOT.with(|h| h.borrow().get(&cpu.pc).copied());
                 let msg = format!("[spin] pc={:#x} lookup={:?} hot={:?} exit_reason={} exit_data={:#x} epoch={} my_epoch={}\n", cpu.pc, found, hot, cpu.exit_reason, cpu.exit_data, EPOCH.load(Ordering::Relaxed), MY_EPOCH.with(|e| e.get()));
@@ -640,7 +640,7 @@ pub fn run(cpu: &mut Cpu) {
             verify_block(cpu, host);
         } else {
             ibtc_insert(pc, host);
-            unsafe { maclator_jit_enter(cpu, host) };
+            unsafe { attesor_jit_enter(cpu, host) };
         }
         match cpu.exit_reason {
             EXIT_CONTINUE => {

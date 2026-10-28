@@ -1,7 +1,7 @@
 # GPU passthrough (Metal → host GPU)
 
 
-`maclator --gpu ./app` routes the guest's Metal API to the host's real GPU (AMD RX 460 on the test Mac).
+`attesor --gpu ./app` routes the guest's Metal API to the host's real GPU (AMD RX 460 on the test Mac).
 Verified: `tests/guest/metaltri` (clear + triangle + readback, `STRESS=1` for ANGLE-like load) and
 Chromium 157 with ANGLE-Metal (GPU compositing, rasterization, WebGL, WebGPU, Graphite enabled).
 
@@ -17,11 +17,11 @@ starved the renderers; flags: `--use-angle=metal --use-gl=angle --enable-gpu --i
 | bridge v1 (plist RPC per Metal message) | ~100 ms (10 fps) | ~100 bridged calls/frame; ~97 % of the frame was guest-side marshalling of one call: `renderCommandEncoderWithDescriptor:` (22 ms, generic descriptor introspection) |
 | bridge v2 (this section) | **16.7 ms (vsync-capped 60 fps)** | still 60 fps with 400 arcs; guest time spent in the bridge fell from ~4300 ms to ~650 ms per 5 s |
 
-### Design (all in `gpu/` + `crates/maclator/src/gpu.rs`)
-- `gpu/mclmetal.m` → **guest** arm64 `libmclmetal.dylib`, injected with `DYLD_INSERT_LIBRARIES` (maclator does this
+### Design (all in `gpu/` + `crates/attesor/src/gpu.rs`)
+- `gpu/mclmetal.m` → **guest** arm64 `libmclmetal.dylib`, injected with `DYLD_INSERT_LIBRARIES` (attesor does this
   for `--gpu`, then the shim `unsetenv`s it). It interposes `MTLCreateSystemDefaultDevice/MTLCopyAllDevices` and
   returns `MCLProxy` (NSProxy) objects for host Metal objects.
-- `gpu/mclbridge.m` → **host** x86-64 `libmclbridge.dylib`, dlopen'ed by maclator (`gpu.rs`). Handle table of real
+- `gpu/mclbridge.m` → **host** x86-64 `libmclbridge.dylib`, dlopen'ed by attesor (`gpu.rs`). Handle table of real
   Metal objects; calls executed with `NSInvocation`. Guest and host share one address space, so raw pointers
   (`setVertexBytes`, `getBytes`, `MTLBuffer.contents`) just work.
 - `gpu/mclproto.h`: wire format shared by both sides.
@@ -62,13 +62,13 @@ counts, flushes per commit, top selectors by inclusive time, top legacy selector
 per commit, 0 legacy calls, ~0.6 s of guest time per 5 s.
 Debug toggles (guest env): `MCL_NOFAST=1` (everything through `forwardInvocation:`; drops are disabled in this mode),
 `MCL_NOASYNC`, `MCL_NOCACHE`, `MCL_NOBATCH` (every call synchronous), `MCL_OLDDESC` (plist descriptors),
-`MCL_TRACE=1` (per message, host side also mentions/drops of handles). `MACLATOR_GPU_SPIN=caller,bridge` tunes the
+`MCL_TRACE=1` (per message, host side also mentions/drops of handles). `ATTESOR_GPU_SPIN=caller,bridge` tunes the
 spin-before-park of the thread hand-off in `gpu.rs` (default 20,20 µs; measured: no effect at this call rate).
 
 - `gpu/build.sh` builds everything (also a native arm64 *loopback* build, `out/metaltri_loop`, which runs shim+bridge
   in one process on an Apple Silicon Mac — debug marshalling there first; the fast path works in loopback too).
-- Install on the test Mac: `libmclbridge.dylib` + `libmclmetal.dylib` in `~/bin/gpu/` (also searched: next to maclator,
-  `~/.maclator/gpu`, `$MACLATOR_GPU_DIR`; the original v1 libraries are in `~/bin/gpu.orig/`).
+- Install on the test Mac: `libmclbridge.dylib` + `libmclmetal.dylib` in `~/bin/gpu/` (also searched: next to attesor,
+  `~/.attesor/gpu`, `$ATTESOR_GPU_DIR`; the original v1 libraries are in `~/bin/gpu.orig/`).
 
 Hard-won constraints (do not regress):
 1. **Host frameworks must never run on a guest thread.** The kernel has one special reply port per thread; guest
@@ -77,7 +77,7 @@ Hard-won constraints (do not regress):
    every guest thread its own bridge thread (persistent hand-off slot, spin then park).
 2. Host CoreFoundation/Metal must be initialised **before the guest starts** (`--gpu` preloads the bridge and runs
    `mcl_warmup` on a scratch thread); initialising them mid-run disturbed guest XPC too.
-3. Never pass `DYLD_INSERT_LIBRARIES=<arm64 dylib>` to host processes (`spawn.rs` scrubs it; maclator re-injects).
+3. Never pass `DYLD_INSERT_LIBRARIES=<arm64 dylib>` to host processes (`spawn.rs` scrubs it; attesor re-injects).
 4. `dispatch_data_t` is toll-free bridged to NSData — check for it before NSData (`newLibraryWithData:`).
 5. Reply plists must be parsed from a private copy (parsed objects can reference the source bytes).
 6. Chromium's GPU watchdog / objc-zombie crashes look like `str wzr,[xzr]` in the Chromium Framework

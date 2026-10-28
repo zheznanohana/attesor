@@ -1,8 +1,8 @@
 //! JIT self-test: translate single instructions and compare the result with
-//! the reference interpreter (`maclator --selftest-jit [class] [count]`).
+//! the reference interpreter (`attesor --selftest-jit [class] [count]`).
 
 use super::*;
-use maclator_core::disasm::disasm;
+use attesor_core::disasm::disasm;
 use super::emit::DEAD_FLAG_SKIPS;
 
 struct Rng(u64);
@@ -135,11 +135,11 @@ fn run_selftest_fuse(count: usize, deep: bool) {
         if STATS_FALLBACK.load(Ordering::Relaxed) == fb0 {
             native += 1;
         }
-        unsafe { maclator_jit_enter(&mut *j, host) };
+        unsafe { attesor_jit_enter(&mut *j, host) };
         let mut hops = 0;
         while deep && j.exit_reason != EXIT_SVC && j.exit_reason != EXIT_PENDING && hops < 6 {
             let h2 = lookup_or_translate(j.pc);
-            unsafe { maclator_jit_enter(&mut *j, h2) };
+            unsafe { attesor_jit_enter(&mut *j, h2) };
             hops += 1;
         }
         let pending = PENDING.with(|p| p.take());
@@ -260,7 +260,7 @@ fn run_selftest_blocks(count: usize) {
         let fb0 = STATS_FALLBACK.load(Ordering::Relaxed);
         let host = lookup_or_translate(page);
         fallbacks += STATS_FALLBACK.load(Ordering::Relaxed) - fb0;
-        unsafe { maclator_jit_enter(&mut *j, host) };
+        unsafe { attesor_jit_enter(&mut *j, host) };
         let pending = PENDING.with(|p| p.take());
         if j.exit_reason == EXIT_PENDING || pending.is_some() {
             skipped += 1;
@@ -319,7 +319,7 @@ pub fn run_selftest(class: &str, count: usize) {
             (u32::from_str_radix(p[0], 16).unwrap(), u32::from_str_radix(p[1], 16).unwrap())
         }
     };
-    let is_mem = class == "ldst" || std::env::var_os("MACLATOR_SELFTEST_MEM").is_some();
+    let is_mem = class == "ldst" || std::env::var_os("ATTESOR_SELFTEST_MEM").is_some();
     // The instruction under test plus an svc terminator live at pc. PC-relative
     // literal loads (`ldr ..., $±imm19<<2`) can reach ±1MB from pc, so centre pc
     // in a 4MB window: every literal target stays mapped (zeroed) and the result
@@ -362,7 +362,7 @@ pub fn run_selftest(class: &str, count: usize) {
             }
         }
         // SIMD structure loads/stores with register post-increment
-        if is_mem && insn & 0xBF00_0000 == 0x0C00_0000 && std::env::var_os("MACLATOR_SELFTEST_SIMDMEM").is_none() {
+        if is_mem && insn & 0xBF00_0000 == 0x0C00_0000 && std::env::var_os("ATTESOR_SELFTEST_SIMDMEM").is_none() {
             skipped += 1;
             continue;
         }
@@ -372,7 +372,7 @@ pub fn run_selftest(class: &str, count: usize) {
         }
         // Opt-in FPCR rounding coverage for instructions that honor it. Keep
         // the general arithmetic suite at its documented default FPCR.
-        if std::env::var_os("MACLATOR_SELFTEST_FPCR").is_some() {
+        if std::env::var_os("ATTESOR_SELFTEST_FPCR").is_some() {
             init.fpcr = (rng.next() & 3) << 22;
         }
         init.pc = pc;
@@ -405,7 +405,7 @@ pub fn run_selftest(class: &str, count: usize) {
         if STATS_FALLBACK.load(Ordering::Relaxed) == fb0 {
             native += 1;
         }
-        unsafe { maclator_jit_enter(&mut *j, host) };
+        unsafe { attesor_jit_enter(&mut *j, host) };
         let pending = PENDING.with(|p| p.take());
         if j.exit_reason == EXIT_PENDING || pending.is_some() {
             skipped += 1;
@@ -457,7 +457,7 @@ fn clone_cpu(c: &Cpu) -> Cpu {
 }
 
 
-/// `maclator --jit-dump <hex insn>...`: translate the instructions as one block and print the
+/// `attesor --jit-dump <hex insn>...`: translate the instructions as one block and print the
 /// generated x86 code as hex (disassemble with objdump on a .byte file).
 pub fn dump_block(words: &[u32]) {
     let page = unsafe {

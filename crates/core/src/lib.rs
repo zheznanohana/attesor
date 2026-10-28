@@ -1,4 +1,4 @@
-//! Maclator core: guest (AArch64) CPU state, the reference interpreter, and
+//! Attesor core: guest (AArch64) CPU state, the reference interpreter, and
 //! helpers shared by the JIT/AOT translator.
 
 pub mod cpu;

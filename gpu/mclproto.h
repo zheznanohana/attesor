@@ -1,4 +1,4 @@
-// Wire format of the Maclator Metal bridge fast path (shared by mclmetal.m and mclbridge.m).
+// Wire format of the Attesor Metal bridge fast path (shared by mclmetal.m and mclbridge.m).
 //
 // A batch (op 4) is:   MclMsgHdr, then records. Every record starts with a 32-byte header and is a
 // multiple of 8 bytes long; arguments follow the header. Little endian on both sides.

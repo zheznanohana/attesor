@@ -1,6 +1,6 @@
-use maclator_core::cpu::Cpu;
-use maclator_core::disasm::disasm;
-use maclator_core::interp::{self, Exit};
+use attesor_core::cpu::Cpu;
+use attesor_core::disasm::disasm;
+use attesor_core::interp::{self, Exit};
 use std::collections::BTreeMap;
 use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 

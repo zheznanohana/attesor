@@ -18,9 +18,9 @@ pub struct SysResult {
 
 #[cfg(target_arch = "x86_64")]
 std::arch::global_asm!(
-    ".globl _maclator_host_syscall",
+    ".globl _attesor_host_syscall",
     ".p2align 4",
-    "_maclator_host_syscall:",
+    "_attesor_host_syscall:",
     // rdi = number (with class), rsi = args[8], rdx = out[3]
     "push rbp",
     "mov rbp, rsp",
@@ -55,14 +55,14 @@ std::arch::global_asm!(
 
 #[cfg(target_arch = "x86_64")]
 extern "C" {
-    fn maclator_host_syscall(nr: u64, args: *const u64, out: *mut u64);
+    fn attesor_host_syscall(nr: u64, args: *const u64, out: *mut u64);
 }
 
 #[cfg(target_arch = "x86_64")]
 #[inline]
 pub fn raw(nr: u64, args: &[u64; 8]) -> SysResult {
     let mut out = [0u64; 3];
-    unsafe { maclator_host_syscall(nr, args.as_ptr(), out.as_mut_ptr()) };
+    unsafe { attesor_host_syscall(nr, args.as_ptr(), out.as_mut_ptr()) };
     SysResult { rax: out[0], rdx: out[1], carry: out[2] != 0 }
 }
 

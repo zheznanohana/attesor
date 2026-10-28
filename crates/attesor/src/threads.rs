@@ -4,7 +4,7 @@
 //!
 //! Every guest thread runs on its own host thread with its own `Cpu`.
 
-use maclator_core::cpu::Cpu;
+use attesor_core::cpu::Cpu;
 use std::sync::atomic::{AtomicU32, AtomicU64, AtomicUsize, Ordering};
 use std::sync::Mutex;
 
@@ -23,7 +23,7 @@ const PTHREAD_START_SUSPENDED: u64 = 0x0200_0000;
 
 // DISPATCHFUNC | FINEPRIO | BSDTHREADCTL | SETSELF | QOS_MAINTENANCE | QOS_DEFAULT | KEVENT.
 // Workloops are not offered: libdispatch then drives everything through the
-// kevent workqueue, which Maclator emulates on top of a host kqueue.
+// kevent workqueue, which Attesor emulates on top of a host kqueue.
 const PTHREAD_FEATURE_SUPPORTED: u64 = 0x01 | 0x02 | 0x04 | 0x08 | 0x10 | 0x4000_0000 | 0x40 | 0x80;
 
 /// bsdthread_register(threadstart, wqthread, pthsize, init_data, init_data_size, dispatchqueue_offset)

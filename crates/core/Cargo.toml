@@ -1,8 +1,8 @@
 [package]
-name = "maclator-core"
+name = "attesor-core"
 version = "0.1.0"
 edition = "2021"
-description = "Guest ARM64 CPU model, decoder and reference interpreter for Maclator"
+description = "Guest ARM64 CPU model, decoder and reference interpreter for Attesor"
 
 [dependencies]
 yaxpeax-arch = "0.3"

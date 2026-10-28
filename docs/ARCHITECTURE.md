@@ -1,32 +1,32 @@
 # Architecture
 
-How Maclator is put together. (Older notes call the Intel test machine "the test Mac"; it is simply the Intel Mac the project is developed against.)
+How Attesor is put together. (Older notes call the Intel test machine "the test Mac"; it is simply the Intel Mac the project is developed against.)
 
 ## Architecture
 
-Workspace: `crates/core` (CPU state, interpreter, softfloat, mem), `crates/maclator` (runtime),
+Workspace: `crates/core` (CPU state, interpreter, softfloat, mem), `crates/attesor` (runtime),
 `crates/difftest`.
 
 - `core/interp/*` — reference AArch64 interpreter (dp, ldst, simd incl. FP16 `fp16.rs`, sys).
   It is the semantic ground truth; JIT falls back to it per instruction (`helper_interp`).
-- `maclator/loader.rs, macho.rs` — loads the main Mach-O + arm64 dyld at fixed addresses;
+- `attesor/loader.rs, macho.rs` — loads the main Mach-O + arm64 dyld at fixed addresses;
   the *guest's own dyld* then maps the shared cache and dylibs.
-- `maclator/cache.rs` — emulates `shared_region_*` syscalls; maps the cache at `0x6_0000_0000`.
-- `maclator/paths.rs` — redirects `/System/**/dyld` cache paths to `--sysroot`; tracks dirfd
+- `attesor/cache.rs` — emulates `shared_region_*` syscalls; maps the cache at `0x6_0000_0000`.
+- `attesor/paths.rs` — redirects `/System/**/dyld` cache paths to `--sysroot`; tracks dirfd
   virtual paths (dyld walks paths with `openat(dirfd,"rel")`); `discover_sysroot()`.
-- `maclator/syscalls.rs` — BSD syscall + Mach trap emulation/pass-through (see "Emulation notes").
-- `maclator/hostsys.rs` — raw x86-64 Darwin syscall/Mach-trap trampoline (8 args).
-- `maclator/workq.rs` — libdispatch workqueue/workloop/kevent emulation (worker threads,
+- `attesor/syscalls.rs` — BSD syscall + Mach trap emulation/pass-through (see "Emulation notes").
+- `attesor/hostsys.rs` — raw x86-64 Darwin syscall/Mach-trap trampoline (8 args).
+- `attesor/workq.rs` — libdispatch workqueue/workloop/kevent emulation (worker threads,
   single event-manager rule, QoS restore, wl monitors).
-- `maclator/spawn.rs` — `posix_spawn/execve`: arm64-only Mach-Os are re-launched through
-  maclator with forwarded flags (`--dyld --sysroot --interp --trace --dump-on-fault`).
-- `maclator/iokit.rs` — `mach_msg2` shim: fake Apple-Silicon-only IOKit services
+- `attesor/spawn.rs` — `posix_spawn/execve`: arm64-only Mach-Os are re-launched through
+  attesor with forwarded flags (`--dyld --sysroot --interp --trace --dump-on-fault`).
+- `attesor/iokit.rs` — `mach_msg2` shim: fake Apple-Silicon-only IOKit services
   (`AppleDiagnosticDataAccessReadOnly`), and thread suspend/resume/get_state neutralisation.
-- `maclator/jit/{mod,emit,selftest}.rs` — x86-64 JIT (iced-x86), tiering (interpret cold
-  blocks, translate after `MACLATOR_JIT_THRESHOLD`, default 24), block chaining via patchable
+- `attesor/jit/{mod,emit,selftest}.rs` — x86-64 JIT (iced-x86), tiering (interpret cold
+  blocks, translate after `ATTESOR_JIT_THRESHOLD`, default 24), block chaining via patchable
   slots, per-thread IBTC (32768 entries), per-unit precise invalidation (`INDEX`).
-- `maclator/aot.rs` — persistent translation cache (`MCLAOT04`); see below.
-- `maclator/engine.rs` — run loop, fault/USR1/USR2 dump handlers. `signals.rs`, `threads.rs`.
+- `attesor/aot.rs` — persistent translation cache (`MCLAOT04`); see below.
+- `attesor/engine.rs` — run loop, fault/USR1/USR2 dump handlers. `signals.rs`, `threads.rs`.
 
 ### AOT cache
 Images registered: main exe (fixed base), dyld, shared cache, and **every dyld-loaded arm64
@@ -55,7 +55,7 @@ Processes that are killed (`kill -9`) do not save profiles; quit gracefully (e.g
 - Thread suspend/resume/get_state MIG messages (ids 3605/3606/3603) neutralised
   (Chromium's stack-sampling profiler otherwise deadlocks the process).
 - Dispatch event manager: host kqueue drops the `qos` (event-manager flag) on fired events →
-  Maclator records each knote's QoS at registration and restores it; only one manager thread at
+  Attesor records each knote's QoS at registration and restores it; only one manager thread at
   a time (libdispatch aborts otherwise).
 - FP: ARM default NaN vs x86 "real indefinite" fixed up in JIT scalar+vector arithmetic. FPCR
   rounding/DN/FZ modes are ignored by JIT-native FP (assumes defaults). QC (saturation) flag

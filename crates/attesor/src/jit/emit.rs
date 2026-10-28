@@ -11,8 +11,8 @@
 //!    instruction; all guest state is in memory, so this is always safe.
 
 use iced_x86::code_asm::*;
-use maclator_core::cpu::off;
-use maclator_core::interp::simd::vfp_expand_imm;
+use attesor_core::cpu::off;
+use attesor_core::interp::simd::vfp_expand_imm;
 use std::collections::HashMap;
 
 pub const HELPER_INTERP: usize = 0;
@@ -658,13 +658,13 @@ fn flags_dead_at(mut pc: u64, read: &dyn Fn(u64) -> Option<u32>) -> bool {
     false
 }
 
-/// Debugging aid: MACLATOR_JIT_DISABLE=dpimm,branch,ldst,dpreg routes those
+/// Debugging aid: ATTESOR_JIT_DISABLE=dpimm,branch,ldst,dpreg routes those
 /// instruction classes to the interpreter.
 fn disabled_classes() -> u32 {
     use std::sync::OnceLock;
     static D: OnceLock<u32> = OnceLock::new();
     *D.get_or_init(|| {
-        let v = std::env::var("MACLATOR_JIT_DISABLE").unwrap_or_default();
+        let v = std::env::var("ATTESOR_JIT_DISABLE").unwrap_or_default();
         let mut m = 0;
         for p in v.split(',') {
             m |= match p {
@@ -975,7 +975,7 @@ impl<'a> E<'a> {
         }
         if opc == 1 {
             // BFM (BFI / BFXIL / BFC): dst = (dst & ~tmask) | (((dst & ~wmask) | (ROR(src, immr) & wmask)) & tmask)
-            let Some((wmask, tmask)) = maclator_core::interp::decode_bit_masks(n, imms, immr, false, dsz) else {
+            let Some((wmask, tmask)) = attesor_core::interp::decode_bit_masks(n, imms, immr, false, dsz) else {
                 return false;
             };
             self.ld(rax, rn, false, sf);
@@ -2466,7 +2466,7 @@ impl<'a> E<'a> {
                 return false;
             }
             let imm8 = (bits(insn, 18, 16) << 5) | bits(insn, 9, 5);
-            let mut imm = maclator_core::interp::simd::adv_simd_expand_imm(op, cmode, imm8);
+            let mut imm = attesor_core::interp::simd::adv_simd_expand_imm(op, cmode, imm8);
             if op == 1 && cmode < 0b1110 {
                 imm = !imm;
             }
@@ -3690,7 +3690,7 @@ impl<'a> E<'a> {
                 return false;
             }
             let imm8 = (bits(insn, 18, 16) << 5) | bits(insn, 9, 5);
-            let imm = maclator_core::interp::simd::adv_simd_expand_imm(op, 0b1111, imm8);
+            let imm = attesor_core::interp::simd::adv_simd_expand_imm(op, 0b1111, imm8);
             self.mov_imm(rax, imm);
             self.vst_rax(rd, q);
             return true;
@@ -3888,7 +3888,7 @@ impl<'a> E<'a> {
                 return false;
             }
             let imm8 = (bits(insn, 18, 16) << 5) | bits(insn, 9, 5);
-            let imm = maclator_core::interp::simd::adv_simd_expand_imm(op, cmode, imm8);
+            let imm = attesor_core::interp::simd::adv_simd_expand_imm(op, cmode, imm8);
             self.vld(xmm0, rd, q);
             self.vconst(xmm1, imm);
             if op == 0 {
