@@ -21,7 +21,7 @@ const SHIM_NAME: &str = "libmclmetal.dylib";
 const BRIDGE_NAME: &str = "libmclbridge.dylib";
 
 /// Directories searched for the GPU libraries: $ATTESOR_GPU_DIR, next to the executable,
-/// then ~/.attesor/gpu (and the legacy ~/.maclator/gpu).
+/// then ~/.attesor/gpu.
 fn search_dirs() -> Vec<std::path::PathBuf> {
     let mut v = Vec::new();
     if let Some(d) = std::env::var_os("ATTESOR_GPU_DIR") {
@@ -35,7 +35,6 @@ fn search_dirs() -> Vec<std::path::PathBuf> {
     }
     if let Some(h) = std::env::var_os("HOME") {
         v.push(std::path::Path::new(&h).join(".attesor/gpu"));
-        v.push(std::path::Path::new(&h).join(".maclator/gpu"));
     }
     v
 }

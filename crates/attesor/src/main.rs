@@ -35,19 +35,7 @@ fn usage() -> ! {
     std::process::exit(2);
 }
 
-/// Attesor was called Maclator: accept the old MACLATOR_* variables as ATTESOR_* (the new name wins).
-fn alias_legacy_env() {
-    for (k, v) in std::env::vars_os() {
-        let Some(rest) = k.to_str().and_then(|k| k.strip_prefix("MACLATOR_")) else { continue };
-        let new = format!("ATTESOR_{rest}");
-        if std::env::var_os(&new).is_none() {
-            std::env::set_var(new, v);
-        }
-    }
-}
-
 fn main() {
-    alias_legacy_env();
     let mut args: Vec<String> = std::env::args().skip(1).collect();
     let mut dyld = std::env::var("ATTESOR_DYLD").unwrap_or_else(|_| "/usr/lib/dyld".to_string());
     while let Some(a) = args.first().cloned() {
@@ -179,7 +167,6 @@ fn main() {
     let gpu_active = std::env::var_os("ATTESOR_GPU").is_some()
         && std::env::var("ATTESOR_GPU_ONLY").map(|o| args.iter().skip(1).any(|a| a.contains(&o))).unwrap_or(true);
     let mut envp: Vec<String> = std::env::vars()
-        .filter(|(k, _)| !k.starts_with("MACLATOR_"))
         .filter(|(k, _)| !k.starts_with("ATTESOR_") || matches!(k.as_str(), "ATTESOR_DUMP_ON_FAULT" | "ATTESOR_GPU_BRIDGE" | "ATTESOR_JIT_THRESHOLD" | "ATTESOR_STATS" | "ATTESOR_FALLBACK_HIST"))
         .map(|(k, v)| format!("{k}={v}"))
         .collect();

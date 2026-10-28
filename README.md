@@ -41,7 +41,6 @@ Verified on an Intel laptop (RTX 3060 with a third-party NVIDIA Metal driver, ma
 | Swift / SwiftUI | **works** for the tested programs: Codable, actors, task groups, existentials, Regex, SwiftUI state and `.task`. Large Swift apps are not yet tested. |
 | IOKit | basic queries work: platform expert/serial, power sources, HID manager. |
 | JIT | native x86 translations for TBL/TBX, all FRINT forms, SHA-256 (`sha256h/h2/su0/su1`, no SHA extension needed), vector UCVTF/SCVTF, FCVTZU — each checked with the differential self-test (`mismatch=0`). |
-| Compatibility | old `MACLATOR_*` variables, `~/maclator-sysroot` and `~/.maclator/gpu` are still accepted. |
 
 
 ![chrome://gpu in the arm64 Chromium 157 snapshot running under Attesor on an Intel Mac Pro: canvas, compositing, rasterization, WebGL and WebGPU hardware accelerated on an AMD Radeon RX 460 via ANGLE/Metal](docs/img/chromium-gpu.png)
