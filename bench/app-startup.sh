@@ -2,11 +2,12 @@
 # Startup benchmark for an arm64 app under attesor: wall time until a "ready" line appears in its output,
 # and CPU seconds spent by all of its attesor processes up to that point.
 #
-#   bench/app-startup.sh [--runs N] [--warm] [--timeout S] <ready-regex> <arm64-executable> [attesor/app args…]
+#   bench/app-startup.sh [--runs N] [--warm] [--cache DIR] [--timeout S] <ready-regex> <arm64-executable> [attesor/app args…]
 #
 # Default is a cold run: an empty translation cache per run and no AOT build, so the numbers measure the
 # interpreter + JIT (what JIT work changes). --warm uses one cache dir kept across the runs (first run
-# fills it; the AOT build only happens on a graceful exit, which this script does not do).
+# fills it; the AOT build only happens on a graceful exit, which this script does not do). --cache DIR uses
+# (and keeps) an existing translation cache, e.g. one filled by a normal session that quit gracefully.
 # Each run gets its own HOME-independent data dirs (Electron --user-data-dir, DSH_HOME), and the script
 # refuses to start while the app is already running, so it never touches an instance someone is using.
 # Example (DeepSeek Harness, GPU bridge as the app launcher uses it):
@@ -15,11 +16,12 @@
 #     --gpu --gpu-only --type=gpu-process --no-sandbox --disable-gpu-sandbox --disable-gpu-watchdog --use-angle=metal \
 #     --use-gl=angle --enable-gpu --ignore-gpu-blocklist --disable-angle-features=disableMetalOnNvidia
 set -uo pipefail
-RUNS=1 WARM=0 TIMEOUT=300
+RUNS=1 WARM=0 TIMEOUT=300 CACHE=
 while [ $# -gt 0 ]; do
   case "$1" in
     --runs) RUNS=$2; shift 2 ;;
     --warm) WARM=1; shift ;;
+    --cache) CACHE=$2; WARM=1; shift 2 ;;
     --timeout) TIMEOUT=$2; shift 2 ;;
     *) break ;;
   esac
@@ -45,7 +47,7 @@ stop_all() {   # only this run's processes: each mentions its private data dir (
 if pgrep -f -- "$EXE" >/dev/null; then
   echo "$EXE is running; quit it first (the benchmark must not share its profile or single-instance lock)"; exit 1
 fi
-warm_cache=$(mktemp -d /tmp/attesor-bench-cache.XXXX)
+warm_cache=${CACHE:-$(mktemp -d /tmp/attesor-bench-cache.XXXX)}
 walls=() cpus=()
 for r in $(seq "$RUNS"); do
   if [ $WARM = 1 ]; then cache=$warm_cache; else cache=$(mktemp -d /tmp/attesor-bench-cache.XXXX); fi
@@ -76,6 +78,6 @@ for r in $(seq "$RUNS"); do
   [ $WARM = 0 ] && rm -rf "$cache"
   rm -rf "$log" "$data"
 done
-rm -rf "$warm_cache"
+[ -z "$CACHE" ] && rm -rf "$warm_cache"
 median() { printf '%s\n' "$@" | sort -n | awk '{ v[NR] = $1 } END { if (NR) print v[int((NR + 1) / 2)] }'; }
 [ ${#walls[@]} -gt 0 ] && echo "median: ready $(median "${walls[@]}")s, cpu $(median "${cpus[@]}")s (${#walls[@]}/$RUNS runs, $([ $WARM = 1 ] && echo warm || echo cold))"
