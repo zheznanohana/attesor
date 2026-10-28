@@ -6,7 +6,7 @@
 pkill -f "attesor.*Chromium" 2>/dev/null
 cd "${CHROMIUM_DIR:-$HOME/Downloads/chromium-arm64/chrome-mac/Chromium.app/Contents/MacOS}" || exit 1
 exec "$HOME/bin/attesor" --gpu --gpu-only --type=gpu-process ./Chromium --no-sandbox --disable-gpu-sandbox --disable-gpu-watchdog \
-  --use-angle=metal --use-gl=angle --enable-gpu --ignore-gpu-blocklist \
+  --use-angle=metal --use-gl=angle --enable-gpu --ignore-gpu-blocklist --disable-angle-features=disableMetalOnNvidia \
   --renderer-process-limit=1 --disable-extensions --disable-sync --disable-background-networking --disable-component-update \
   --disable-features=Translate,OptimizationHints,MediaRouter,AutofillServerCommunication,SpareRendererForSitePerProcess,GlobalMediaControls \
   --user-data-dir="${CHROMIUM_DATA:-$HOME/chromium-data}" --no-first-run --no-default-browser-check \

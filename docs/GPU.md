@@ -7,7 +7,7 @@ Chromium 157 with ANGLE-Metal (GPU compositing, rasterization, WebGL, WebGPU, Gr
 
 Launch Chromium with acceleration: `~/bin/chromium-gpu [url]` on the test Mac (source: `gpu/chromium-gpu`; uses
 `--gpu --gpu-only --type=gpu-process` so only the GPU process loads the bridge — giving every helper the bridge
-starved the renderers; flags: `--use-angle=metal --use-gl=angle --enable-gpu --ignore-gpu-blocklist
+starved the renderers; flags: `--use-angle=metal --use-gl=angle --enable-gpu --ignore-gpu-blocklist --disable-angle-features=disableMetalOnNvidia
 --disable-gpu-sandbox --disable-gpu-watchdog --no-sandbox`, plus the "lean" flags, see Chromium configuration).
 
 ### Results (animated 2D canvas, hack; `bench/gpubench.py`)

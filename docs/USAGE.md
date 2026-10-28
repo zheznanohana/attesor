@@ -44,7 +44,7 @@ The launcher (`gpu/chromium-gpu`) runs:
 
 ```bash
 attesor --gpu --gpu-only --type=gpu-process ./Chromium --no-sandbox --disable-gpu-sandbox --disable-gpu-watchdog \
-  --use-angle=metal --use-gl=angle --enable-gpu --ignore-gpu-blocklist \
+  --use-angle=metal --use-gl=angle --enable-gpu --ignore-gpu-blocklist --disable-angle-features=disableMetalOnNvidia \
   --renderer-process-limit=1 --disable-extensions --disable-sync --disable-background-networking --disable-component-update \
   --disable-features=Translate,OptimizationHints,MediaRouter,AutofillServerCommunication,SpareRendererForSitePerProcess,GlobalMediaControls \
   --user-data-dir=~/chromium-data --no-first-run --no-default-browser-check --remote-debugging-port=9333
@@ -86,7 +86,7 @@ device, so either use the launcher or add `--disable-gpu`. Flashing drives (raw 
 
 ```bash
 attesor --gpu --gpu-only --type=gpu-process ./App --no-sandbox --disable-gpu-sandbox --disable-gpu-watchdog \
-  --use-angle=metal --use-gl=angle --enable-gpu --ignore-gpu-blocklist
+  --use-angle=metal --use-gl=angle --enable-gpu --ignore-gpu-blocklist --disable-angle-features=disableMetalOnNvidia
 ```
 
 ## Plain command line tools
