@@ -2655,6 +2655,23 @@ impl<'a> E<'a> {
             }
             return true;
         }
+        // FRINTN/P/M/Z (scalar single/double). ROUND preserves signed
+        // zero and NaN payloads while quieting signaling NaNs, like frint().
+        if insn & 0xFF3C_7C00 == 0x1E24_4000 && ftype <= 1 {
+            let opcode = bits(insn, 20, 15);
+            if (8..=11).contains(&opcode) {
+                let mode = [0, 2, 1, 3][(opcode - 8) as usize] | 8;
+                if ftype == 1 {
+                    a!(self, movq(xmm0, qword_ptr(r15 + voff(rn))));
+                    a!(self, roundsd(xmm0, xmm0, mode));
+                } else {
+                    a!(self, movss(xmm0, dword_ptr(r15 + voff(rn))));
+                    a!(self, roundss(xmm0, xmm0, mode));
+                }
+                self.vfin(rd, true);
+                return true;
+            }
+        }
         // FMOV (register), FABS, FNEG
         if insn & 0xFF3E_7C00 == 0x1E20_4000 && ftype <= 1 {
             let opc = bits(insn, 16, 15);
@@ -3003,6 +3020,27 @@ impl<'a> E<'a> {
         let q = bit(insn, 30) != 0;
         let u = bit(insn, 29) != 0;
         let size = bits(insn, 23, 22);
+
+        // FRINTN/P/M/Z (vector single/double), with explicit SSE4.1
+        // rounding modes rather than the host MXCSR rounding setting.
+        if insn & 0xBF3E_0C00 == 0x0E20_0800 {
+            let opcode = bits(insn, 16, 12);
+            if opcode == 0b11000 || opcode == 0b11001 {
+                let double = bit(insn, 22) != 0;
+                if double && !q { return false; }
+                let mode = match (bit(insn, 23), opcode) {
+                    (0, 0b11000) => 0,
+                    (1, 0b11000) => 2,
+                    (0, _) => 1,
+                    _ => 3,
+                } | 8;
+                self.vld(xmm0, rn, q);
+                if double { a!(self, roundpd(xmm0, xmm0, mode)); }
+                else { a!(self, roundps(xmm0, xmm0, mode)); }
+                self.vfin(rd, q);
+                return true;
+            }
+        }
 
         // TBL/TBX: PSHUFB wraps indices modulo 16, so explicitly mask each
         // table's contribution by the index high nibble. Delay the store until
