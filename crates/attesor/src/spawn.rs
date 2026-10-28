@@ -73,29 +73,40 @@ unsafe fn read_argv(p: u64) -> Vec<String> {
     v
 }
 
-/// Host processes (native children and the attesor re-launcher) must not inherit the arm64
-/// GPU/UI shims in DYLD_INSERT_LIBRARIES; attesor injects them into guests itself.
-/// Returns the scrubbed environment (keep alive until the call), and points `args` at it.
-fn scrub_shim(n: u64, args: &mut [u64; 8]) -> Option<(Vec<CString>, Vec<u64>)> {
+/// Environment for host processes (native children and the attesor re-launcher): the arm64 GPU/UI shims
+/// come out of DYLD_INSERT_LIBRARIES (attesor injects them into guests itself), and the x86-64 exec shim
+/// goes in, with ATTESOR_BIN, so that native middlemen (/bin/sh, pnpm, …) can start arm64 programs too.
+/// Returns the new environment (keep alive until the call), and points `args` at it.
+fn host_env(n: u64, args: &mut [u64; 8]) -> Option<(Vec<CString>, Vec<u64>)> {
     let eidx = if n == SYS_EXECVE { 2 } else { 4 };
-    let shims: Vec<String> = [crate::gpu::shim_path(), crate::gpu::ui_shim_path()].into_iter().flatten().collect();
-    let env = unsafe { read_argv(args[eidx]) };
-    if !env.iter().any(|e| e.starts_with("DYLD_INSERT_LIBRARIES=") && shims.iter().any(|s| e.contains(s.as_str()))) {
+    if args[eidx] == 0 {
         return None;
     }
-    let cleaned: Vec<CString> = env
-        .into_iter()
-        .filter_map(|e| {
-            if let Some(v) = e.strip_prefix("DYLD_INSERT_LIBRARIES=") {
-                let rest: Vec<&str> = v.split(':').filter(|p| !shims.iter().any(|s| s == p) && !p.is_empty()).collect();
-                if rest.is_empty() {
-                    return None;
-                }
-                return CString::new(format!("DYLD_INSERT_LIBRARIES={}", rest.join(":"))).ok();
-            }
-            CString::new(e).ok()
-        })
-        .collect();
+    let guest_shims: Vec<String> = [crate::gpu::shim_path(), crate::gpu::ui_shim_path()].into_iter().flatten().collect();
+    let exec_shim = crate::gpu::exec_shim_path();
+    let mut env = unsafe { read_argv(args[eidx]) };
+    let mut inserts: Vec<String> = Vec::new();
+    env.retain(|e| match e.strip_prefix("DYLD_INSERT_LIBRARIES=") {
+        Some(v) => {
+            inserts.extend(v.split(':').filter(|p| !p.is_empty() && !guest_shims.iter().any(|s| s == p)).map(str::to_string));
+            false
+        }
+        None => true,
+    });
+    if let Some(x) = exec_shim {
+        if !inserts.contains(&x) {
+            inserts.push(x);
+        }
+    }
+    if !inserts.is_empty() {
+        env.push(format!("DYLD_INSERT_LIBRARIES={}", inserts.join(":")));
+    }
+    if !env.iter().any(|e| e.starts_with("ATTESOR_BIN=")) {
+        if let Ok(me) = std::env::current_exe() {
+            env.push(format!("ATTESOR_BIN={}", me.to_string_lossy()));
+        }
+    }
+    let cleaned: Vec<CString> = env.into_iter().filter_map(|e| CString::new(e).ok()).collect();
     let mut ptrs: Vec<u64> = cleaned.iter().map(|c| c.as_ptr() as u64).collect();
     ptrs.push(0);
     args[eidx] = ptrs.as_ptr() as u64;
@@ -109,7 +120,7 @@ pub fn exec_like(n: u64, args: &[u64; 8]) -> SysResult {
         return hostsys::unix(n, args);
     }
     let mut args = *args;
-    let _env = scrub_shim(n, &mut args);
+    let _env = host_env(n, &mut args);
     let args = &args;
     if !arm64_only(&path) {
         return hostsys::unix(n, args);

@@ -20,6 +20,7 @@ type CallFn = unsafe extern "C" fn(op: u64, input: *const u8, len: u64, outlen: 
 const SHIM_NAME: &str = "libmclmetal.dylib";
 const BRIDGE_NAME: &str = "libmclbridge.dylib";
 const UI_SHIM_NAME: &str = "libattesorui.dylib";
+const EXEC_SHIM_NAME: &str = "libattesorexec.dylib";
 
 /// Directories searched for the GPU libraries: $ATTESOR_GPU_DIR, next to the executable,
 /// then ~/.attesor/gpu.
@@ -50,6 +51,25 @@ pub fn shim_path() -> Option<String> {
 }
 
 /// Add the shim to the guest's DYLD_INSERT_LIBRARIES.
+/// x86-64 library that native children of a guest get, so that they can start arm64 programs too.
+pub fn exec_shim_path() -> Option<String> {
+    find(EXEC_SHIM_NAME).map(|p| p.to_string_lossy().into_owned())
+}
+
+/// A guest launched by a native program inherits the x86-64 exec shim in DYLD_INSERT_LIBRARIES; arm64
+/// dyld cannot load it, so take it out before the guest starts.
+pub fn strip_host_shims(envp: &mut Vec<String>) {
+    envp.retain_mut(|e| {
+        let Some(v) = e.strip_prefix("DYLD_INSERT_LIBRARIES=") else { return true };
+        let rest: Vec<&str> = v.split(':').filter(|p| !p.is_empty() && !p.ends_with(EXEC_SHIM_NAME)).collect();
+        if rest.is_empty() {
+            return false;
+        }
+        *e = format!("DYLD_INSERT_LIBRARIES={}", rest.join(":"));
+        true
+    });
+}
+
 pub fn ui_shim_path() -> Option<String> {
     find(UI_SHIM_NAME).map(|p| p.to_string_lossy().into_owned())
 }

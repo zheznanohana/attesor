@@ -3,6 +3,7 @@
 #   libmclbridge.dylib   x86-64 host side (loaded by attesor on first GPU call)
 #   libmclmetal.dylib    arm64 guest shim (injected into the guest with DYLD_INSERT_LIBRARIES)
 #   libattesorui.dylib   arm64 guest UI fixups for app bundles (Dock icon), injected the same way
+#   libattesorexec.dylib x86-64 host exec redirection for native children (arm64 targets go through attesor)
 #   libmclloop.dylib     arm64 shim + bridge in one dylib for native testing on an Apple Silicon Mac
 #   metaltri (arm64)     guest smoke test
 set -e
@@ -15,7 +16,8 @@ clang -arch arm64 -dynamiclib -fno-objc-arc -O2 -framework Foundation -framework
   -install_name @rpath/libmclmetal.dylib mclmetal.m -o $OUT/libmclmetal.dylib
 clang -arch arm64 -dynamiclib -fno-objc-arc -O2 -framework Foundation \
   -install_name @rpath/libattesorui.dylib attesorui.m -o $OUT/libattesorui.dylib
-codesign -f -s - $OUT/libmclbridge.dylib $OUT/libmclmetal.dylib $OUT/libattesorui.dylib
+clang -arch x86_64 -dynamiclib -O2 -install_name @rpath/libattesorexec.dylib attesorexec.c -o $OUT/libattesorexec.dylib
+codesign -f -s - $OUT/libmclbridge.dylib $OUT/libmclmetal.dylib $OUT/libattesorui.dylib $OUT/libattesorexec.dylib
 if [ "$(uname -m)" = arm64 ]; then
   clang -arch arm64 -c -fobjc-arc -O2 -DMCL_LOOPBACK mclbridge.m -o $OUT/bridge_loop.o
   clang -arch arm64 -c -fno-objc-arc -O2 -DMCL_LOOPBACK mclmetal.m -o $OUT/shim_loop.o
