@@ -694,7 +694,29 @@ pub fn is_terminator(insn: u32) -> bool {
         || (insn & 0x7E00_0000 == 0x3600_0000)   // TBZ/TBNZ
         || (insn & 0xFE00_0000 == 0xD600_0000)   // BR/BLR/RET(+PAC)
         || (insn & 0xFF00_0000 == 0xD400_0000)   // exceptions (SVC, BRK...)
-        || (insn & 0xFFF8_F0E0 == 0xD508_7020)   // IC IVAU (runtime must see it)
+        || (insn & 0xFFFF_FFE0 == 0xD50B_7520)   // IC IVAU only (runtime must see it); DC ops are not terminators
+}
+
+/// Debugging aid: ATTESOR_JIT_OFF=ext,fma,… routes the named SIMD translation groups to the interpreter
+/// (finer than ATTESOR_JIT_DISABLE=simd), to bisect a misbehaving translation.
+fn jit_off(group: &str) -> bool {
+    static OFF: std::sync::OnceLock<Vec<String>> = std::sync::OnceLock::new();
+    OFF.get_or_init(|| std::env::var("ATTESOR_JIT_OFF").unwrap_or_default().split(',').filter(|g| !g.is_empty()).map(str::to_string).collect())
+        .iter()
+        .any(|g| g == group)
+}
+
+/// FMA3 (fused multiply-add) on the host: FMLA/FMADD are translated natively only with it, since an
+/// unfused multiply + add rounds twice. Not part of the SSE4.1 baseline, so detected at run time.
+pub fn has_fma() -> bool {
+    static F: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *F.get_or_init(|| std::is_x86_feature_detected!("fma"))
+}
+
+/// F16C (half-precision conversions) on the host, for FCVTL/FCVTN between half and single.
+pub fn has_f16c() -> bool {
+    static F: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *F.get_or_init(|| std::is_x86_feature_detected!("f16c"))
 }
 
 /// Translate one basic block starting at `pc` into `u`. The caller must have
@@ -1683,6 +1705,24 @@ impl<'a> E<'a> {
                 _ => return false,
             }
         }
+        // SYS #3, C7, Cm, #1, Xt: data-cache maintenance (IC IVAU ends the block and goes to the runtime)
+        if insn & 0xFFFF_F0E0 == 0xD50B_7020 {
+            match bits(insn, 11, 8) {
+                4 => {
+                    // DC ZVA: zero the 64-byte block (libsystem's bzero/memset use it for large clears)
+                    self.ldx(rax, insn & 31, false);
+                    self.commpage_fix();
+                    a!(self, and(rax, -64));
+                    for i in 0..8 {
+                        a!(self, mov(qword_ptr(rax + i * 8), 0));
+                    }
+                    return true;
+                }
+                // DC CVAC / CVAU / CVAP / CVADP / CIVAC: x86 caches are coherent, nothing to do
+                10 | 11 | 12 | 13 | 14 => return true,
+                _ => {}
+            }
+        }
         match insn & 0xFFFF_FFE0 {
             0xD53B_D060 => {
                 // MRS TPIDRRO_EL0
@@ -2240,6 +2280,69 @@ impl<'a> E<'a> {
             }
             _ => {}
         }
+    }
+
+    /// Vector form of `fix_default_nan` on xmm0 (uses xmm2-xmm5).
+    fn vfix_default_nan(&mut self, double: bool) {
+        // x86's "real indefinite" NaN has the sign bit set; ARM's default NaN does not.
+        if double {
+            self.vconst(xmm2, 0xFFF8_0000_0000_0000);
+            a!(self, movdqa(xmm3, xmm0));
+            a!(self, pcmpeqq(xmm3, xmm2));
+            self.vconst(xmm4, 0x7FF8_0000_0000_0000);
+        } else {
+            self.vconst(xmm2, 0xFFC0_0000_FFC0_0000);
+            a!(self, movdqa(xmm3, xmm0));
+            a!(self, pcmpeqd(xmm3, xmm2));
+            self.vconst(xmm4, 0x7FC0_0000_7FC0_0000);
+        }
+        a!(self, movdqa(xmm5, xmm3));
+        a!(self, pandn(xmm5, xmm0));
+        a!(self, pand(xmm3, xmm4));
+        a!(self, por(xmm5, xmm3));
+        a!(self, movdqa(xmm0, xmm5));
+    }
+
+    /// Fused multiply-add with ARM NaN selection: xmm0 = op1 (already negated for FMLS-like forms),
+    /// xmm1 = op2, xmm2 = addend (negated as needed); result in xmm0, before the default-NaN fixup.
+    /// x86 picks a NaN operand in the order op1, op2, addend; ARM (FPProcessNaNs3) takes the addend
+    /// first, and a quiet-NaN addend with op1*op2 = inf*0 gives the default NaN. Uses xmm2-xmm7.
+    fn fma_arm(&mut self, double: bool) {
+        a!(self, movdqa(xmm6, xmm2)); // addend
+        a!(self, movdqa(xmm7, xmm0)); // op1
+        if double { a!(self, vfmadd231pd(xmm2, xmm0, xmm1)); } else { a!(self, vfmadd231ps(xmm2, xmm0, xmm1)); }
+        // inf*0 marker: the unfused product is the x86 real indefinite exactly then
+        if double {
+            a!(self, mulpd(xmm7, xmm1));
+            self.vconst(xmm3, 0xFFF8_0000_0000_0000);
+            a!(self, pcmpeqq(xmm7, xmm3));
+        } else {
+            a!(self, mulps(xmm7, xmm1));
+            self.vconst(xmm3, 0xFFC0_0000_FFC0_0000);
+            a!(self, pcmpeqd(xmm7, xmm3));
+        }
+        // lanes whose addend is a NaN take that NaN, quieted
+        a!(self, movdqa(xmm4, xmm6));
+        if double { a!(self, cmppd(xmm4, xmm4, 3)); } else { a!(self, cmpps(xmm4, xmm4, 3)); }
+        self.vconst(xmm5, if double { 0x0008_0000_0000_0000 } else { 0x0040_0000_0040_0000 });
+        a!(self, por(xmm6, xmm5));
+        a!(self, movdqa(xmm0, xmm4));
+        a!(self, pandn(xmm0, xmm2));
+        a!(self, pand(xmm6, xmm4));
+        a!(self, por(xmm0, xmm6));
+        // ... unless op1*op2 was inf*0: default NaN
+        a!(self, pand(xmm7, xmm4));
+        self.vconst(xmm3, if double { 0x7FF8_0000_0000_0000 } else { 0x7FC0_0000_7FC0_0000 });
+        a!(self, pand(xmm3, xmm7));
+        a!(self, pandn(xmm7, xmm0));
+        a!(self, por(xmm7, xmm3));
+        a!(self, movdqa(xmm0, xmm7));
+    }
+
+    /// Flip the sign of every lane of `x` (FPNeg, NaNs included) using `tmp`.
+    fn vneg(&mut self, x: AsmRegisterXmm, tmp: AsmRegisterXmm, double: bool) {
+        self.vconst(tmp, if double { 0x8000_0000_0000_0000 } else { 0x8000_0000_8000_0000 });
+        a!(self, pxor(x, tmp));
     }
 
     /// Replace the x86 "real indefinite" NaN produced by invalid operations with the ARM default NaN.
@@ -3152,6 +3255,249 @@ impl<'a> E<'a> {
         let u = bit(insn, 29) != 0;
         let size = bits(insn, 23, 22);
 
+        // ---- FCVTL/FCVTL2 (half->single needs F16C; single->double), FCVTN/FCVTN2 ----
+        if (insn & 0xBFBF_FC00 == 0x0E21_7800 || insn & 0xBFBF_FC00 == 0x0E21_6800) && (bit(insn, 22) == 1 || has_f16c()) && !jit_off("fcvt") {
+            let wide = bit(insn, 22) == 1; // single<->double instead of half<->single
+            if insn & 0x1000 != 0 {
+                // FCVTL: widen the lower (Q=0) or upper (FCVTL2) half
+                self.vld(xmm0, rn, true);
+                if q {
+                    a!(self, psrldq(xmm0, 8));
+                }
+                if wide {
+                    a!(self, cvtps2pd(xmm0, xmm0));
+                } else {
+                    a!(self, vcvtph2ps(xmm0, xmm0));
+                }
+                a!(self, movdqu(xmmword_ptr(r15 + voff(rd)), xmm0));
+            } else {
+                // FCVTN: narrow into the lower half (upper zeroed), or the upper half (FCVTN2, lower kept)
+                self.vld(xmm0, rn, true);
+                if wide {
+                    a!(self, cvtpd2ps(xmm0, xmm0));
+                } else {
+                    a!(self, vcvtps2ph(xmm0, xmm0, 0)); // round to nearest even (FPCR modes are ignored by the JIT)
+                }
+                a!(self, movq(xmm0, xmm0));
+                if q {
+                    a!(self, pslldq(xmm0, 8));
+                    a!(self, movq(xmm1, qword_ptr(r15 + voff(rd))));
+                    a!(self, por(xmm0, xmm1));
+                }
+                a!(self, movdqu(xmmword_ptr(r15 + voff(rd)), xmm0));
+            }
+            return true;
+        }
+
+        // ---- FMLA/FMLS/FMUL (vector, by element), single and double ----
+        // FMLS negates the multiplicand first (FPNeg, so NaN signs match), then fuses like FMLA.
+        if insn & 0x9F80_0400 == 0x0F80_0000 && !jit_off("fpelem") {
+            let opcode = bits(insn, 15, 12);
+            let double = bit(insn, 22) == 1;
+            let h = bit(insn, 11);
+            let l = bit(insn, 21);
+            let fused = !u && (opcode == 0b0001 || opcode == 0b0101);
+            let mul = !u && opcode == 0b1001;
+            if (fused && has_fma() || mul) && !(double && (!q || l != 0)) {
+                self.vld(xmm1, rm, true);
+                if double {
+                    a!(self, pshufd(xmm1, xmm1, if h != 0 { 0xEE } else { 0x44 }));
+                } else {
+                    a!(self, pshufd(xmm1, xmm1, ((h << 1) | l) * 0x55));
+                }
+                self.vld(xmm0, rn, q);
+                if mul {
+                    if double { a!(self, mulpd(xmm0, xmm1)); } else { a!(self, mulps(xmm0, xmm1)); }
+                } else {
+                    if opcode == 0b0101 {
+                        self.vneg(xmm0, xmm2, double);
+                    }
+                    self.vld(xmm2, rd, q);
+                    self.fma_arm(double);
+                }
+                self.vfix_default_nan(double);
+                self.vfin(rd, q);
+                return true;
+            }
+        }
+
+        // ---- FMLA/FMLS (vector, three-same) ----
+        if insn & 0xBF20_FC00 == 0x0E20_CC00 && has_fma() && !jit_off("fmla") {
+            let double = bit(insn, 22) == 1;
+            if double && !q {
+                return false;
+            }
+            self.vld(xmm0, rn, q);
+            self.vld(xmm1, rm, q);
+            if bit(insn, 23) != 0 {
+                self.vneg(xmm0, xmm2, double); // FMLS
+            }
+            self.vld(xmm2, rd, q);
+            self.fma_arm(double);
+            self.vfix_default_nan(double);
+            self.vfin(rd, q);
+            return true;
+        }
+
+        // ---- FMADD/FMSUB/FNMADD/FNMSUB (scalar, single/double) ----
+        // ARM: FMSUB = a + (-n)m, FNMADD = (-a) + (-n)m, FNMSUB = (-a) + nm, all with one rounding.
+        if insn & 0xFF00_0000 == 0x1F00_0000 && bits(insn, 23, 22) <= 1 && has_fma() && !jit_off("fmadd") {
+            let double = bit(insn, 22) == 1;
+            let o1 = bit(insn, 21) != 0;
+            let o0 = bit(insn, 15) != 0;
+            let ra = bits(insn, 14, 10);
+            if double {
+                a!(self, movsd_2(xmm0, qword_ptr(r15 + voff(rn))));
+                a!(self, movsd_2(xmm1, qword_ptr(r15 + voff(rm))));
+                a!(self, movsd_2(xmm2, qword_ptr(r15 + voff(ra))));
+            } else {
+                a!(self, movss(xmm0, dword_ptr(r15 + voff(rn))));
+                a!(self, movss(xmm1, dword_ptr(r15 + voff(rm))));
+                a!(self, movss(xmm2, dword_ptr(r15 + voff(ra))));
+            }
+            if o1 != o0 {
+                self.vneg(xmm0, xmm3, double); // FMSUB, FNMADD: -n
+            }
+            if o1 {
+                self.vneg(xmm2, xmm3, double); // FNMADD, FNMSUB: -a
+            }
+            // packed on purpose: the upper lanes are zero (movss/movsd loads) and are cleared again below
+            self.fma_arm(double);
+            if double { a!(self, movq(xmm0, xmm0)); } else { a!(self, insertps(xmm0, xmm0, 0x0E)); }
+            self.fix_default_nan(double);
+            a!(self, movdqu(xmmword_ptr(r15 + voff(rd)), xmm0));
+            return true;
+        }
+
+        // ---- EXT: bytes imm.. of the pair Vm:Vn ----
+        if insn & 0xBFE0_8400 == 0x2E00_0000 && !jit_off("ext") {
+            let imm = bits(insn, 14, 11);
+            if q {
+                self.vld(xmm0, rm, true);
+                self.vld(xmm1, rn, true);
+                a!(self, palignr(xmm0, xmm1, imm));
+            } else {
+                if imm > 7 {
+                    return false;
+                }
+                a!(self, movq(xmm0, qword_ptr(r15 + voff(rn))));
+                a!(self, movq(xmm1, qword_ptr(r15 + voff(rm))));
+                a!(self, punpcklqdq(xmm0, xmm1));
+                if imm != 0 {
+                    a!(self, psrldq(xmm0, imm));
+                }
+            }
+            self.vfin(rd, q);
+            return true;
+        }
+
+        // ---- SQDMULH / SQRDMULH (vector, 16-bit lanes) ----
+        // Both results only reach -32768 for (-32768)*(-32768), which saturates to 32767.
+        if insn & 0x9F20_FC00 == 0x0E20_B400 && size == 1 && !jit_off("qdmulh") {
+            self.vld(xmm0, rn, q);
+            self.vld(xmm1, rm, q);
+            if u {
+                a!(self, pmulhrsw(xmm0, xmm1)); // (2ab + 0x8000) >> 16
+            } else {
+                // (2ab) >> 16 = (high16(ab) << 1) | bit 15 of low16(ab)
+                a!(self, movdqa(xmm2, xmm0));
+                a!(self, pmulhw(xmm0, xmm1));
+                a!(self, pmullw(xmm2, xmm1));
+                a!(self, psllw(xmm0, 1));
+                a!(self, psrlw(xmm2, 15));
+                a!(self, por(xmm0, xmm2));
+            }
+            self.vconst(xmm1, 0x8000_8000_8000_8000);
+            a!(self, pcmpeqw(xmm1, xmm0));
+            a!(self, pxor(xmm0, xmm1));
+            self.vfin(rd, q);
+            return true;
+        }
+
+        // ---- UABD/SABD (01110), UABA/SABA (01111): |n - m| = max - min ----
+        if insn & 0x9F20_F400 == 0x0E20_7400 && size < 3 && !jit_off("abd") {
+            let acc = bit(insn, 11) != 0;
+            self.vld(xmm0, rn, q);
+            self.vld(xmm1, rm, q);
+            a!(self, movdqa(xmm2, xmm0));
+            match (u, size) {
+                (true, 0) => { a!(self, pmaxub(xmm0, xmm1)); a!(self, pminub(xmm2, xmm1)); }
+                (true, 1) => { a!(self, pmaxuw(xmm0, xmm1)); a!(self, pminuw(xmm2, xmm1)); }
+                (true, _) => { a!(self, pmaxud(xmm0, xmm1)); a!(self, pminud(xmm2, xmm1)); }
+                (false, 0) => { a!(self, pmaxsb(xmm0, xmm1)); a!(self, pminsb(xmm2, xmm1)); }
+                (false, 1) => { a!(self, pmaxsw(xmm0, xmm1)); a!(self, pminsw(xmm2, xmm1)); }
+                (false, _) => { a!(self, pmaxsd(xmm0, xmm1)); a!(self, pminsd(xmm2, xmm1)); }
+            }
+            match size {
+                0 => a!(self, psubb(xmm0, xmm2)),
+                1 => a!(self, psubw(xmm0, xmm2)),
+                _ => a!(self, psubd(xmm0, xmm2)),
+            }
+            if acc {
+                self.vld(xmm1, rd, q);
+                match size {
+                    0 => a!(self, paddb(xmm0, xmm1)),
+                    1 => a!(self, paddw(xmm0, xmm1)),
+                    _ => a!(self, paddd(xmm0, xmm1)),
+                }
+            }
+            self.vfin(rd, q);
+            return true;
+        }
+
+        // ---- UADDLP/SADDLP (00010), UADALP/SADALP (00110): pairwise add long (+ accumulate) ----
+        if insn & 0x9F3F_BC00 == 0x0E20_2800 && size < 3 && !jit_off("addlp") {
+            let acc = bit(insn, 14) != 0;
+            self.vld(xmm0, rn, q);
+            match (u, size) {
+                (true, 0) => {
+                    self.vconst(xmm1, 0x0101_0101_0101_0101);
+                    a!(self, pmaddubsw(xmm0, xmm1)); // unsigned bytes * 1, pairs summed (max 510)
+                }
+                (false, 0) => {
+                    self.vconst(xmm1, 0x0101_0101_0101_0101);
+                    a!(self, pmaddubsw(xmm1, xmm0)); // 1 * signed bytes
+                    a!(self, movdqa(xmm0, xmm1));
+                }
+                (false, 1) => {
+                    self.vconst(xmm1, 0x0001_0001_0001_0001);
+                    a!(self, pmaddwd(xmm0, xmm1));
+                }
+                (true, 1) => {
+                    a!(self, movdqa(xmm1, xmm0));
+                    a!(self, pslld(xmm0, 16));
+                    a!(self, psrld(xmm0, 16));
+                    a!(self, psrld(xmm1, 16));
+                    a!(self, paddd(xmm0, xmm1));
+                }
+                (true, _) => {
+                    a!(self, movdqa(xmm1, xmm0));
+                    a!(self, psllq(xmm0, 32));
+                    a!(self, psrlq(xmm0, 32));
+                    a!(self, psrlq(xmm1, 32));
+                    a!(self, paddq(xmm0, xmm1));
+                }
+                (false, _) => {
+                    a!(self, pshufd(xmm0, xmm0, 0xD8)); // [x0, x2, x1, x3]
+                    a!(self, movdqa(xmm1, xmm0));
+                    a!(self, psrldq(xmm1, 8));
+                    a!(self, pmovsxdq(xmm0, xmm0));
+                    a!(self, pmovsxdq(xmm1, xmm1));
+                    a!(self, paddq(xmm0, xmm1));
+                }
+            }
+            if acc {
+                self.vld(xmm1, rd, q);
+                match size {
+                    0 => a!(self, paddw(xmm0, xmm1)),
+                    1 => a!(self, paddd(xmm0, xmm1)),
+                    _ => a!(self, paddq(xmm0, xmm1)),
+                }
+            }
+            self.vfin(rd, q);
+            return true;
+        }
+
         // SHA256H/H2: four rounds, with state kept in two XMM registers.
         // Use ordinary rotates/Boolean operations, not the optional SHA ISA.
         if insn & 0xFFE0_EC00 == 0x5E00_4000 {
@@ -3392,23 +3738,7 @@ impl<'a> E<'a> {
                 (_, _) => { a!(self, cmppd(xmm1, xmm0, 1)); a!(self, movdqa(xmm0, xmm1)); }
             }
             if op <= 4 {
-                // x86's "real indefinite" NaN has the sign bit set; ARM's default NaN does not.
-                if double {
-                    self.vconst(xmm2, 0xFFF8_0000_0000_0000);
-                    a!(self, movdqa(xmm3, xmm0));
-                    a!(self, pcmpeqq(xmm3, xmm2));
-                    self.vconst(xmm4, 0x7FF8_0000_0000_0000);
-                } else {
-                    self.vconst(xmm2, 0xFFC0_0000_FFC0_0000);
-                    a!(self, movdqa(xmm3, xmm0));
-                    a!(self, pcmpeqd(xmm3, xmm2));
-                    self.vconst(xmm4, 0x7FC0_0000_7FC0_0000);
-                }
-                a!(self, movdqa(xmm5, xmm3));
-                a!(self, pandn(xmm5, xmm0));
-                a!(self, pand(xmm3, xmm4));
-                a!(self, por(xmm5, xmm3));
-                a!(self, movdqa(xmm0, xmm5));
+                self.vfix_default_nan(double);
             }
             self.vfin(rd, q);
             return true;
@@ -3589,15 +3919,91 @@ impl<'a> E<'a> {
             return true;
         }
 
-        // ---- ADDHN/RADDHN (halves->bytes, words->halves, dwords->words), lower/upper "2" forms ----
-        // The sum wraps at the source element width; the result is its high half (+ rounding).
-        if insn & 0x9F20_FC00 == 0x0E20_4000 && size < 3 {
+        // ---- three different: [US]ADDL/[US]ADDW/[US]SUBL/[US]SUBW, [US]MLAL/[US]MLSL (+2 forms) ----
+        // The "2" forms (Q=1) take the narrow operands from the upper halves.
+        if insn & 0x9F20_0C00 == 0x0E20_0000 && size < 3 && !jit_off("3diff") {
+            let opcode = bits(insn, 15, 12);
+            let upper = q;
+            let narrow = |e: &mut Self, x: AsmRegisterXmm, n: u32| {
+                if upper {
+                    a!(e, movdqu(x, xmmword_ptr(r15 + voff(n))));
+                    a!(e, psrldq(x, 8));
+                } else {
+                    a!(e, movq(x, qword_ptr(r15 + voff(n))));
+                }
+            };
+            let widen = |e: &mut Self, x: AsmRegisterXmm| match (u, size) {
+                (true, 0) => a!(e, pmovzxbw(x, x)),
+                (true, 1) => a!(e, pmovzxwd(x, x)),
+                (true, _) => a!(e, pmovzxdq(x, x)),
+                (false, 0) => a!(e, pmovsxbw(x, x)),
+                (false, 1) => a!(e, pmovsxwd(x, x)),
+                (false, _) => a!(e, pmovsxdq(x, x)),
+            };
+            let add = |e: &mut Self, d: AsmRegisterXmm, s: AsmRegisterXmm, sub: bool| match (sub, size) {
+                (false, 0) => a!(e, paddw(d, s)),
+                (false, 1) => a!(e, paddd(d, s)),
+                (false, _) => a!(e, paddq(d, s)),
+                (true, 0) => a!(e, psubw(d, s)),
+                (true, 1) => a!(e, psubd(d, s)),
+                (true, _) => a!(e, psubq(d, s)),
+            };
+            match opcode {
+                0b0000 | 0b0001 | 0b0010 | 0b0011 => {
+                    // ADDL/SUBL widen both operands; ADDW/SUBW have a wide first operand
+                    if opcode & 1 != 0 {
+                        self.vld(xmm0, rn, true);
+                    } else {
+                        narrow(self, xmm0, rn);
+                        widen(self, xmm0);
+                    }
+                    narrow(self, xmm1, rm);
+                    widen(self, xmm1);
+                    add(self, xmm0, xmm1, opcode & 2 != 0);
+                    a!(self, movdqu(xmmword_ptr(r15 + voff(rd)), xmm0));
+                    return true;
+                }
+                0b1000 | 0b1010 if size < 2 => {
+                    // MLAL/MLSL: the widened product is exact (8x8 -> 16, 16x16 -> 32 bits)
+                    narrow(self, xmm0, rn);
+                    narrow(self, xmm1, rm);
+                    if size == 0 {
+                        widen(self, xmm0);
+                        widen(self, xmm1);
+                        a!(self, pmullw(xmm0, xmm1));
+                    } else {
+                        a!(self, movdqa(xmm2, xmm0));
+                        a!(self, pmullw(xmm0, xmm1));
+                        if u {
+                            a!(self, pmulhuw(xmm2, xmm1));
+                        } else {
+                            a!(self, pmulhw(xmm2, xmm1));
+                        }
+                        a!(self, punpcklwd(xmm0, xmm2));
+                    }
+                    self.vld(xmm1, rd, true);
+                    add(self, xmm1, xmm0, opcode == 0b1010);
+                    a!(self, movdqu(xmmword_ptr(r15 + voff(rd)), xmm1));
+                    return true;
+                }
+                _ => {}
+            }
+        }
+
+        // ---- ADDHN/RADDHN, SUBHN/RSUBHN (halves->bytes, words->halves, dwords->words), lower/upper "2" forms ----
+        // The sum/difference wraps at the source element width; the result is its high half (+ rounding).
+        if (insn & 0x9F20_FC00 == 0x0E20_4000 || insn & 0x9F20_FC00 == 0x0E20_6000) && size < 3 && !jit_off("hn") {
             let round = u;
+            let sub = bit(insn, 13) != 0;
             self.vld(xmm0, rn, true);
             self.vld(xmm1, rm, true);
             match size {
                 0 => {
-                    a!(self, paddw(xmm0, xmm1));
+                    if sub {
+                        a!(self, psubw(xmm0, xmm1));
+                    } else {
+                        a!(self, paddw(xmm0, xmm1));
+                    }
                     if round {
                         self.vconst(xmm2, 0x0080_0080_0080_0080);
                         a!(self, paddw(xmm0, xmm2));
@@ -3606,7 +4012,11 @@ impl<'a> E<'a> {
                     a!(self, packuswb(xmm0, xmm0));
                 }
                 1 => {
-                    a!(self, paddd(xmm0, xmm1));
+                    if sub {
+                        a!(self, psubd(xmm0, xmm1));
+                    } else {
+                        a!(self, paddd(xmm0, xmm1));
+                    }
                     if round {
                         self.vconst(xmm2, 0x0000_8000_0000_8000);
                         a!(self, paddd(xmm0, xmm2));
@@ -3615,7 +4025,11 @@ impl<'a> E<'a> {
                     a!(self, packusdw(xmm0, xmm0));
                 }
                 _ => {
-                    a!(self, paddq(xmm0, xmm1));
+                    if sub {
+                        a!(self, psubq(xmm0, xmm1));
+                    } else {
+                        a!(self, paddq(xmm0, xmm1));
+                    }
                     if round {
                         self.vconst(xmm2, 0x8000_0000);
                         a!(self, paddq(xmm0, xmm2));

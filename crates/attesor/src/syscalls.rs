@@ -69,6 +69,60 @@ fn cstr_at(p: u64) -> String {
     unsafe { std::ffi::CStr::from_ptr(p as *const libc::c_char).to_string_lossy().into_owned() }
 }
 
+/// Guest program name for per-process log files.
+pub static GUEST_NAME: std::sync::OnceLock<String> = std::sync::OnceLock::new();
+
+/// ATTESOR_STDERR_LOG=1: copy everything the guest writes to fd 2 into
+/// ~/Library/Logs/Attesor/stderr/<name>-<pid>.log (capped), so diagnostics of helpers whose stderr
+/// a parent pipes away (and drops) survive.
+fn tee_stderr(n: u64, args: &[u64; 8], written: u64) {
+    const CAP: u64 = 4 << 20;
+    static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    static FILE: std::sync::Mutex<Option<(std::fs::File, u64)>> = std::sync::Mutex::new(None);
+    if !*ON.get_or_init(|| std::env::var_os("ATTESOR_STDERR_LOG").is_some()) || args[0] != 2 || written == 0 {
+        return;
+    }
+    let mut g = FILE.lock().unwrap();
+    if g.is_none() {
+        let Some(home) = std::env::var_os("HOME") else { return };
+        let dir = std::path::Path::new(&home).join("Library/Logs/Attesor/stderr");
+        let _ = std::fs::create_dir_all(&dir);
+        let name = GUEST_NAME.get().map(String::as_str).unwrap_or("guest").replace(['/', ' '], "_");
+        let path = dir.join(format!("{name}-{}.log", std::process::id()));
+        let Ok(f) = std::fs::OpenOptions::new().create(true).append(true).open(path) else { return };
+        *g = Some((f, 0));
+    }
+    let Some((f, total)) = g.as_mut() else { return };
+    if *total >= CAP {
+        return;
+    }
+    use std::io::Write;
+    let mut put = |p: u64, len: u64| {
+        let len = len.min(CAP - *total);
+        if p != 0 && len != 0 {
+            let _ = f.write_all(unsafe { std::slice::from_raw_parts(p as *const u8, len as usize) });
+            *total += len;
+        }
+    };
+    match n {
+        4 | 397 => put(args[1], written),
+        // writev / writev_nocancel: walk the iovecs up to the byte count actually written
+        121 | 412 => {
+            let mut left = written;
+            for i in 0..(args[2] as usize).min(1024) {
+                if left == 0 {
+                    break;
+                }
+                let (base, len) = unsafe { (*((args[1] + i as u64 * 16) as *const u64), *((args[1] + i as u64 * 16 + 8) as *const u64)) };
+                let take = len.min(left);
+                put(base, take);
+                left -= take;
+            }
+        }
+        _ => {}
+    }
+}
+
 /// Handle SVC. `cpu.pc` already points after the SVC.
 pub fn handle_svc(cpu: &mut Cpu) {
     let num = cpu.x[16] as u32 as i32;
@@ -95,6 +149,9 @@ pub fn handle_svc(cpu: &mut Cpu) {
         eprintln!("[sys] {}#{}({:#x}, {:#x}, {:#x}, {:#x}, {:#x}, {:#x}) pc={:#x}", syscall_name(n), n, args[0], args[1], args[2], args[3], args[4], args[5], cpu.pc - 4);
     }
     bsd(cpu, n, args);
+    if matches!(n, 4 | 397 | 121 | 412) && cpu.cf == 0 {
+        tee_stderr(n, &args, cpu.x[0]);
+    }
     if trace {
         eprintln!("[sys]   -> {}{:#x}", if cpu.cf != 0 { "ERR " } else { "" }, cpu.x[0]);
     }

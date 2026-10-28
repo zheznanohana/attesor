@@ -1273,7 +1273,10 @@ fn two_misc_fp(cpu: &mut Cpu, insn: u32, scalar: bool, q: bool, u: bool, size: u
                 let off = if q { 4 } else { 0 };
                 for i in 0..4 {
                     let h = get(a, 16, i + off) as u16;
-                    put(&mut r, 32, i, sf::f16_to_f32(h).to_bits() as u64);
+                    // FPConvertNaN: a converted NaN is always quiet (as in the single->double branch)
+                    let f = sf::f16_to_f32(h);
+                    let bits = if f.is_nan() { f.to_bits() | 0x0040_0000 } else { f.to_bits() };
+                    put(&mut r, 32, i, bits as u64);
                 }
             } else {
                 let off = if q { 2 } else { 0 };

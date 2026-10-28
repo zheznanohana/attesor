@@ -23,7 +23,7 @@ use std::sync::Mutex;
 
 const MAGIC: &[u8; 8] = b"MCLAOT04";
 /// Bump when the translator's output changes.
-const TRANSLATOR_VERSION: u32 = 21;
+const TRANSLATOR_VERSION: u32 = 23;
 
 #[derive(Clone)]
 struct Image {
@@ -72,8 +72,43 @@ fn fnv(parts: &[&[u8]]) -> String {
     format!("{h:016x}")
 }
 
+/// Code generation options baked into translations: commpage checks and the optional host ISA
+/// extensions the JIT uses when present (a cache built with FMA must not load on a host without it).
 fn flags_word() -> u32 {
-    crate::jit::commpage_checks() as u32
+    crate::jit::commpage_checks() as u32 | (crate::jit::emit::has_fma() as u32) << 1 | (crate::jit::emit::has_f16c() as u32) << 2
+}
+
+/// Identifies the code generator: TRANSLATOR_VERSION mixed with this attesor binary's LC_UUID, so a
+/// cache written by any other build is ignored even if someone forgot to bump TRANSLATOR_VERSION.
+fn codegen_id() -> u32 {
+    static ID: std::sync::OnceLock<u32> = std::sync::OnceLock::new();
+    *ID.get_or_init(|| {
+        extern "C" {
+            fn _dyld_get_image_header(i: u32) -> *const u8;
+        }
+        let mut uuid = [0u8; 16];
+        unsafe {
+            let h = _dyld_get_image_header(0);
+            if !h.is_null() && *(h as *const u32) == 0xfeed_facf {
+                let ncmds = *(h.add(16) as *const u32);
+                let mut p = h.add(32);
+                for _ in 0..ncmds {
+                    let (cmd, size) = (*(p as *const u32), *(p.add(4) as *const u32));
+                    if cmd == 0x1b {
+                        uuid.copy_from_slice(std::slice::from_raw_parts(p.add(8), 16));
+                        break;
+                    }
+                    p = p.add(size as usize);
+                }
+            }
+        }
+        let mut h: u64 = 0xcbf2_9ce4_8422_2325;
+        for &b in TRANSLATOR_VERSION.to_le_bytes().iter().chain(uuid.iter()) {
+            h ^= b as u64;
+            h = h.wrapping_mul(0x100_0000_01b3);
+        }
+        (h ^ (h >> 32)) as u32 | 1
+    })
 }
 
 /// Register the main executable (mapped at a fixed address).
@@ -257,7 +292,7 @@ fn load_file(path: &std::path::Path) -> std::io::Result<usize> {
     }
     let rd32 = |b: &[u8], o: usize| u32::from_le_bytes(b[o..o + 4].try_into().unwrap());
     let rd64 = |b: &[u8], o: usize| u64::from_le_bytes(b[o..o + 8].try_into().unwrap());
-    if rd32(&head, 8) != TRANSLATOR_VERSION || rd32(&head, 12) != flags_word() {
+    if rd32(&head, 8) != codegen_id() || rd32(&head, 12) != flags_word() {
         return Ok(0);
     }
     let n = rd64(&head, 16) as usize;
@@ -442,7 +477,7 @@ fn build(img: &Image, profile: &BTreeSet<u64>) -> std::io::Result<()> {
     let mut f = std::fs::File::create(&tmp)?;
     let mut hdr = Vec::new();
     hdr.extend_from_slice(MAGIC);
-    hdr.extend_from_slice(&TRANSLATOR_VERSION.to_le_bytes());
+    hdr.extend_from_slice(&codegen_id().to_le_bytes());
     hdr.extend_from_slice(&flags_word().to_le_bytes());
     hdr.extend_from_slice(&(index.len() as u64).to_le_bytes());
     hdr.extend_from_slice(&(code.len() as u64).to_le_bytes());
