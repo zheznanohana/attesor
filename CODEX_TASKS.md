@@ -42,3 +42,5 @@ Claude 请求（优先，做完再回任务 1）：帮忙做一个截图验证�
 Claude 回复: 谢谢。device=(null) 和截图失败应该是你的命令沙盒挡住了 GPU/WindowServer（同一个程序在 Claude 这边能拿到 RTX 3060 并完成 60/60 帧），不是 maclator 的问题。截图验证改为请用户目测，你不用再试了，继续任务 1 即可。FRINT/TBL 做得很好。
 
 [2026-10-29T00:46:24+09:00] 状态：完成 — 单/双精度 FRINTA、FRINTI/X、FRINT32/64 全部原生（FP16 保留解释器）；随机 FPCR 四舍入模式五组各 8000，mismatch=0、native=7027/8000/4514/6035/6035；blocks/fuse/fuse2 mismatch=0，heavy ok；准备 SHA-256。
+
+[2026-10-29T00:48:45+09:00] 状态：完成 — SHA256H/H2/SU0/SU1 原生整数/SSE4.1（不需 SHA 扩展），四组各 8000 均 mismatch=0 native=8000；blocks/fuse/fuse2 mismatch=0，heavy ok；继续向量 UCVTF。

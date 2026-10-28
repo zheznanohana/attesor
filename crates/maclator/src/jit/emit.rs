@@ -2762,38 +2762,7 @@ impl<'a> E<'a> {
             let unsigned = bit(insn, 16) != 0;
             let double = ftype == 1;
             self.ld(rax, rn, false, sf);
-            if unsigned && sf {
-                let mut neg = self.new_label();
-                let mut done = self.new_label();
-                a!(self, test(rax, rax));
-                a!(self, js(neg));
-                if double { a!(self, cvtsi2sd(xmm0, rax)); } else { a!(self, cvtsi2ss(xmm0, rax)); }
-                a!(self, jmp(done));
-                self.u.a.set_label(&mut neg).unwrap();
-                a!(self, mov(rcx, rax));
-                a!(self, shr(rax, 1));
-                a!(self, and(ecx, 1));
-                a!(self, or(rax, rcx));
-                if double {
-                    a!(self, cvtsi2sd(xmm0, rax));
-                    a!(self, addsd(xmm0, xmm0));
-                } else {
-                    a!(self, cvtsi2ss(xmm0, rax));
-                    a!(self, addss(xmm0, xmm0));
-                }
-                self.u.a.set_label(&mut done).unwrap();
-                a!(self, nop());
-            } else {
-                // 32-bit unsigned sources were zero-extended, so a 64-bit signed convert is exact.
-                let wide = sf || unsigned;
-                if double {
-                    if wide { a!(self, cvtsi2sd(xmm0, rax)); } else { a!(self, cvtsi2sd(xmm0, eax)); }
-                } else if wide {
-                    a!(self, cvtsi2ss(xmm0, rax));
-                } else {
-                    a!(self, cvtsi2ss(xmm0, eax));
-                }
-            }
+            self.int_to_fp_reg(unsigned, sf, double);
             // The convert leaves the upper lanes of xmm0 undefined; keep only the scalar.
             if double {
                 a!(self, movq(xmm0, xmm0));
@@ -3016,6 +2985,42 @@ impl<'a> E<'a> {
         self.mov_imm(rax, v);
         a!(self, movq(x, rax));
         a!(self, punpcklqdq(x, x));
+    }
+
+    /// Convert an integer in RAX to the low FP lane of XMM0.
+    fn int_to_fp_reg(&mut self, unsigned: bool, sf: bool, double: bool) {
+        if unsigned && sf {
+            let mut neg = self.new_label();
+            let mut done = self.new_label();
+            a!(self, test(rax, rax));
+            a!(self, js(neg));
+            if double { a!(self, cvtsi2sd(xmm0, rax)); } else { a!(self, cvtsi2ss(xmm0, rax)); }
+            a!(self, jmp(done));
+            self.u.a.set_label(&mut neg).unwrap();
+            a!(self, mov(rcx, rax));
+            a!(self, shr(rax, 1));
+            a!(self, and(ecx, 1));
+            a!(self, or(rax, rcx));
+            if double {
+                a!(self, cvtsi2sd(xmm0, rax));
+                a!(self, addsd(xmm0, xmm0));
+            } else {
+                a!(self, cvtsi2ss(xmm0, rax));
+                a!(self, addss(xmm0, xmm0));
+            }
+            self.u.a.set_label(&mut done).unwrap();
+            a!(self, nop());
+        } else {
+            // 32-bit unsigned sources were zero-extended, so a 64-bit signed convert is exact.
+            let wide = sf || unsigned;
+            if double {
+                if wide { a!(self, cvtsi2sd(xmm0, rax)); } else { a!(self, cvtsi2sd(xmm0, eax)); }
+            } else if wide {
+                a!(self, cvtsi2ss(xmm0, rax));
+            } else {
+                a!(self, cvtsi2ss(xmm0, eax));
+            }
+        }
     }
 
     /// ARM rounding modes 0=N, 1=P, 2=M, 3=Z, 4=A, 5=FPCR.
@@ -3369,14 +3374,31 @@ impl<'a> E<'a> {
             return true;
         }
 
-        // ---- SCVTF (vector, integer) ----
-        if insn & 0xBFBF_FC00 == 0x0E21_D800 {
+        // SCVTF/UCVTF (vector integer source), using the same exact
+        // unsigned-64 rounding sequence as the scalar conversion.
+        if insn & 0x9FBF_FC00 == 0x0E21_D800 {
             let double = bit(insn, 22) != 0;
-            if double {
-                return false;
+            if double && !q { return false; }
+            if !double && !u {
+                self.vld(xmm0, rn, q);
+                a!(self, cvtdq2ps(xmm0, xmm0));
+            } else {
+                self.vld(xmm5, rn, true);
+                a!(self, pxor(xmm4, xmm4));
+                for lane in 0..(if double { 2 } else if q { 4 } else { 2 }) {
+                    if double { a!(self, pextrq(rax, xmm5, lane)); }
+                    else { a!(self, pextrd(eax, xmm5, lane)); }
+                    self.int_to_fp_reg(u, double, double);
+                    if double {
+                        a!(self, movq(rax, xmm0));
+                        a!(self, pinsrq(xmm4, rax, lane));
+                    } else {
+                        a!(self, movd(eax, xmm0));
+                        a!(self, pinsrd(xmm4, eax, lane));
+                    }
+                }
+                a!(self, movdqa(xmm0, xmm4));
             }
-            self.vld(xmm0, rn, q);
-            a!(self, cvtdq2ps(xmm0, xmm0));
             self.vfin(rd, q);
             return true;
         }
