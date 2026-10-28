@@ -12,6 +12,7 @@ mod jit;
 mod loader;
 mod macho;
 mod paths;
+mod sandbox;
 mod signals;
 mod spawn;
 mod symbols;
@@ -170,6 +171,11 @@ fn main() {
         .map(|(k, v)| format!("{k}={v}"))
         .collect();
 
+    if let Some(c) = sandbox::apply(&exe, &mut envp) {
+        if syscalls::TRACE.load(Ordering::Relaxed) {
+            eprintln!("maclator: sandboxed guest, container {c}");
+        }
+    }
     if gpu_active && !gpu::inject(&mut envp) {
         eprintln!("maclator: --gpu: libmclmetal.dylib not found (looked next to maclator, in ./gpu, ~/.maclator/gpu, $MACLATOR_GPU_DIR)");
     }

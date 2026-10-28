@@ -5,6 +5,7 @@
 // the host GPU by libmclbridge (x86-64) through a Maclator trap; MTL* descriptor objects that
 // live in the guest are serialized by property introspection. Compiled without ARC.
 #import <Foundation/Foundation.h>
+#import <Metal/Metal.h>
 #import <objc/runtime.h>
 #import <objc/message.h>
 #include <pthread.h>
@@ -184,6 +185,22 @@ static BOOL isNewFamily(const char *s) {
 }
 - (NSUInteger)hash { return (NSUInteger)_h; }
 
+// CAMetalDrawables belong to the guest's own CAMetalLayer (its textures are host textures over
+// guest-allocated IOSurfaces), so presenting must stay in the guest: present from a completion
+// handler instead of shipping the drawable to the host, where it would be serialized as a descriptor.
+- (void)presentDrawable:(id)d {
+    [d retain];
+    [(id)self addCompletedHandler:^(id cb) { [d present]; [d release]; }];
+}
+- (void)presentDrawable:(id)d atTime:(CFTimeInterval)t {
+    [d retain];
+    [(id)self addCompletedHandler:^(id cb) { [d presentAtTime:t]; [d release]; }];
+}
+- (void)presentDrawable:(id)d afterMinimumDuration:(CFTimeInterval)dur {
+    [d retain];
+    [(id)self addCompletedHandler:^(id cb) { [d presentAfterMinimumDuration:dur]; [d release]; }];
+}
+
 - (void)forwardInvocation:(NSInvocation *)inv {
     gLegacyCalls++;
     SEL sel = inv.selector;
@@ -260,7 +277,8 @@ static BOOL isNewFamily(const char *s) {
 // ---- descriptors: serialize guest-side MTL*Descriptor objects by introspection -----------
 static BOOL isDescriptorClass(id o) {
     const char *n = object_getClassName(o);
-    return strncmp(n, "MTL", 3) == 0 || strncmp(n, "CAMetal", 7) == 0;
+    if (strncmp(n, "CAMetal", 7) == 0) return strstr(n, "Layer") == NULL && strstr(n, "Drawable") == NULL;
+    return strncmp(n, "MTL", 3) == 0;
 }
 
 static NSDictionary *describe(id o) {

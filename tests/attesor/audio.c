@@ -16,7 +16,7 @@ int main(void) {
   printf("AudioQueueNewOutput=%d\n", (int)e); if (e) return 1;
   for (int i = 0; i < 3; i++) { AudioQueueBufferRef b; AudioQueueAllocateBuffer(q, 8820 * 4, &b); cb(NULL, q, b); }
   e = AudioQueueStart(q, NULL); printf("AudioQueueStart=%d\n", (int)e);
-  CFRunLoopRunInMode(kCFRunLoopDefaultMode, 1.0, false);
+  CFRunLoopRunInMode(kCFRunLoopDefaultMode, getenv("SECS") ? atof(getenv("SECS")) : 1.0, false);
   printf("buffers filled=%d (expect >5)\n", filled);
   AudioQueueStop(q, true); AudioQueueDispose(q, true);
   return filled > 5 ? 0 : 2;
