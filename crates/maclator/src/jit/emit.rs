@@ -3004,6 +3004,35 @@ impl<'a> E<'a> {
         let u = bit(insn, 29) != 0;
         let size = bits(insn, 23, 22);
 
+        // TBL/TBX: PSHUFB wraps indices modulo 16, so explicitly mask each
+        // table's contribution by the index high nibble. Delay the store until
+        // all sources have been read (including wrapped/overlapping tables).
+        if insn & 0xBFE0_8C00 == 0x0E00_0000 {
+            let len = bits(insn, 14, 13) + 1;
+            let tbx = bit(insn, 12) != 0;
+            self.vld(xmm1, rm, true);
+            self.vconst(xmm2, 0xF0F0_F0F0_F0F0_F0F0);
+            a!(self, pand(xmm2, xmm1));
+            a!(self, pxor(xmm0, xmm0));
+            a!(self, pxor(xmm5, xmm5));
+            for k in 0..len {
+                self.vconst(xmm3, 0x0101_0101_0101_0101 * (k * 16) as u64);
+                a!(self, pcmpeqb(xmm3, xmm2));
+                a!(self, por(xmm5, xmm3));
+                self.vld(xmm4, (rn + k) % 32, true);
+                a!(self, pshufb(xmm4, xmm1));
+                a!(self, pand(xmm4, xmm3));
+                a!(self, por(xmm0, xmm4));
+            }
+            if tbx {
+                self.vld(xmm4, rd, true);
+                a!(self, pandn(xmm5, xmm4));
+                a!(self, por(xmm0, xmm5));
+            }
+            self.vfin(rd, q);
+            return true;
+        }
+
         // ---- three-same integer: saturating add/sub, min/max, mul/mla/mls ----
         if insn & 0x9F20_0400 == 0x0E20_0400 {
             let opcode = bits(insn, 15, 11);
