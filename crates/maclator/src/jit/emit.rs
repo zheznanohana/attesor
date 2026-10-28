@@ -3097,6 +3097,78 @@ impl<'a> E<'a> {
         let u = bit(insn, 29) != 0;
         let size = bits(insn, 23, 22);
 
+        // SHA256H/H2: four rounds, with state kept in two XMM registers.
+        // Use ordinary rotates/Boolean operations, not the optional SHA ISA.
+        if insn & 0xFFE0_EC00 == 0x5E00_4000 {
+            let h2 = bit(insn, 12) != 0;
+            self.vld(xmm0, if h2 { rn } else { rd }, true);
+            self.vld(xmm1, if h2 { rd } else { rn }, true);
+            self.vld(xmm2, rm, true);
+            for lane in 0..4 {
+                a!(self, pextrd(esi, xmm1, 0));
+                a!(self, mov(eax, esi)); a!(self, ror(eax, 6));
+                a!(self, mov(ecx, esi)); a!(self, ror(ecx, 11)); a!(self, xor(eax, ecx));
+                a!(self, mov(ecx, esi)); a!(self, ror(ecx, 25)); a!(self, xor(eax, ecx));
+                a!(self, pextrd(edi, xmm1, 1));
+                a!(self, pextrd(r8d, xmm1, 2));
+                a!(self, xor(edi, r8d)); a!(self, and(edi, esi)); a!(self, xor(edi, r8d));
+                a!(self, add(eax, edi));
+                a!(self, pextrd(ecx, xmm1, 3)); a!(self, add(eax, ecx));
+                a!(self, pextrd(ecx, xmm2, lane)); a!(self, add(eax, ecx));
+                a!(self, pextrd(edx, xmm0, 3)); a!(self, add(edx, eax));
+                a!(self, pextrd(esi, xmm0, 0));
+                a!(self, mov(ecx, esi)); a!(self, ror(ecx, 2));
+                a!(self, mov(edi, esi)); a!(self, ror(edi, 13)); a!(self, xor(ecx, edi));
+                a!(self, mov(edi, esi)); a!(self, ror(edi, 22)); a!(self, xor(ecx, edi));
+                a!(self, add(eax, ecx));
+                a!(self, pextrd(edi, xmm0, 1));
+                a!(self, pextrd(r8d, xmm0, 2));
+                a!(self, mov(ecx, esi)); a!(self, and(ecx, edi));
+                a!(self, xor(esi, edi)); a!(self, and(esi, r8d)); a!(self, xor(ecx, esi));
+                a!(self, add(eax, ecx));
+                a!(self, pslldq(xmm0, 4)); a!(self, pinsrd(xmm0, eax, 0));
+                a!(self, pslldq(xmm1, 4)); a!(self, pinsrd(xmm1, edx, 0));
+            }
+            if h2 { a!(self, movdqa(xmm0, xmm1)); }
+            self.vfin(rd, true);
+            return true;
+        }
+        // SHA256SU0/SU1 schedule updates. Keep original inputs separate from
+        // the result so Rd==Rn/Rm and SU1's r0/r1 dependency remain exact.
+        let su0 = insn & 0xFFFF_FC00 == 0x5E28_2800;
+        let su1 = insn & 0xFFE0_FC00 == 0x5E00_6000;
+        if su0 || su1 {
+            self.vld(xmm1, rd, true);
+            self.vld(xmm2, rn, true);
+            if su1 { self.vld(xmm3, rm, true); }
+            a!(self, pxor(xmm0, xmm0));
+            for lane in 0..4 {
+                if su0 {
+                    if lane < 3 { a!(self, pextrd(eax, xmm1, lane + 1)); }
+                    else { a!(self, pextrd(eax, xmm2, 0)); }
+                } else if lane < 2 {
+                    a!(self, pextrd(eax, xmm3, lane + 2));
+                } else {
+                    a!(self, pextrd(eax, xmm0, lane - 2));
+                }
+                a!(self, mov(ecx, eax));
+                a!(self, mov(edx, eax));
+                a!(self, ror(eax, if su0 { 7 } else { 17 }));
+                a!(self, ror(ecx, if su0 { 18 } else { 19 }));
+                a!(self, shr(edx, if su0 { 3 } else { 10 }));
+                a!(self, xor(eax, ecx)); a!(self, xor(eax, edx));
+                a!(self, pextrd(ecx, xmm1, lane)); a!(self, add(eax, ecx));
+                if su1 {
+                    if lane < 3 { a!(self, pextrd(ecx, xmm2, lane + 1)); }
+                    else { a!(self, pextrd(ecx, xmm3, 0)); }
+                    a!(self, add(eax, ecx));
+                }
+                a!(self, pinsrd(xmm0, eax, lane));
+            }
+            self.vfin(rd, true);
+            return true;
+        }
+
         // Vector FRINT* (single/double).
         if insn & 0x9F3E_0C00 == 0x0E20_0800 {
             let opcode = bits(insn, 16, 12);
