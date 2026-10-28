@@ -2823,10 +2823,14 @@ impl<'a> E<'a> {
             }
             let sf = bit(insn, 31) != 0;
             let unsigned = bit(insn, 16) != 0;
-            if unsigned {
-                return false;
-            }
             let double = ftype == 1;
+            if unsigned {
+                if double { a!(self, movq(xmm0, qword_ptr(r15 + voff(rn)))); }
+                else { a!(self, movss(xmm0, dword_ptr(r15 + voff(rn)))); }
+                self.fp_to_uint_reg(double, sf);
+                self.stx(rd, rax, false);
+                return true;
+            }
             if double {
                 a!(self, movsd_2(xmm0, qword_ptr(r15 + voff(rn))));
                 if sf { a!(self, cvttsd2si(rax, xmm0)); } else { a!(self, cvttsd2si(eax, xmm0)); }
@@ -2985,6 +2989,52 @@ impl<'a> E<'a> {
         self.mov_imm(rax, v);
         a!(self, movq(x, rax));
         a!(self, punpcklqdq(x, x));
+    }
+
+    /// FCVTZU: saturating truncation of XMM0 into unsigned RAX.
+    fn fp_to_uint_reg(&mut self, double: bool, wide: bool) {
+        let mut zero = self.new_label();
+        let mut max = self.new_label();
+        let mut done = self.new_label();
+        a!(self, pxor(xmm1, xmm1));
+        if double { a!(self, ucomisd(xmm0, xmm1)); }
+        else { a!(self, ucomiss(xmm0, xmm1)); }
+        a!(self, jbe(zero)); // negative, zero or unordered
+        let lim = 2f64.powi(if wide { 64 } else { 32 });
+        self.vconst(xmm1, if double { lim.to_bits() } else { (lim as f32).to_bits() as u64 });
+        if double { a!(self, ucomisd(xmm0, xmm1)); }
+        else { a!(self, ucomiss(xmm0, xmm1)); }
+        a!(self, jae(max));
+        if wide {
+            let mut small = self.new_label();
+            let half = 2f64.powi(63);
+            self.vconst(xmm1, if double { half.to_bits() } else { (half as f32).to_bits() as u64 });
+            if double { a!(self, ucomisd(xmm0, xmm1)); }
+            else { a!(self, ucomiss(xmm0, xmm1)); }
+            a!(self, jb(small));
+            if double {
+                a!(self, subsd(xmm0, xmm1));
+                a!(self, cvttsd2si(rax, xmm0));
+            } else {
+                a!(self, subss(xmm0, xmm1));
+                a!(self, cvttss2si(rax, xmm0));
+            }
+            a!(self, bts(rax, 63));
+            a!(self, jmp(done));
+            self.u.a.set_label(&mut small).unwrap();
+        }
+        // A 64-bit signed convert covers the entire uint32 range as well.
+        if double { a!(self, cvttsd2si(rax, xmm0)); }
+        else { a!(self, cvttss2si(rax, xmm0)); }
+        a!(self, jmp(done));
+        self.u.a.set_label(&mut zero).unwrap();
+        a!(self, xor(eax, eax));
+        a!(self, jmp(done));
+        self.u.a.set_label(&mut max).unwrap();
+        if wide { self.mov_imm(rax, u64::MAX); }
+        else { a!(self, mov(eax, u32::MAX)); }
+        self.u.a.set_label(&mut done).unwrap();
+        a!(self, nop());
     }
 
     /// Convert an integer in RAX to the low FP lane of XMM0.
@@ -3643,6 +3693,26 @@ impl<'a> E<'a> {
             let imm = maclator_core::interp::simd::adv_simd_expand_imm(op, 0b1111, imm8);
             self.mov_imm(rax, imm);
             self.vst_rax(rd, q);
+            return true;
+        }
+
+        // FCVTZU (vector single/double). Accumulate separately from the
+        // input so all alias combinations are safe across per-lane branches.
+        if insn & 0xBFBF_FC00 == 0x2EA1_B800 {
+            let double = bit(insn, 22) != 0;
+            if double && !q { return false; }
+            self.vld(xmm5, rn, true);
+            a!(self, pxor(xmm4, xmm4));
+            for lane in 0..(if double { 2 } else if q { 4 } else { 2 }) {
+                if double { a!(self, pextrq(rax, xmm5, lane)); }
+                else { a!(self, pextrd(eax, xmm5, lane)); }
+                a!(self, movq(xmm0, rax));
+                self.fp_to_uint_reg(double, double);
+                if double { a!(self, pinsrq(xmm4, rax, lane)); }
+                else { a!(self, pinsrd(xmm4, eax, lane)); }
+            }
+            a!(self, movdqa(xmm0, xmm4));
+            self.vfin(rd, q);
             return true;
         }
 
