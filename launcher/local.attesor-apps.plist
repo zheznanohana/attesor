@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0"><dict>
+  <key>Label</key><string>local.attesor-apps</string>
+  <key>ProgramArguments</key><array><string>@HOME@/attesor-launcher/attesor-apps</string><string>scan</string></array>
+  <key>WatchPaths</key><array><string>/Applications</string><string>@HOME@/Applications</string></array>
+  <!-- launchd gets no WatchPaths events for /Applications, so also rescan periodically (a scan takes ~0.5 s) -->
+  <key>StartInterval</key><integer>30</integer>
+  <key>EnvironmentVariables</key><dict><key>ATTESOR</key><string>@ATTESOR@</string></dict>
+  <key>RunAtLoad</key><true/>
+  <key>ThrottleInterval</key><integer>10</integer>
+  <key>StandardOutPath</key><string>@HOME@/Library/Logs/Attesor/attesor-apps.log</string>
+  <key>StandardErrorPath</key><string>@HOME@/Library/Logs/Attesor/attesor-apps.log</string>
+</dict></plist>
