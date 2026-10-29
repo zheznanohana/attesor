@@ -1,0 +1,498 @@
+Whole app (1 process files)
+Total samples: 105684
+Translation: 30650 blocks, 910 ms
+
+State                 Samples   % total
+idle                    91743     86.81
+jit                      6459      6.11
+syscall-bsd              3447      3.26
+dispatch                 2935      2.78
+translate                 912      0.86
+interp                    136      0.13
+syscall-mach               52      0.05
+gpu                         0      0.00
+syscall-machdep             0      0.00
+
+Syscalls (including idle)
+Class/number Name                                      Samples % samples     Calls    Total ms     Host ms Emulation ms
+bsd/305       psynch_cvwait                              43221     45.38      3702   43399.876   43396.367        3.509
+mach/47       mach_msg2                                  16201     17.01      6092   16175.461   16171.063        4.398
+bsd/363       kevent                                      8066      8.47     32448    8068.807    8056.167       12.640
+bsd/369       kevent64                                    7981      8.38         3    7990.995    7990.995        0.001
+bsd/230       poll                                        7980      8.38         9    7990.525    7990.522        0.003
+mach/36       semaphore_wait                              7916      8.31         6    7926.772    7926.737        0.035
+bsd/197       mmap                                        1117      1.17      3245    1198.919      47.431     1151.488
+bsd/536       shared_region_map_and_slide_2_np             802      0.84         1     801.378       1.133      800.245
+bsd/407       select_nocancel                              357      0.37     12005     282.314     276.519        5.795
+bsd/3         read                                         230      0.24      7708     193.477     187.157        6.320
+bsd/153       pread                                        189      0.20      9759     169.667     165.405        4.261
+bsd/98        connect                                      145      0.15      3002     124.421     121.408        3.013
+bsd/202       sysctl                                       107      0.11      6200     101.779      99.028        2.751
+bsd/4         write                                         92      0.10      6002      83.210      76.440        6.769
+bsd/399       close_nocancel                                50      0.05     25944      80.206      66.210       13.997
+bsd/75        madvise                                       68      0.07      9312      67.700      61.099        6.601
+bsd/5         open                                          66      0.07      1867      66.595      62.540        4.055
+bsd/97        socket                                        76      0.08      3005      56.725      51.940        4.785
+bsd/105       setsockopt                                    57      0.06     21008      51.196      38.734       12.462
+bsd/413       sendto_nocancel                               50      0.05     12017      48.196      43.120        5.076
+bsd/403       recvfrom_nocancel                             61      0.06     18019      45.149      37.601        7.547
+bsd/338       stat64                                        37      0.04      6313      42.406      33.900        8.506
+bsd/544       sys_ulock_wait2                               33      0.03      2696      38.767      27.601       11.166
+bsd/402       sendmsg_nocancel                              54      0.06      6002      37.108      34.308        2.800
+bsd/134       shutdown                                      35      0.04      5995      36.207      34.105        2.103
+bsd/135       socketpair                                    33      0.03      6002      28.988      25.564        3.423
+bsd/304       psynch_cvsignal                               21      0.02      3697      21.027      17.738        3.289
+bsd/133       sendto                                        18      0.02      3007      19.218      18.451        0.766
+bsd/30        accept                                         8      0.01      2998      18.849      18.208        0.642
+bsd/266       shm_open                                      18      0.02      3010      17.688      16.030        1.658
+bsd/116       gettimeofday                                  12      0.01     12866      14.862       9.550        5.312
+bsd/118       getsockopt                                    15      0.02      3001      14.360      11.429        2.931
+bsd/54        ioctl                                          9      0.01      6023      13.152       9.116        4.036
+mach/3        mach_absolute_time                            14      0.01     47891      11.333       0.000       11.333
+bsd/92        fcntl                                          8      0.01      6113      10.702       6.548        4.154
+mach/14       mach_vm_protect                               13      0.01       807      10.641      10.390        0.251
+bsd/516       ulock_wake                                    10      0.01      2334       9.955       3.054        6.900
+mach/12       mach_vm_deallocate                             4      0.00      1175       9.345       8.760        0.586
+bsd/74        mprotect                                      12      0.01      2066       8.676       7.135        1.541
+bsd/398       open_nocancel                                  8      0.01       234       8.356       7.970        0.386
+bsd/344       getdirentries64                               10      0.01       231       7.754       7.682        0.072
+bsd/336       proc_info                                      8      0.01      3025       7.241       6.401        0.841
+bsd/362       kqueue                                        13      0.01      3008       6.788       4.819        1.969
+mach/10       mach_vm_allocate                               5      0.01      1168       5.730       5.423        0.308
+bsd/339       fstat64                                        3      0.00      1753       4.783       4.106        0.677
+bsd/515       ulock_wait                                     2      0.00         2       2.187       2.180        0.007
+bsd/301       psynch_mutexwait                               2      0.00        97       1.867       1.515        0.351
+bsd/73        munmap                                         1      0.00       135       1.461       1.428        0.033
+bsd/360       bsdthread_create                               1      0.00        14       0.996       0.000        0.996
+bsd/346       fstatfs64                                      0      0.00       228       0.758       0.662        0.096
+bsd/302       psynch_mutexdrop                               0      0.00        82       0.465       0.276        0.189
+bsd/463       openat                                         0      0.00        19       0.308       0.293        0.015
+bsd/6         close                                          0      0.00        80       0.275       0.225        0.049
+bsd/220       getattrlist                                    1      0.00        37       0.251       0.217        0.034
+bsd/375       kevent_id                                      0      0.00        11       0.215       0.104        0.111
+mach/15       mach_vm_map                                    0      0.00        47       0.215       0.191        0.024
+bsd/33        access                                         0      0.00         8       0.202       0.192        0.011
+mach/25       ?                                              0      0.00         7       0.146       0.014        0.133
+bsd/340       lstat64                                        1      0.00        18       0.143       0.125        0.018
+bsd/500       getentropy                                     1      0.00        17       0.131       0.081        0.049
+bsd/104       bind                                           0      0.00         1       0.124       0.124        0.000
+bsd/381       __mac_syscall                                  0      0.00        19       0.121       0.116        0.005
+bsd/368       workq_kernreturn                               0      0.00         9       0.120       0.062        0.058
+bsd/361       bsdthread_terminate                            0      0.00         5       0.110       0.089        0.020
+mach/24       ?                                              0      0.00        26       0.108       0.081        0.027
+bsd/372       thread_selfid                                  0      0.00        17       0.087       0.014        0.073
+bsd/409       connect_nocancel                               0      0.00         2       0.086       0.085        0.001
+bsd/374       kevent_qos                                     0      0.00         4       0.078       0.030        0.049
+bsd/1         exit                                           0      0.00         1       0.057       0.000        0.057
+bsd/199       lseek                                          0      0.00        13       0.056       0.052        0.004
+bsd/427       fsgetpath                                      0      0.00         5       0.050       0.049        0.001
+mach/19       mach_port_mod_refs                             0      0.00        12       0.043       0.027        0.016
+mach/22       ?                                              0      0.00         6       0.040       0.009        0.031
+bsd/331       __disable_threadsignal                         0      0.00         5       0.035       0.004        0.031
+bsd/106       listen                                         0      0.00         1       0.031       0.031        0.000
+bsd/170       csops_audittoken                               0      0.00         6       0.029       0.027        0.001
+bsd/169       csops                                          0      0.00         9       0.028       0.025        0.003
+mach/18       mach_port_deallocate                           0      0.00        17       0.027       0.023        0.004
+bsd/58        readlink                                       0      0.00         5       0.024       0.022        0.002
+bsd/24        getuid                                         0      0.00        18       0.020       0.014        0.007
+bsd/194       getrlimit                                      0      0.00        11       0.020       0.016        0.003
+bsd/327       issetugid                                      0      0.00        14       0.017       0.013        0.005
+bsd/347       getfsstat64                                    0      0.00         2       0.016       0.016        0.000
+bsd/25        geteuid                                        0      0.00        20       0.016       0.011        0.004
+mach/50       ?                                              0      0.00         6       0.015       0.010        0.005
+bsd/470       fstatat64                                      0      0.00         2       0.014       0.011        0.003
+bsd/46        sigaction                                      0      0.00        34       0.013       0.003        0.010
+mach/33       semaphore_signal                               0      0.00         5       0.013       0.012        0.001
+bsd/42        pipe                                           0      0.00         2       0.013       0.012        0.000
+bsd/294       shared_region_check_np                         0      0.00         4       0.012       0.010        0.002
+bsd/32        getsockname                                    0      0.00         2       0.011       0.011        0.001
+mach/16       mach_port_allocate                             0      0.00         3       0.011       0.005        0.006
+bsd/396       read_nocancel                                  0      0.00         2       0.011       0.011        0.000
+bsd/47        getgid                                         0      0.00        15       0.011       0.008        0.003
+mach/28       task_self                                      0      0.00         2       0.010       0.005        0.006
+bsd/478       bsdthread_ctl                                  0      0.00         5       0.010       0.009        0.002
+mach/29       host_self                                      0      0.00         5       0.010       0.008        0.002
+bsd/483       csrctl                                         0      0.00         6       0.010       0.006        0.003
+bsd/406       sys_fcntl_nocancel                             0      0.00         5       0.010       0.009        0.001
+bsd/441       guarded_open_np                                0      0.00         2       0.009       0.009        0.000
+bsd/43        getegid                                        0      0.00        15       0.009       0.007        0.002
+bsd/345       statfs64                                       0      0.00         2       0.009       0.009        0.000
+bsd/397       write_nocancel                                 0      0.00         2       0.009       0.008        0.001
+mach/26       mach_reply_port                                0      0.00         2       0.008       0.003        0.005
+mach/44       ?                                              0      0.00         1       0.007       0.007        0.000
+mach/77       ?                                              0      0.00         3       0.006       0.005        0.000
+bsd/329       __pthread_sigmask                              0      0.00         4       0.006       0.005        0.001
+mach/91       mk_timer_create                                0      0.00         2       0.003       0.003        0.000
+mach/70       ?                                              0      0.00         1       0.003       0.003        0.000
+bsd/38        sys_crossarch_trap                             0      0.00         4       0.003       0.002        0.001
+bsd/41        sys_dup                                        0      0.00         3       0.003       0.002        0.000
+mach/92       mk_timer_destroy                               0      0.00         1       0.003       0.002        0.000
+bsd/20        getpid                                         0      0.00         2       0.003       0.002        0.001
+mach/76       ?                                              0      0.00         1       0.002       0.002        0.001
+bsd/195       setrlimit                                      0      0.00         1       0.002       0.002        0.000
+mach/89       mach_timebase_info                             0      0.00         1       0.002       0.002        0.000
+mach/43       ?                                              0      0.00         1       0.002       0.001        0.001
+bsd/550       map_with_linking_np                            0      0.00         9       0.002       0.000        0.002
+bsd/286       gettid                                         0      0.00         1       0.001       0.001        0.000
+bsd/39        getppid                                        0      0.00         1       0.001       0.001        0.000
+bsd/366       bsdthread_register                             0      0.00         1       0.001       0.000        0.001
+bsd/367       workq_open                                     0      0.00         1       0.000       0.000        0.000
+machdep/2     set_tpidrro_el0                                0      0.00         1       0.000       0.000        0.000
+
+GPU bridge operations (caller wall time)
+Class/number Name                                      Samples % samples     Calls    Total ms     Host ms Emulation ms
+
+GPU selectors (bridge execution, nested in operations)
+Class/number Name                                      Samples % samples     Calls    Total ms     Host ms Emulation ms
+
+Classified idle (including zero-sample polls):
+Class/number Name                                      Idle calls Idle samples
+bsd/230       poll                                              9         7980
+bsd/301       psynch_mutexwait                                 97            2
+bsd/305       psynch_cvwait                                  3702        43221
+bsd/363       kevent                                        32448         8066
+bsd/368       workq_kernreturn                                  6            0
+bsd/369       kevent64                                          3         7981
+bsd/374       kevent_qos                                        4            0
+bsd/375       kevent_id                                        11            0
+bsd/407       select_nocancel                               12005          357
+bsd/515       ulock_wait                                        2            2
+bsd/544       sys_ulock_wait2                                2696           33
+mach/36       semaphore_wait                                    6         7916
+mach/47       mach_msg2                                      3070        16185
+Times are elapsed thread wall time, including waits. Host covers raw host syscalls and explicitly scoped libc kernel wrappers.
+GPU kernel/emulation splits are unavailable. Selector time measures bridge execution and overlaps caller operation time.
+
+Top images (jit + interp)       Samples   % exec    % jit % interp
+Electron Framework                           3827    58.03    99.50     0.50
+?                                            1616    24.50    93.32     6.68
+dyld                                          703    10.66   100.00     0.00
+libsystem_kernel.dylib                        113     1.71   100.00     0.00
+libsystem_info.dylib                           72     1.09    98.61     1.39
+libsystem_c.dylib                              71     1.08   100.00     0.00
+libobjc.A.dylib                                39     0.59   100.00     0.00
+libsystem_notify.dylib                         32     0.49   100.00     0.00
+libsystem_platform.dylib                       32     0.49    78.12    21.88
+libsystem_malloc.dylib                         30     0.45   100.00     0.00
+libsystem_pthread.dylib                        25     0.38   100.00     0.00
+libxpc.dylib                                    9     0.14   100.00     0.00
+CoreFoundation                                  7     0.11   100.00     0.00
+libsystem_trace.dylib                           7     0.11   100.00     0.00
+libsystem_dnssd.dylib                           5     0.08    80.00    20.00
+libdispatch.dylib                               3     0.05   100.00     0.00
+Security                                        1     0.02   100.00     0.00
+libcorecrypto.dylib                             1     0.02   100.00     0.00
+libicucore.A.dylib                              1     0.02   100.00     0.00
+libswiftCore.dylib                              1     0.02   100.00     0.00
+
+Top symbols (jit + interp)      Samples   % exec
+?`?                                                              1616    24.50
+Electron Framework`_ares_llist_node_next                          628     9.52
+Electron Framework`__ZN2v86Object18CreateDataPropertyENS_5LocalINS_7ContextEEENS1_INS_4NameEEENS1_INS_5ValueEEE      346     5.25
+Electron Framework`__ZN2v86Object15GetIdentityHashEv              325     4.93
+dyld`_strcmp                                                      323     4.90
+Electron Framework`__ZN2v86Object19GetOwnPropertyNamesENS_5LocalINS_7ContextEEENS_14PropertyFilterENS_17KeyConversionModeE      235     3.56
+Electron Framework`_content$rust$child_process_security_policy$cxxbridge1$197$record_origin_agent_cluster_request_if_new      190     2.88
+Electron Framework`__ZN2v85Array3NewEPNS_7IsolateEPNS_5LocalINS_5ValueEEEm      131     1.99
+Electron Framework`__ZN2v86String12MakeExternalEPNS0_29ExternalOneByteStringResourceE      119     1.80
+dyld`__ZN5dyld317OverflowSafeArrayIjLy4294967295EE9push_backEOj      101     1.53
+Electron Framework`__ZN2v823ExternalMemoryAccounter8IncreaseEPNS_7IsolateEm       88     1.33
+Electron Framework`__ZN2v86Object5CloneEPNS_7IsolateE              88     1.33
+Electron Framework`__ZN5cppgc8internal12WriteBarrier26DijkstraMarkingBarrierSlowEPKv       77     1.17
+Electron Framework`__ZN2v810Uint8Array3NewENS_5LocalINS_11ArrayBufferEEEmm       75     1.14
+Electron Framework`_uv_req_set_data                                73     1.11
+Electron Framework`__ZN2v87Isolate17GetCurrentContextEv            71     1.08
+libsystem_info.dylib`<internal+0x2a484>                            61     0.92
+libsystem_c.dylib`<internal+0x791dc>                               56     0.85
+Electron Framework`__ZN2v86Object19SetLazyDataPropertyENS_5LocalINS_7ContextEEENS1_INS_4NameEEEPFvS5_RKNS_20PropertyCallbackInfoINS_5ValueEEEENS1_IS7_EENS_17PropertyAttributeENS_14SideEffectTypeESF_       51     0.77
+Electron Framework`__ZN4node23WorkerThreadsTaskRunner20DelayedTaskScheduler7RunTaskEP10uv_timer_s       50     0.76
+Electron Framework`__ZN2v87Integer3NewEPNS_7IsolateEi              39     0.59
+Electron Framework`__ZN2v86Object3GetENS_5LocalINS_7ContextEEENS1_INS_5ValueEEE       36     0.55
+libsystem_kernel.dylib`_setsockopt                                 35     0.53
+Electron Framework`__ZN2v86Number3NewEPNS_7IsolateEd               33     0.50
+Electron Framework`__ZN2v88internal15ThreadIsolation13LookupJitPageEmm       33     0.50
+dyld`_strnlen                                                      33     0.50
+Electron Framework`_cxxbridge1$string$reserve_additional           30     0.45
+Electron Framework`_xml_ffi$cxxbridge1$197$NamespacesIterator$operator$sizeof       29     0.44
+dyld`__ZNK5dyld46Loader21overridesDylibInCacheERPKNS0_10DylibPatchERt       28     0.42
+libsystem_platform.dylib`__platform_memset_pattern16               28     0.42
+Electron Framework`_rust_png$cxxbridge1$197$Reader$get_unknown_chunk_name       27     0.41
+dyld`__ZNK6mach_o12UnsafeHeader11installNameEv                     26     0.39
+Electron Framework`__ZN2v86Object16SetInternalFieldEiNS_5LocalINS_4DataEEE       25     0.38
+Electron Framework`__ZN4node9AsyncWrapC2EPNS_11EnvironmentEN2v85LocalINS3_6ObjectEEENS0_12ProviderTypeEd       25     0.38
+libsystem_notify.dylib`<internal+0x105f8>                          24     0.36
+Electron Framework`__ZN2v88internal8compiler23CompilationDependencies16RecordDependencyEPKNS1_21CompilationDependencyE       23     0.35
+libobjc.A.dylib`<internal+0x18b94>                                 23     0.35
+Electron Framework`__ZN5cppgc8internal22ExplicitManagementImpl22FreeUnreferencedObjectERNS_10HeapHandleEPv       19     0.29
+Electron Framework`__ZN2v86Object4WrapEPNS_7IsolateEmNS_17CppHeapPointerTagEPv       18     0.27
+Electron Framework`__ZN4node11http_parser6Parser5ProxyIMS1_FiPKcmEXadL_ZNS1_15on_header_fieldES4_mEEE3RawEP18llhttp__internal_sS4_m       18     0.27
+Electron Framework`__ZN5cppgc8internal22ExplicitManagementImpl6ResizeEPvm       18     0.27
+Electron Framework`_uv__io_start                                   18     0.27
+Electron Framework`_uv__read_start                                 18     0.27
+dyld`__ZNK5dyld415SyscallDelegate9onHaswellEv                      17     0.26
+libsystem_malloc.dylib`<internal+0x3acd0>                          17     0.26
+Electron Framework`__ZN2v87Context12DetachGlobalEv                 16     0.24
+Electron Framework`__ZN2v88Function4CallEPNS_7IsolateENS_5LocalINS_7ContextEEENS3_INS_5ValueEEEiPS7_       16     0.24
+Electron Framework`__ZN4node11StringBytes6EncodeEPN2v87IsolateEPKcmNS_8encodingE       16     0.24
+dyld`__ZN5dyld4L24dyld_map_with_linking_npEPK10mwl_regionjPK12mwl_info_hdrj       16     0.24
+Electron Framework`__ZN4node10AsyncHooks17pop_async_contextEd       15     0.23
+Electron Framework`__ZN4node9AsyncWrap12MakeCallbackEN2v85LocalINS1_8FunctionEEEiPNS2_INS1_5ValueEEE       15     0.23
+Electron Framework`__ZN2v812api_internal13DisposeGlobalEPm         14     0.21
+Electron Framework`__ZNK2v814ObjectTemplate18InternalFieldCountEv       14     0.21
+Electron Framework`__ZNK2v86String12WriteOneByteEPNS_7IsolateEjjPhi       14     0.21
+Electron Framework`__ZN2v86Object32SetAlignedPointerInInternalFieldEiPvt       13     0.20
+dyld`__ZN4objc7lookup8EPKhmy                                       13     0.20
+dyld`___simple_bprintf                                             13     0.20
+libsystem_kernel.dylib`_posix_madvise                              13     0.20
+Electron Framework`__ZN2v815ValueSerializer13WriteRawBytesEPKvm       12     0.18
+Electron Framework`__ZN2v87Context5EnterEv                         12     0.18
+
+Process type: set_tpidrro_el0 (1 process files)
+Total samples: 105684
+Translation: 30650 blocks, 910 ms
+
+State                 Samples   % total
+idle                    91743     86.81
+jit                      6459      6.11
+syscall-bsd              3447      3.26
+dispatch                 2935      2.78
+translate                 912      0.86
+interp                    136      0.13
+syscall-mach               52      0.05
+gpu                         0      0.00
+syscall-machdep             0      0.00
+
+Syscalls (including idle)
+Class/number Name                                      Samples % samples     Calls    Total ms     Host ms Emulation ms
+bsd/305       psynch_cvwait                              43221     45.38      3702   43399.876   43396.367        3.509
+mach/47       mach_msg2                                  16201     17.01      6092   16175.461   16171.063        4.398
+bsd/363       kevent                                      8066      8.47     32448    8068.807    8056.167       12.640
+bsd/369       kevent64                                    7981      8.38         3    7990.995    7990.995        0.001
+bsd/230       poll                                        7980      8.38         9    7990.525    7990.522        0.003
+mach/36       semaphore_wait                              7916      8.31         6    7926.772    7926.737        0.035
+bsd/197       mmap                                        1117      1.17      3245    1198.919      47.431     1151.488
+bsd/536       shared_region_map_and_slide_2_np             802      0.84         1     801.378       1.133      800.245
+bsd/407       select_nocancel                              357      0.37     12005     282.314     276.519        5.795
+bsd/3         read                                         230      0.24      7708     193.477     187.157        6.320
+bsd/153       pread                                        189      0.20      9759     169.667     165.405        4.261
+bsd/98        connect                                      145      0.15      3002     124.421     121.408        3.013
+bsd/202       sysctl                                       107      0.11      6200     101.779      99.028        2.751
+bsd/4         write                                         92      0.10      6002      83.210      76.440        6.769
+bsd/399       close_nocancel                                50      0.05     25944      80.206      66.210       13.997
+bsd/75        madvise                                       68      0.07      9312      67.700      61.099        6.601
+bsd/5         open                                          66      0.07      1867      66.595      62.540        4.055
+bsd/97        socket                                        76      0.08      3005      56.725      51.940        4.785
+bsd/105       setsockopt                                    57      0.06     21008      51.196      38.734       12.462
+bsd/413       sendto_nocancel                               50      0.05     12017      48.196      43.120        5.076
+bsd/403       recvfrom_nocancel                             61      0.06     18019      45.149      37.601        7.547
+bsd/338       stat64                                        37      0.04      6313      42.406      33.900        8.506
+bsd/544       sys_ulock_wait2                               33      0.03      2696      38.767      27.601       11.166
+bsd/402       sendmsg_nocancel                              54      0.06      6002      37.108      34.308        2.800
+bsd/134       shutdown                                      35      0.04      5995      36.207      34.105        2.103
+bsd/135       socketpair                                    33      0.03      6002      28.988      25.564        3.423
+bsd/304       psynch_cvsignal                               21      0.02      3697      21.027      17.738        3.289
+bsd/133       sendto                                        18      0.02      3007      19.218      18.451        0.766
+bsd/30        accept                                         8      0.01      2998      18.849      18.208        0.642
+bsd/266       shm_open                                      18      0.02      3010      17.688      16.030        1.658
+bsd/116       gettimeofday                                  12      0.01     12866      14.862       9.550        5.312
+bsd/118       getsockopt                                    15      0.02      3001      14.360      11.429        2.931
+bsd/54        ioctl                                          9      0.01      6023      13.152       9.116        4.036
+mach/3        mach_absolute_time                            14      0.01     47891      11.333       0.000       11.333
+bsd/92        fcntl                                          8      0.01      6113      10.702       6.548        4.154
+mach/14       mach_vm_protect                               13      0.01       807      10.641      10.390        0.251
+bsd/516       ulock_wake                                    10      0.01      2334       9.955       3.054        6.900
+mach/12       mach_vm_deallocate                             4      0.00      1175       9.345       8.760        0.586
+bsd/74        mprotect                                      12      0.01      2066       8.676       7.135        1.541
+bsd/398       open_nocancel                                  8      0.01       234       8.356       7.970        0.386
+bsd/344       getdirentries64                               10      0.01       231       7.754       7.682        0.072
+bsd/336       proc_info                                      8      0.01      3025       7.241       6.401        0.841
+bsd/362       kqueue                                        13      0.01      3008       6.788       4.819        1.969
+mach/10       mach_vm_allocate                               5      0.01      1168       5.730       5.423        0.308
+bsd/339       fstat64                                        3      0.00      1753       4.783       4.106        0.677
+bsd/515       ulock_wait                                     2      0.00         2       2.187       2.180        0.007
+bsd/301       psynch_mutexwait                               2      0.00        97       1.867       1.515        0.351
+bsd/73        munmap                                         1      0.00       135       1.461       1.428        0.033
+bsd/360       bsdthread_create                               1      0.00        14       0.996       0.000        0.996
+bsd/346       fstatfs64                                      0      0.00       228       0.758       0.662        0.096
+bsd/302       psynch_mutexdrop                               0      0.00        82       0.465       0.276        0.189
+bsd/463       openat                                         0      0.00        19       0.308       0.293        0.015
+bsd/6         close                                          0      0.00        80       0.275       0.225        0.049
+bsd/220       getattrlist                                    1      0.00        37       0.251       0.217        0.034
+bsd/375       kevent_id                                      0      0.00        11       0.215       0.104        0.111
+mach/15       mach_vm_map                                    0      0.00        47       0.215       0.191        0.024
+bsd/33        access                                         0      0.00         8       0.202       0.192        0.011
+mach/25       ?                                              0      0.00         7       0.146       0.014        0.133
+bsd/340       lstat64                                        1      0.00        18       0.143       0.125        0.018
+bsd/500       getentropy                                     1      0.00        17       0.131       0.081        0.049
+bsd/104       bind                                           0      0.00         1       0.124       0.124        0.000
+bsd/381       __mac_syscall                                  0      0.00        19       0.121       0.116        0.005
+bsd/368       workq_kernreturn                               0      0.00         9       0.120       0.062        0.058
+bsd/361       bsdthread_terminate                            0      0.00         5       0.110       0.089        0.020
+mach/24       ?                                              0      0.00        26       0.108       0.081        0.027
+bsd/372       thread_selfid                                  0      0.00        17       0.087       0.014        0.073
+bsd/409       connect_nocancel                               0      0.00         2       0.086       0.085        0.001
+bsd/374       kevent_qos                                     0      0.00         4       0.078       0.030        0.049
+bsd/1         exit                                           0      0.00         1       0.057       0.000        0.057
+bsd/199       lseek                                          0      0.00        13       0.056       0.052        0.004
+bsd/427       fsgetpath                                      0      0.00         5       0.050       0.049        0.001
+mach/19       mach_port_mod_refs                             0      0.00        12       0.043       0.027        0.016
+mach/22       ?                                              0      0.00         6       0.040       0.009        0.031
+bsd/331       __disable_threadsignal                         0      0.00         5       0.035       0.004        0.031
+bsd/106       listen                                         0      0.00         1       0.031       0.031        0.000
+bsd/170       csops_audittoken                               0      0.00         6       0.029       0.027        0.001
+bsd/169       csops                                          0      0.00         9       0.028       0.025        0.003
+mach/18       mach_port_deallocate                           0      0.00        17       0.027       0.023        0.004
+bsd/58        readlink                                       0      0.00         5       0.024       0.022        0.002
+bsd/24        getuid                                         0      0.00        18       0.020       0.014        0.007
+bsd/194       getrlimit                                      0      0.00        11       0.020       0.016        0.003
+bsd/327       issetugid                                      0      0.00        14       0.017       0.013        0.005
+bsd/347       getfsstat64                                    0      0.00         2       0.016       0.016        0.000
+bsd/25        geteuid                                        0      0.00        20       0.016       0.011        0.004
+mach/50       ?                                              0      0.00         6       0.015       0.010        0.005
+bsd/470       fstatat64                                      0      0.00         2       0.014       0.011        0.003
+bsd/46        sigaction                                      0      0.00        34       0.013       0.003        0.010
+mach/33       semaphore_signal                               0      0.00         5       0.013       0.012        0.001
+bsd/42        pipe                                           0      0.00         2       0.013       0.012        0.000
+bsd/294       shared_region_check_np                         0      0.00         4       0.012       0.010        0.002
+bsd/32        getsockname                                    0      0.00         2       0.011       0.011        0.001
+mach/16       mach_port_allocate                             0      0.00         3       0.011       0.005        0.006
+bsd/396       read_nocancel                                  0      0.00         2       0.011       0.011        0.000
+bsd/47        getgid                                         0      0.00        15       0.011       0.008        0.003
+mach/28       task_self                                      0      0.00         2       0.010       0.005        0.006
+bsd/478       bsdthread_ctl                                  0      0.00         5       0.010       0.009        0.002
+mach/29       host_self                                      0      0.00         5       0.010       0.008        0.002
+bsd/483       csrctl                                         0      0.00         6       0.010       0.006        0.003
+bsd/406       sys_fcntl_nocancel                             0      0.00         5       0.010       0.009        0.001
+bsd/441       guarded_open_np                                0      0.00         2       0.009       0.009        0.000
+bsd/43        getegid                                        0      0.00        15       0.009       0.007        0.002
+bsd/345       statfs64                                       0      0.00         2       0.009       0.009        0.000
+bsd/397       write_nocancel                                 0      0.00         2       0.009       0.008        0.001
+mach/26       mach_reply_port                                0      0.00         2       0.008       0.003        0.005
+mach/44       ?                                              0      0.00         1       0.007       0.007        0.000
+mach/77       ?                                              0      0.00         3       0.006       0.005        0.000
+bsd/329       __pthread_sigmask                              0      0.00         4       0.006       0.005        0.001
+mach/91       mk_timer_create                                0      0.00         2       0.003       0.003        0.000
+mach/70       ?                                              0      0.00         1       0.003       0.003        0.000
+bsd/38        sys_crossarch_trap                             0      0.00         4       0.003       0.002        0.001
+bsd/41        sys_dup                                        0      0.00         3       0.003       0.002        0.000
+mach/92       mk_timer_destroy                               0      0.00         1       0.003       0.002        0.000
+bsd/20        getpid                                         0      0.00         2       0.003       0.002        0.001
+mach/76       ?                                              0      0.00         1       0.002       0.002        0.001
+bsd/195       setrlimit                                      0      0.00         1       0.002       0.002        0.000
+mach/89       mach_timebase_info                             0      0.00         1       0.002       0.002        0.000
+mach/43       ?                                              0      0.00         1       0.002       0.001        0.001
+bsd/550       map_with_linking_np                            0      0.00         9       0.002       0.000        0.002
+bsd/286       gettid                                         0      0.00         1       0.001       0.001        0.000
+bsd/39        getppid                                        0      0.00         1       0.001       0.001        0.000
+bsd/366       bsdthread_register                             0      0.00         1       0.001       0.000        0.001
+bsd/367       workq_open                                     0      0.00         1       0.000       0.000        0.000
+machdep/2     set_tpidrro_el0                                0      0.00         1       0.000       0.000        0.000
+
+GPU bridge operations (caller wall time)
+Class/number Name                                      Samples % samples     Calls    Total ms     Host ms Emulation ms
+
+GPU selectors (bridge execution, nested in operations)
+Class/number Name                                      Samples % samples     Calls    Total ms     Host ms Emulation ms
+
+Classified idle (including zero-sample polls):
+Class/number Name                                      Idle calls Idle samples
+bsd/230       poll                                              9         7980
+bsd/301       psynch_mutexwait                                 97            2
+bsd/305       psynch_cvwait                                  3702        43221
+bsd/363       kevent                                        32448         8066
+bsd/368       workq_kernreturn                                  6            0
+bsd/369       kevent64                                          3         7981
+bsd/374       kevent_qos                                        4            0
+bsd/375       kevent_id                                        11            0
+bsd/407       select_nocancel                               12005          357
+bsd/515       ulock_wait                                        2            2
+bsd/544       sys_ulock_wait2                                2696           33
+mach/36       semaphore_wait                                    6         7916
+mach/47       mach_msg2                                      3070        16185
+Times are elapsed thread wall time, including waits. Host covers raw host syscalls and explicitly scoped libc kernel wrappers.
+GPU kernel/emulation splits are unavailable. Selector time measures bridge execution and overlaps caller operation time.
+
+Top images (jit + interp)       Samples   % exec    % jit % interp
+Electron Framework                           3827    58.03    99.50     0.50
+?                                            1616    24.50    93.32     6.68
+dyld                                          703    10.66   100.00     0.00
+libsystem_kernel.dylib                        113     1.71   100.00     0.00
+libsystem_info.dylib                           72     1.09    98.61     1.39
+libsystem_c.dylib                              71     1.08   100.00     0.00
+libobjc.A.dylib                                39     0.59   100.00     0.00
+libsystem_notify.dylib                         32     0.49   100.00     0.00
+libsystem_platform.dylib                       32     0.49    78.12    21.88
+libsystem_malloc.dylib                         30     0.45   100.00     0.00
+libsystem_pthread.dylib                        25     0.38   100.00     0.00
+libxpc.dylib                                    9     0.14   100.00     0.00
+CoreFoundation                                  7     0.11   100.00     0.00
+libsystem_trace.dylib                           7     0.11   100.00     0.00
+libsystem_dnssd.dylib                           5     0.08    80.00    20.00
+libdispatch.dylib                               3     0.05   100.00     0.00
+Security                                        1     0.02   100.00     0.00
+libcorecrypto.dylib                             1     0.02   100.00     0.00
+libicucore.A.dylib                              1     0.02   100.00     0.00
+libswiftCore.dylib                              1     0.02   100.00     0.00
+
+Top symbols (jit + interp)      Samples   % exec
+?`?                                                              1616    24.50
+Electron Framework`_ares_llist_node_next                          628     9.52
+Electron Framework`__ZN2v86Object18CreateDataPropertyENS_5LocalINS_7ContextEEENS1_INS_4NameEEENS1_INS_5ValueEEE      346     5.25
+Electron Framework`__ZN2v86Object15GetIdentityHashEv              325     4.93
+dyld`_strcmp                                                      323     4.90
+Electron Framework`__ZN2v86Object19GetOwnPropertyNamesENS_5LocalINS_7ContextEEENS_14PropertyFilterENS_17KeyConversionModeE      235     3.56
+Electron Framework`_content$rust$child_process_security_policy$cxxbridge1$197$record_origin_agent_cluster_request_if_new      190     2.88
+Electron Framework`__ZN2v85Array3NewEPNS_7IsolateEPNS_5LocalINS_5ValueEEEm      131     1.99
+Electron Framework`__ZN2v86String12MakeExternalEPNS0_29ExternalOneByteStringResourceE      119     1.80
+dyld`__ZN5dyld317OverflowSafeArrayIjLy4294967295EE9push_backEOj      101     1.53
+Electron Framework`__ZN2v823ExternalMemoryAccounter8IncreaseEPNS_7IsolateEm       88     1.33
+Electron Framework`__ZN2v86Object5CloneEPNS_7IsolateE              88     1.33
+Electron Framework`__ZN5cppgc8internal12WriteBarrier26DijkstraMarkingBarrierSlowEPKv       77     1.17
+Electron Framework`__ZN2v810Uint8Array3NewENS_5LocalINS_11ArrayBufferEEEmm       75     1.14
+Electron Framework`_uv_req_set_data                                73     1.11
+Electron Framework`__ZN2v87Isolate17GetCurrentContextEv            71     1.08
+libsystem_info.dylib`<internal+0x2a484>                            61     0.92
+libsystem_c.dylib`<internal+0x791dc>                               56     0.85
+Electron Framework`__ZN2v86Object19SetLazyDataPropertyENS_5LocalINS_7ContextEEENS1_INS_4NameEEEPFvS5_RKNS_20PropertyCallbackInfoINS_5ValueEEEENS1_IS7_EENS_17PropertyAttributeENS_14SideEffectTypeESF_       51     0.77
+Electron Framework`__ZN4node23WorkerThreadsTaskRunner20DelayedTaskScheduler7RunTaskEP10uv_timer_s       50     0.76
+Electron Framework`__ZN2v87Integer3NewEPNS_7IsolateEi              39     0.59
+Electron Framework`__ZN2v86Object3GetENS_5LocalINS_7ContextEEENS1_INS_5ValueEEE       36     0.55
+libsystem_kernel.dylib`_setsockopt                                 35     0.53
+Electron Framework`__ZN2v86Number3NewEPNS_7IsolateEd               33     0.50
+Electron Framework`__ZN2v88internal15ThreadIsolation13LookupJitPageEmm       33     0.50
+dyld`_strnlen                                                      33     0.50
+Electron Framework`_cxxbridge1$string$reserve_additional           30     0.45
+Electron Framework`_xml_ffi$cxxbridge1$197$NamespacesIterator$operator$sizeof       29     0.44
+dyld`__ZNK5dyld46Loader21overridesDylibInCacheERPKNS0_10DylibPatchERt       28     0.42
+libsystem_platform.dylib`__platform_memset_pattern16               28     0.42
+Electron Framework`_rust_png$cxxbridge1$197$Reader$get_unknown_chunk_name       27     0.41
+dyld`__ZNK6mach_o12UnsafeHeader11installNameEv                     26     0.39
+Electron Framework`__ZN2v86Object16SetInternalFieldEiNS_5LocalINS_4DataEEE       25     0.38
+Electron Framework`__ZN4node9AsyncWrapC2EPNS_11EnvironmentEN2v85LocalINS3_6ObjectEEENS0_12ProviderTypeEd       25     0.38
+libsystem_notify.dylib`<internal+0x105f8>                          24     0.36
+Electron Framework`__ZN2v88internal8compiler23CompilationDependencies16RecordDependencyEPKNS1_21CompilationDependencyE       23     0.35
+libobjc.A.dylib`<internal+0x18b94>                                 23     0.35
+Electron Framework`__ZN5cppgc8internal22ExplicitManagementImpl22FreeUnreferencedObjectERNS_10HeapHandleEPv       19     0.29
+Electron Framework`__ZN2v86Object4WrapEPNS_7IsolateEmNS_17CppHeapPointerTagEPv       18     0.27
+Electron Framework`__ZN4node11http_parser6Parser5ProxyIMS1_FiPKcmEXadL_ZNS1_15on_header_fieldES4_mEEE3RawEP18llhttp__internal_sS4_m       18     0.27
+Electron Framework`__ZN5cppgc8internal22ExplicitManagementImpl6ResizeEPvm       18     0.27
+Electron Framework`_uv__io_start                                   18     0.27
+Electron Framework`_uv__read_start                                 18     0.27
+dyld`__ZNK5dyld415SyscallDelegate9onHaswellEv                      17     0.26
+libsystem_malloc.dylib`<internal+0x3acd0>                          17     0.26
+Electron Framework`__ZN2v87Context12DetachGlobalEv                 16     0.24
+Electron Framework`__ZN2v88Function4CallEPNS_7IsolateENS_5LocalINS_7ContextEEENS3_INS_5ValueEEEiPS7_       16     0.24
+Electron Framework`__ZN4node11StringBytes6EncodeEPN2v87IsolateEPKcmNS_8encodingE       16     0.24
+dyld`__ZN5dyld4L24dyld_map_with_linking_npEPK10mwl_regionjPK12mwl_info_hdrj       16     0.24
+Electron Framework`__ZN4node10AsyncHooks17pop_async_contextEd       15     0.23
+Electron Framework`__ZN4node9AsyncWrap12MakeCallbackEN2v85LocalINS1_8FunctionEEEiPNS2_INS1_5ValueEEE       15     0.23
+Electron Framework`__ZN2v812api_internal13DisposeGlobalEPm         14     0.21
+Electron Framework`__ZNK2v814ObjectTemplate18InternalFieldCountEv       14     0.21
+Electron Framework`__ZNK2v86String12WriteOneByteEPNS_7IsolateEjjPhi       14     0.21
+Electron Framework`__ZN2v86Object32SetAlignedPointerInInternalFieldEiPvt       13     0.20
+dyld`__ZN4objc7lookup8EPKhmy                                       13     0.20
+dyld`___simple_bprintf                                             13     0.20
+libsystem_kernel.dylib`_posix_madvise                              13     0.20
+Electron Framework`__ZN2v815ValueSerializer13WriteRawBytesEPKvm       12     0.18
+Electron Framework`__ZN2v87Context5EnterEv                         12     0.18
+
