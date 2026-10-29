@@ -465,20 +465,30 @@ fn run_selftest_blocks(count: usize, fp: bool) {
     println!("jit selftest [{}]: ok={ok} mismatch={bad} skipped={skipped} insns={insns} fallback_insns={fallbacks}", if fp { "fpblocks" } else { "blocks" });
 }
 
-/// Keep the loop counter (x28), branch scratch
+/// Keep the loop counters (x24, x28), branch scratch
 /// (x27), and memory bases (x20-x23) out of the data pool. Writeback is bounded
-/// by 14 accesses * 16 bytes * 50 iterations, well inside the private buffer.
-/// x29 supplies a bounded register offset; SIMD uses the fpblocks generator.
-fn loop_insn(rng: &mut Rng, pool: &[u32], wide: bool, i: usize) -> u32 {
+/// by short bodies * 50 iterations, or maximum-length bodies * 3 iterations,
+/// inside the private buffer. x29 supplies a bounded extended register offset.
+fn loop_insn(rng: &mut Rng, pool: &[u32], wide: bool, i: usize, index_option: u32) -> u32 {
     let pick = |rng: &mut Rng| pool[rng.next() as usize % pool.len()];
-    let d = pick(rng);
+    let mut d = pick(rng);
     // Wide bodies read every member of the 12-16 register pool, rather than
     // merely sampling a large pool and accidentally fitting in the host budget.
-    let n = if wide { pool[i % pool.len()] } else { pick(rng) };
-    let m = if wide { pool[(i + 2) % pool.len()] } else { pick(rng) };
+    let mut n = if wide { pool[i % pool.len()] } else { pick(rng) };
+    let mut m = if wide { pool[(i + 2) % pool.len()] } else { pick(rng) };
     let sf = (rng.next() as u32 & 1) << 31;
     let width = if sf != 0 { 64 } else { 32 };
-    let kind = if wide && rng.next() % 4 != 0 { rng.next() % 5 } else { rng.next() % 14 };
+    let kind = if wide && rng.next() % 4 != 0 { rng.next() % 5 } else { rng.next() % 17 };
+    if matches!(kind, 0..=7 | 14..=16) {
+        match rng.next() % 8 {
+            0 => d = n,
+            1 => d = m,
+            2 => n = 31,
+            3 => m = 31,
+            4 => d = 31,
+            _ => {}
+        }
+    }
     match kind {
         0 => { // ADD(S)/SUB(S), shifted register
             let op = (rng.next() as u32 & 3) << 29;
@@ -517,6 +527,21 @@ fn loop_insn(rng: &mut Rng, pool: &[u32], wide: bool, i: usize) -> u32 {
                 | ((rng.next() as u32 % (width / 16)) << 21)
                 | ((rng.next() as u32 & 0xffff) << 5) | d
         }
+        14 => { // ADD(S)/SUB(S), every extended-register form, including W compares
+            let flags = rng.next() as u32 & 1;
+            sf | 0x0b20_0000 | ((rng.next() as u32 & 1) << 30) | (flags << 29)
+                | (m << 16) | ((rng.next() as u32 & 7) << 13)
+                | ((rng.next() as u32 % 5) << 10) | (n << 5)
+                | (if flags != 0 && rng.next() & 1 == 0 { 31 } else { d })
+        }
+        15 => { // bitfields, including destructive BFM and identity W writes
+            let (r,s) = if rng.next() % 4 == 0 { (0,width-1) }
+                else { (rng.next() as u32 % width,rng.next() as u32 % width) };
+            sf | 0x1300_0000 | ((rng.next() as u32 % 3) << 29)
+                | (if sf != 0 {1 << 22} else {0}) | (r << 16) | (s << 10) | (n << 5) | d
+        }
+        16 => sf | 0x1380_0000 | (if sf != 0 {1 << 22} else {0})
+            | (m << 16) | ((rng.next() as u32 % width) << 10) | (n << 5) | d,
         10 => { // LDP/STP, signed offset and pre/post-index, W/X and SIMD Q
             let vector = rng.next() % 4 == 0;
             let size = if vector { 2 } else { rng.next() as u32 & 1 };
@@ -529,7 +554,17 @@ fn loop_insn(rng: &mut Rng, pool: &[u32], wide: bool, i: usize) -> u32 {
         }
         11 => { // LDR/STR register offset, x29 remains a small private-buffer index
             let size = rng.next() as u32 % 4;
-            (size << 30) | 0x3820_6800 | ((rng.next() as u32 & 1) << 22)
+            if rng.next() % 4 == 0 {
+                // SIMD Q has a 16-byte scaled index (not an x86 SIB scale).
+                return 0x3ca0_0800 | ((rng.next() as u32 & 1) << 22)
+                    | (29 << 16) | (index_option << 13)
+                    | ((rng.next() as u32 & 1) << 12)
+                    | ((20 + rng.next() as u32 % 4) << 5) | d;
+            }
+            let opc = if size == 3 { rng.next() as u32 & 1 }
+                else if size == 2 { rng.next() as u32 % 3 } else { rng.next() as u32 & 3 };
+            (size << 30) | 0x3820_0800 | (opc << 22)
+                | (index_option << 13)
                 | (29 << 16) | ((rng.next() as u32 & 1) << 12)
                 | ((20 + rng.next() as u32 % 4) << 5) | d
         }
@@ -541,7 +576,9 @@ fn loop_insn(rng: &mut Rng, pool: &[u32], wide: bool, i: usize) -> u32 {
         _ => {
             let size = rng.next() as u32 % 4;
             let base = 20 + rng.next() as u32 % 4;
-            let load = (rng.next() as u32 & 1) << 22;
+            let opc = if size == 3 { rng.next() as u32 & 1 }
+                else if size == 2 { rng.next() as u32 % 3 } else { rng.next() as u32 & 3 };
+            let load = opc << 22;
             match rng.next() % 3 {
                 0 => (size << 30) | 0x3900_0000 | load
                     | ((rng.next() as u32 % 32) << 10) | (base << 5) | d,
@@ -558,7 +595,8 @@ fn loop_insn(rng: &mut Rng, pool: &[u32], wide: bool, i: usize) -> u32 {
 /// Bounded single-block loops, plus side-exit, interpreter-helper and in-body
 /// SVC probes. Side exits/SVC split basic blocks deliberately: those cases must
 /// remain correct even when a loop is ineligible for the region optimization.
-fn run_selftest_loops(count: usize) {
+fn run_selftest_loops(count: usize, seed: u64) {
+    assert_ne!(seed, 0, "xorshift seed must be nonzero");
     let counting = COUNT_LOOP_REGIONS.swap(true, Ordering::Relaxed);
     let page = unsafe {
         libc::mmap(std::ptr::null_mut(), 0x1000, libc::PROT_READ | libc::PROT_WRITE,
@@ -568,22 +606,38 @@ fn run_selftest_loops(count: usize) {
     let page = page as u64;
     let mut buf = vec![0u8; 32768];
     let bufp = buf.as_mut_ptr() as u64;
-    let mut rng = Rng(0x100f_5e1f_7e57_cafe);
+    let mut rng = Rng(seed);
     let (mut ok, mut bad, mut skipped, mut native) = (0u64, 0u64, 0u64, 0u64);
+    let (mut max_blocks, mut nested_entries, mut aliases, mut q_scale16, mut negative_sxtw) = (0u64,0u64,0u64,0u64,0u64);
     let regions0 = STATS_LOOP_REGIONS.load(Ordering::Relaxed);
     for it in 0..count {
         let wide = (it / 8) % 4 == 0;
         let pool_len = if wide { 12 + rng.next() as usize % 5 } else { 3 + rng.next() as usize % 4 };
-        let mut pool: Vec<u32> = (0..20).chain(24..27).collect();
+        let mut pool: Vec<u32> = (0..20).chain(25..27).chain([30]).collect();
         for i in (1..pool.len()).rev() { pool.swap(i, rng.next() as usize % (i + 1)); }
         pool.truncate(pool_len);
-        let len = if wide { pool_len - 2 } else { 2 + rng.next() as usize % 13 };
-        let iterations = 1 + rng.next() % 50;
         let exit_kind = it % 8;
+        let branch_kind = it % 3;
+        let max_body = it % 32 == 0;
+        let nested = it % 16 == 1;
+        let len = if max_body { emit::MAX_BLOCK_INSNS - if branch_kind == 2 {3} else {2} }
+            else if wide { pool_len - 2 } else { 2 + rng.next() as usize % 13 };
+        let iterations = 1 + rng.next() % if max_body || nested {3} else {50};
+        let outer = if nested { 2 + rng.next() % 15 } else {1};
+        let index_option = [2,3,6,7][it % 4];
         let mut prog = Vec::new();
         let mut side_branch = None;
         for i in 0..len {
-            prog.push(loop_insn(&mut rng, &pool, wide, i));
+            prog.push(loop_insn(&mut rng, &pool, wide, i, index_option));
+            if !max_body && i == 0 && it % 16 < 4 {
+                // Alias the load destination with its base or extended index,
+                // then restore the pointer/index before the next random access.
+                let alias = if it / 16 % 2 == 0 { 20 } else { 29 };
+                prog.push(0x9100_0000 | (alias << 5) | 27); // mov x27,xAlias
+                prog.push(0xb860_0800 | (29 << 16) | (index_option << 13) | (20 << 5) | alias);
+                prog.push(0x9100_0000 | (27 << 5) | alias); // mov xAlias,x27
+                aliases += 1;
+            }
             if i == len / 2 {
                 match exit_kind {
                     4 | 5 => {
@@ -605,7 +659,6 @@ fn run_selftest_loops(count: usize) {
                 }
             }
         }
-        let branch_kind = it % 3;
         let sf = if rng.next() & 1 == 0 { 0 } else { 1 << 31 };
         // SUBS + B.NE, SUB + CBNZ, or SUB + NEG + TBNZ of the sign
         // bit. NEG(counter) has its sign bit set exactly while counter > 0.
@@ -617,6 +670,22 @@ fn run_selftest_loops(count: usize) {
             1 => sf | 0x3500_0000 | ((back & 0x7ffff) << 5) | 28,
             _ => sf | 0x3700_0000 | (31 << 19) | ((back & 0x3fff) << 5) | 27,
         });
+        if max_body { assert_eq!(prog.len(),emit::MAX_BLOCK_INSNS); max_blocks += 1; }
+        if nested { nested_entries += outer; }
+        if index_option == 6 { negative_sxtw += 1; }
+        q_scale16 += prog.iter().filter(|&&w| w & 0xbfa0_1c00 == 0x3ca0_1800
+            && matches!((w >> 13) & 7,2|3)).count() as u64;
+        // Read the exit flags before any successor overwrites them, in W and X forms.
+        prog.push(0x9a9f_07fa); // cset x26,ne
+        prog.push(0x1a9f_17f9); // cset w25,eq
+        if nested {
+            // Re-enter the same inner region many times with short trip counts.
+            prog.push(0xd100_0718); // sub x24,x24,#1 (preserve exit NZCV)
+            prog.push(0xb400_0078); // cbz x24,+12 (SVC)
+            prog.push(0xd280_001c | ((iterations as u32) << 5)); // movz x28,#iterations
+            let back = -(prog.len() as i32) as u32;
+            prog.push(0x1400_0000 | (back & 0x3ff_ffff));
+        }
         prog.push(0xd400_1001); // normal exit: SVC #0x80
         if let Some(at) = side_branch {
             let offset = (prog.len() - at) as u32;
@@ -631,17 +700,27 @@ fn run_selftest_loops(count: usize) {
         let mem0 = buf.clone();
         let mut init = Cpu::new();
         for r in 0..32 {
-            init.x[r] = rng.val();
+            init.x[r] = rng.val() | 0xa5a5_0000_0000_0000;
             init.v[r] = [fp_val(&mut rng), fp_val(&mut rng)];
         }
-        init.x[29] = rng.next() % 16;
-        for r in 20..24 { init.x[r] = bufp + 16384 + (r as u64 - 20) * 256; }
+        // Store pointer-shaped payloads as well as using tagged access bases.
+        if it % 4 == 3 { init.x[pool[0] as usize] = bufp | 0xcd00_0000_0000_0000; }
+        init.x[29] = match index_option {
+            2 => 0xfeed_beef_0000_0000 | (rng.next() % 16),
+            6 => 0xfeed_beef_0000_0000 | ((-(1 + (rng.next() % 16) as i32)) as u32 as u64),
+            _ => rng.next() % 16,
+        };
+        for r in 20..24 {
+            init.x[r] = (bufp + 16384 + (r as u64 - 20) * 256)
+                | (if it & 1 != 0 { 0xab00_0000_0000_0000 } else { 0 });
+        }
         init.x[28] = iterations;
+        init.x[24] = outer;
         init.tpidr_el0 = rng.val();
         init.set_nzcv((rng.next() & 15) as u32);
         init.set_pc(page);
         let mut reference = clone_cpu(&init);
-        let limit = (prog.len() + 1) * 51;
+        let limit = (prog.len() + 1) * (iterations as usize + 1) * (outer as usize + 1);
         let mut svc = None;
         for _ in 0..limit {
             let idx = reference.pc().wrapping_sub(page) / 4;
@@ -678,7 +757,8 @@ fn run_selftest_loops(count: usize) {
             || translated.exit_reason != EXIT_SVC || translated.exit_data != svc as u64 || pending.is_some() {
             bad += 1;
             if bad <= 15 {
-                println!("MISMATCH loop #{it}: iterations={iterations} pool={pool_len} exit={exit_kind} backedge={branch_kind}");
+                println!("MISMATCH loop #{it}: seed={seed:#x} iterations={iterations} pool={pool_len} exit={exit_kind} backedge={branch_kind}");
+                println!("    initial x={:x?} nzcv={:x}", init.x, init.nzcv());
                 for (i, &w) in prog.iter().enumerate() { println!("    +{:03x} {w:08x} {}", i * 4, disasm(w)); }
                 for i in 0..a.len() {
                     if a[i] != b[i] { println!("    slot {i}: interp={:#x} jit={:#x}", a[i], b[i]); }
@@ -695,7 +775,8 @@ fn run_selftest_loops(count: usize) {
     unsafe { libc::munmap(page as *mut libc::c_void, 0x1000); }
     COUNT_LOOP_REGIONS.store(counting, Ordering::Relaxed);
     let loop_regions = STATS_LOOP_REGIONS.load(Ordering::Relaxed) - regions0;
-    println!("jit selftest [loops]: ok={ok} mismatch={bad} skipped={skipped} native={native} loop_regions={loop_regions}");
+    println!("jit selftest [loops]: ok={ok} mismatch={bad} skipped={skipped} native={native} loop_regions={loop_regions} seed={seed:#x} max_blocks={max_blocks} nested_entries={nested_entries} aliases={aliases} q_scale16={q_scale16} negative_sxtw={negative_sxtw}");
+    assert_eq!(bad, 0, "loop differential mismatches");
 }
 
 /// Deterministic NaN boundary matrix, including signalling/quiet priority,
@@ -1051,9 +1132,9 @@ fn run_selftest_calls(count: usize) {
     println!("jit selftest [calls]: ok={ok} mismatch={bad} skipped=0 native={native} callret={} deep={}", emit::callret_enabled() as u8, count / 8);
 }
 
-pub fn run_selftest(class: &str, count: usize) {
+pub fn run_selftest(class: &str, count: usize, seed: Option<u64>) {
     if class == "calls" { return run_selftest_calls(count); }
-    if class == "loops" { return run_selftest_loops(count); }
+    if class == "loops" { return run_selftest_loops(count, seed.unwrap_or(0x100f_5e1f_7e57_cafe)); }
     if class == "tbiblocks" { return run_selftest_tbiblocks(count); }
     if class == "fpnan" {
         return run_selftest_fpnan(count);
