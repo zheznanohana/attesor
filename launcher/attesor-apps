@@ -240,6 +240,10 @@ def unwrap(app, checked=False):
         raise ValueError('old launcher has no original application')
     # Prepare a complete copy first. RENAME_SWAP makes the final directory
     # replacement atomic; a failed copy/swap leaves the old wrapper intact.
+    # The inner bundle shares the app's identifier: left registered, the Dock may resolve the app's
+    # tile to that arm64-only record and draw it "prohibited".
+    if DESKTOP:
+        subprocess.run([LSREGISTER, '-u', str(inner)], capture_output=True)
     stage = Path(tempfile.mkdtemp(prefix='.' + app.stem + '.attesor-', dir=app.parent))
     shutil.rmtree(stage)
     try:
@@ -254,6 +258,20 @@ def unwrap(app, checked=False):
     finally:
         if stage.exists():
             shutil.rmtree(stage)
+
+
+def forget_stale_inner():
+    """Once: unregister LaunchServices records of old launchers' inner bundles that no longer exist
+    (left by conversions before unwrap unregistered them)."""
+    done = SUPPORT / 'ls-inner-forgotten'
+    if not DESKTOP or done.exists():
+        return
+    dump = subprocess.run([LSREGISTER, '-dump'], capture_output=True, text=True, errors='replace').stdout
+    for m in re.finditer(r'^path:\s+(.+/Contents/Resources/Original/.+?\.app) \(0x[0-9a-f]+\)$', dump, re.M):
+        if not Path(m.group(1)).exists():
+            subprocess.run([LSREGISTER, '-u', m.group(1)], capture_output=True)
+            print('  ~ unregistered stale', m.group(1))
+    done.write_text('1\n')
 
 
 def each_app():
@@ -288,10 +306,14 @@ def main():
                 elif command == 'restore':
                     restore(app)
                 elif command in ['scan', 'reinject']:
-                    if wrapped(app):
+                    try:
+                        old_launcher = wrapped(app)
+                        exe = None if old_launcher else main_exe(app)
+                    except (OSError, ValueError, plistlib.InvalidFileException):
+                        continue  # no usable Info.plist / executable (e.g. a symlinked one): not a candidate
+                    if old_launcher:
                         inject(app)
                         continue
-                    exe = main_exe(app)
                     try:
                         archs = arches(exe)
                     except subprocess.CalledProcessError:
@@ -310,6 +332,7 @@ def main():
                 print(f'  ! {app}: {e}', file=sys.stderr)
                 failed = True
         if command == 'scan':
+            forget_stale_inner()
             logs = Path.home() / 'Library/Logs/Attesor/stderr'
             cutoff = time.time() - 3 * 86400
             for log in logs.glob('*.log'):

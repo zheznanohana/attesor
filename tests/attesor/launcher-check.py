@@ -220,6 +220,19 @@ def main():
         listed = cli('list')
         check(str(path) in listed.stdout and all(p.read_bytes() == bits for p, bits in before_list.items()),
               'list reports handled apps without modifying application executables')
+        # bundles that are no candidates (no executable name, symlinked executable, no Info.plist) are
+        # skipped silently: the login agent scans every 30 s and must not log or fail on them
+        (scan / 'NoExe.app/Contents/MacOS').mkdir(parents=True)
+        with (scan / 'NoExe.app/Contents/Info.plist').open('wb') as f:
+            plistlib.dump(dict(CFBundleName='NoExe'), f)
+        (scan / 'Link.app/Contents/MacOS').mkdir(parents=True)
+        with (scan / 'Link.app/Contents/Info.plist').open('wb') as f:
+            plistlib.dump(dict(CFBundleExecutable='L'), f)
+        (scan / 'Link.app/Contents/MacOS/L').symlink_to('/bin/ls')
+        (scan / 'NoPlist.app/Contents').mkdir(parents=True)
+        quiet = cli('scan')  # exit status 0 is checked by cli()
+        check(quiet.stderr.strip() == '' and not any(n in quiet.stdout for n in ['NoExe', 'Link.app', 'NoPlist']),
+              'scan is silent and succeeds on non-candidate bundles')
     print(f'launcher integration: {passed} checks PASS', flush=True)
     roles = ['python3', str(Path(__file__).with_name('run-app-modes.py'))]
     if args.attesor:
