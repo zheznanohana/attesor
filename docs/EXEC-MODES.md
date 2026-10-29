@@ -63,3 +63,12 @@ and the remaining suite. [Recorded candidate output](measurements/2026-10-29-exe
 Fixtures use a private temporary directory and cache, disable background AOT
 builds, and neither modify nor register installed applications. Real DSH and
 ARM VS Code UI/startup acceptance remains the integrator's next verification.
+
+## Runtime configuration through native middlemen
+
+The resolved sysroot/dyld and configured GPU directory/mode are now carried in
+child environments as well as the direct Rust re-exec argv. JIT ON/OFF controls
+also survive re-exec so multiprocess A/B measurements use the same policy in
+helpers. Tests use a sysroot path containing spaces and a CPU-only GPU role
+filter; all 116 exec/argv0/shebang/IPC cases verify these settings in the leaf.
+This does not change the Metal protocol or add application-specific branches.

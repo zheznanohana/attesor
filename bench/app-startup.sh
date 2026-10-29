@@ -56,11 +56,14 @@ for r in $(seq "$RUNS"); do
   env_extra=(ATTESOR_CACHE="$cache" DSH_HOME="$data/dsh")
   [ $WARM = 0 ] && env_extra+=(ATTESOR_NO_AOT_BUILD=1)
   start=$(perl -MTime::HiRes=time -e 'printf "%.3f", time')
-  env "${env_extra[@]}" "$ATTESOR" "${pre[@]}" "$EXE" "${post[@]}" --user-data-dir="$data/ud" > "$log" 2>&1 &
-  disown $!
-  ok=0
+  env "${env_extra[@]}" "$ATTESOR" ${pre[@]+"${pre[@]}"} "$EXE" ${post[@]+"${post[@]}"} --user-data-dir="$data/ud" > "$log" 2>&1 &
+  run_pid=$!
+  ok=0 exited=0 status=0
   while :; do
     if grep -qaE -- "$READY" "$log"; then ok=1; break; fi
+    if ! kill -0 "$run_pid" 2>/dev/null; then
+      wait "$run_pid" 2>/dev/null; status=$?; exited=1; break
+    fi
     now=$(perl -MTime::HiRes=time -e 'printf "%.3f", time')
     awk -v a="$now" -v b="$start" -v t="$TIMEOUT" 'BEGIN { exit !(a - b > t) }' && break
     sleep 0.2
@@ -69,11 +72,17 @@ for r in $(seq "$RUNS"); do
   wall=$(awk -v a="$now" -v b="$start" 'BEGIN { printf "%.1f", a - b }')
   cpu=$(cpu_of)
   stop_all "$data"
+  wait "$run_pid" 2>/dev/null || true
   if [ $ok = 1 ]; then
     echo "run $r: ready in ${wall}s, cpu ${cpu}s"
     walls+=("$wall") cpus+=("$cpu")
   else
-    echo "run $r: TIMEOUT after ${wall}s (cpu ${cpu}s); last output:"; tail -5 "$log" | sed 's/^/    /'
+    if [ $exited = 1 ]; then
+      echo "run $r: EXIT $status before ready after ${wall}s (cpu ${cpu}s); last output:"
+    else
+      echo "run $r: TIMEOUT after ${wall}s (cpu ${cpu}s); last output:"
+    fi
+    tail -5 "$log" | sed 's/^/    /'
   fi
   [ $WARM = 0 ] && rm -rf "$cache"
   rm -rf "$log" "$data"
@@ -81,3 +90,6 @@ done
 [ -z "$CACHE" ] && rm -rf "$warm_cache"
 median() { printf '%s\n' "$@" | sort -n | awk '{ v[NR] = $1 } END { if (NR) print v[int((NR + 1) / 2)] }'; }
 [ ${#walls[@]} -gt 0 ] && echo "median: ready $(median "${walls[@]}")s, cpu $(median "${cpus[@]}")s (${#walls[@]}/$RUNS runs, $([ $WARM = 1 ] && echo warm || echo cold))"
+
+# A partial successful sample is not a fully passing startup benchmark.
+[ ${#walls[@]} -eq "$RUNS" ]

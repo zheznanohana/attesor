@@ -69,8 +69,16 @@ def main():
                     checks += 2
         assert run([classify, arm], text=True).stdout.strip() == '1'
         assert run([classify, native], text=True).stdout.strip() == '0'; checks += 2
+        available = [Path(os.environ.get('ATTESOR_SYSROOT', '/nonexistent')), Path.home() / '.attesor/sysroot']
+        available += sorted((Path.home() / 'attesor-sysroot').glob('*'), reverse=True)
+        source_cache = next(p for p in available if (p / 'dyld_shared_cache_arm64e').is_file())
+        private_cache = td / 'sysroot with spaces'
+        private_cache.symlink_to(source_cache.resolve(), target_is_directory=True)
         env = dict(os.environ, ATTESOR_BIN=attesor, ATTESOR_GPU_DIR=str(host),
-                   ATTESOR_NO_AOT_BUILD='1', ATTESOR_AOT_CHECKPOINT='0', ATTESOR_CACHE=str(td / 'cache'))
+                   ATTESOR_NO_AOT_BUILD='1', ATTESOR_AOT_CHECKPOINT='0', ATTESOR_CACHE=str(td / 'cache'),
+                   TEST_JIT_CONTROLS='1', ATTESOR_JIT_OFF='tbimask,directbranch', ATTESOR_JIT_ON='probe-only',
+                   ATTESOR_GPU='1', ATTESOR_GPU_ONLY='--type=attesor-probe-gpu',
+                   ATTESOR_SYSROOT=str(private_cache), ATTESOR_DYLD='/usr/lib/dyld')
         args = ['--leaf', '', 'quote \' " λ', '--type=utility']
         payload = b'stdin payload\n'
 
@@ -106,6 +114,8 @@ def main():
                 def h(name, value): return name + '=' + value.encode().hex()
                 expected = ['arch=' + arch] + ([h('argv0', argv0)] if argv0 is not None else []) + [h('arg', x) for x in expected_args] + [
                     h('mode', '<unset>' if mode is None else mode), h('channel', str(ipc_fd)),
+                    h('jitoff', e['ATTESOR_JIT_OFF']), h('jiton', e['ATTESOR_JIT_ON'])] + [h(k, e[k]) for k in
+                    ['ATTESOR_GPU', 'ATTESOR_GPU_ONLY', 'ATTESOR_GPU_DIR', 'ATTESOR_SYSROOT', 'ATTESOR_DYLD']] + [
                     h('cwd', str(work.resolve())), h('stdin', 'skipped\n' if copies > 1 else payload.decode())]
                 expected *= copies
                 assert child.returncode == 17 and out.decode().splitlines() == expected and ipc == b'IPC-preserved' * copies, \

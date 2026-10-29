@@ -61,6 +61,12 @@ int main(int argc, char **argv) {
     for (int i = 1; i < argc; i++) hex("arg", argv[i]);
     hex("mode", getenv("ELECTRON_RUN_AS_NODE") ? getenv("ELECTRON_RUN_AS_NODE") : "<unset>");
     hex("channel", getenv("NODE_CHANNEL_FD") ? getenv("NODE_CHANNEL_FD") : "<unset>");
+    if (getenv("TEST_JIT_CONTROLS")) {
+        hex("jitoff", getenv("ATTESOR_JIT_OFF") ? getenv("ATTESOR_JIT_OFF") : "<unset>");
+        hex("jiton", getenv("ATTESOR_JIT_ON") ? getenv("ATTESOR_JIT_ON") : "<unset>");
+        const char *names[] = {"ATTESOR_GPU", "ATTESOR_GPU_ONLY", "ATTESOR_GPU_DIR", "ATTESOR_SYSROOT", "ATTESOR_DYLD"};
+        for (int i = 0; i < 5; i++) hex(names[i], getenv(names[i]) ? getenv(names[i]) : "<unset>");
+    }
     char cwd[4096], in[128]; if (!getcwd(cwd, sizeof cwd)) return 123;
     if (getenv("TEST_SKIP_STDIN")) strcpy(in, "skipped\n");
     else if (!fgets(in, sizeof in, stdin)) return 123;
