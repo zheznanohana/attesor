@@ -15,7 +15,6 @@
 //! the background, so the next launch starts with warm translations.
 
 use crate::jit::emit::{self, StubKind, Unit};
-use iced_x86::BlockEncoderOptions;
 use std::collections::{BTreeSet, HashSet};
 use std::io::{Read, Write};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
@@ -23,7 +22,7 @@ use std::sync::{Arc, Mutex, RwLock, Weak};
 
 const MAGIC: &[u8; 8] = b"MCLAOT05";
 /// Bump when the translator's output changes.
-const TRANSLATOR_VERSION: u32 = 53;
+const TRANSLATOR_VERSION: u32 = 54;
 
 #[derive(Clone)]
 struct Image {
@@ -705,6 +704,7 @@ fn build(img: &Image, profile: &BTreeSet<u64>) -> std::io::Result<()> {
     // Translate in chunks so a single assembler run stays manageable.
     let mut code: Vec<u8> = Vec::new();
     let mut index: Vec<(u64, u64)> = Vec::new();
+    let mut offline_counts = crate::jit::offline::Counts::default();
     for chunk in blocks.chunks(4096) {
         let mut u = Unit::new(StubKind::Plain, crate::jit::commpage_checks());
         for &pc in chunk {
@@ -716,8 +716,12 @@ fn build(img: &Image, profile: &BTreeSet<u64>) -> std::io::Result<()> {
         }
         u.finish();
         let base = code.len() as u64;
-        let res = match u.a.assemble_options(base, BlockEncoderOptions::RETURN_NEW_INSTRUCTION_OFFSETS) {
-            Ok(r) => r,
+        let res = match crate::jit::offline::assemble(&mut u, base) {
+            Ok((r, counts)) => {
+                offline_counts.before += counts.before;
+                offline_counts.removed += counts.removed;
+                r
+            },
             Err(_) => continue,
         };
         for &pc in chunk {
@@ -729,6 +733,11 @@ fn build(img: &Image, profile: &BTreeSet<u64>) -> std::io::Result<()> {
         while code.len() % 16 != 0 {
             code.push(0xcc);
         }
+    }
+    if crate::jit::offline::enabled() && crate::jit::stats_enabled() {
+        eprintln!("[attesor] offline-dse: {} host_insns={} removed_stores={} remaining_insns={}",
+                  img.name, offline_counts.before, offline_counts.removed,
+                  offline_counts.before - offline_counts.removed);
     }
     let path = file_for(img, "aot");
     // per-process temporary: several processes may build the same image concurrently
@@ -1062,4 +1071,18 @@ mod tests {
         assert_eq!(load_file(&path).unwrap(), 0);
         std::fs::remove_file(path).unwrap();
     }
+}
+
+/// Directed differential CLI suite: serialize and actually reload a private
+/// page through exactly the production builder/header/index/loader path.
+/// The caller owns ATTESOR_CACHE and the mapped page for the whole operation.
+pub(crate) fn selftest_page(start: u64, words: usize) -> std::io::Result<usize> {
+    let img = Image { name: "offline-selftest".into(), key: "offline-selftest".into(),
+        start, end: start + words as u64 * 4,
+        entries: (0..words).map(|n| start + n as u64 * 4).collect(), loaded: false };
+    std::fs::create_dir_all(cache_dir())?;
+    let path = file_for(&img, "aot");
+    if path.exists() { std::fs::remove_file(&path)?; }
+    build(&img, &BTreeSet::new())?;
+    load_file(&path)
 }

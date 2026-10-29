@@ -1142,7 +1142,128 @@ fn run_selftest_calls(count: usize) {
     println!("jit selftest [calls]: ok={ok} mismatch={bad} skipped=0 native={native} callret={} deep={}", emit::callret_enabled() as u8, count / 8);
 }
 
+/// Every sample executes disk-loaded Plain code, not the runtime JIT. Public
+/// entries at every instruction force cross-block cases and canonical reentry.
+fn run_selftest_offline(count: usize, seed: u64) {
+    let root = std::path::PathBuf::from(format!("/private/tmp/attesor-offline-{}-{seed:x}", std::process::id()));
+    std::fs::create_dir(&root).expect("fresh private selftest cache");
+    std::env::set_var("ATTESOR_CACHE", &root);
+    let page = unsafe { libc::mmap(std::ptr::null_mut(), 4096, libc::PROT_READ | libc::PROT_WRITE,
+        libc::MAP_ANON | libc::MAP_PRIVATE, -1, 0) as u64 };
+    assert_ne!(page, libc::MAP_FAILED as u64);
+    let removed0 = super::offline::REMOVED_STORES.load(Ordering::Relaxed);
+    let mut rng = Rng(seed);
+    let (mut ok, mut bad, mut loaded) = (0, 0, 0);
+    let mut memory = vec![0u8; 256];
+    let pointer = memory.as_mut_ptr() as u64;
+    for it in 0..count {
+        let d = (rng.next() % 16) as u32;
+        let m = (d + 1) % 16;
+        let sf = if rng.next() & 1 == 0 { 0 } else { 1 << 31 };
+        let mov = |r: u32, value: u32| sf | 0x5280_0000u32 | ((value & 0xffff) << 5) | r;
+        let a = rng.next() as u32;
+        let b = rng.next() as u32;
+        let mut prog = vec![mov(d, a)];
+        match it % 9 {
+            0 => { prog.extend([mov(d, b), 0x9100_0400 | (d << 5) | m]); }
+            1 => { // Both diamond successors overwrite; CBZ does not read NZCV.
+                prog.extend([0xb400_0060 | 19, mov(d, b), 0x1400_0002, mov(d, b ^ 0x55)]);
+            }
+            2 => { // Only one successor overwrites: the other observes d.
+                prog.extend([0xb400_0060 | 19, mov(d, b), 0x1400_0002, 0x9100_0400 | (d << 5) | m]);
+            }
+            3 => { // Finite multi-block cycle; no overwrite can be inferred from a cycle alone.
+                prog.extend([0x9100_0400 | (d << 5) | d, 0xf100_079c, 0x54ff_ffc1]);
+            }
+            4 => { prog.extend([0xf900_0280 | d, mov(d, b), 0xf940_0280 | m]); }
+            5 => { // Interpreter helper observes Cpu state; CRC32B.
+                prog.extend([0x1ac0_4000 | (m << 16) | (d << 5) | d, mov(m, b)]);
+            }
+            6 => { prog.extend([0xd400_1021, mov(d, b)]); }
+            7 => { // SP updates, SP reads, and ZR discard must not alias.
+                prog.extend([0x9100_43ff, 0x9100_03e0 | m, 0x9100_83ff, 0xaa1f_03ff, mov(d, b)]);
+            }
+            _ => { // W write zero extends; X read and overwrite chain.
+                prog.extend([0x5280_0000 | ((b & 0xffff) << 5) | d,
+                    0x8b00_0000 | (d << 16) | (d << 5) | m, mov(d, a ^ b)]);
+            }
+        }
+        // Addressing forms remain observable barriers: signed pre/post, Q pair,
+        // scaled SXTW (including negative index), and register/data aliases.
+        match it % 5 {
+            0 => prog.push(0xf800_8680 | d), // STR Xd,[x20],#8
+            1 => prog.push(0xf81f_8e80 | d), // STR Xd,[x20,#-8]!
+            2 => prog.extend([0x3cb5_da90, 0x3cb6_5a91]), // Q scaled SXTW/UXTW
+            3 => prog.extend([0xad00_0680, 0xad40_0e82]), // STP/LDP Q
+            _ => prog.push(0xf900_0280 | d),
+        }
+        prog.push(0xd400_1001);
+        unsafe { std::ptr::copy_nonoverlapping(prog.as_ptr(), page as *mut u32, prog.len()); }
+        invalidate_range(page, 4096);
+        // Production AOT entries are immutable image code, not indexed JIT
+        // units. This suite intentionally rewrites a page: discard its old
+        // external registrations and thread-local IBTC before the next load.
+        if let Some(blocks) = BLOCKS.write().unwrap().as_mut() {
+            blocks.retain(|&pc, _| pc < page || pc >= page + 4096);
+        }
+        ibtc_clear();
+        for byte in &mut memory { *byte = rng.next() as u8; }
+        let initial_memory = memory.clone();
+        let mut init = Cpu::new();
+        for n in 0..32 { init.x[n] = rng.val(); init.v[n] = [rng.next(), rng.next()]; }
+        init.x[19] = it as u64 & 1;
+        init.x[20] = pointer + 128;
+        init.x[21] = 0xfeed_beef_ffff_fffe; // negative SXTW, scale 16
+        init.x[22] = 0xfeed_beef_0000_0002; // UXTW ignores high bits, scale 16
+        init.x[28] = 1 + rng.next() % 8;
+        init.set_nzcv((rng.next() & 15) as u32);
+        // Alternate public entries prove that removed labelled stores retain
+        // valid entry offsets. Do not enter the middle of a loop unboundedly.
+        let entry = if it % 4 == 0 { 1 } else { 0 };
+        init.set_pc(page + entry * 4);
+        let mut reference = clone_cpu(&init);
+        let mut svc = None;
+        for _ in 0..1000 {
+            let index = reference.pc().wrapping_sub(page) / 4;
+            let Some(&w) = prog.get(index as usize) else { break; };
+            match interp::exec(&mut reference, w) {
+                Ok(()) => {}, Err(Exit::Svc(n)) => { svc = Some(n); break; },
+                Err(e) => panic!("offline reference exit {e:?}: {w:08x}"),
+            }
+        }
+        let expected_memory = memory.clone();
+        memory.copy_from_slice(&initial_memory);
+        let n = crate::aot::selftest_page(page, prog.len()).expect("build/load private AOT");
+        assert!(n >= prog.len(), "all public entries must survive");
+        loaded += n;
+        let mut translated = clone_cpu(&init);
+        setup_cpu(&mut translated);
+        let jit0 = STATS_BLOCKS.load(Ordering::Relaxed);
+        for _ in 0..1000 {
+            let host = lookup_or_translate(translated.pc());
+            unsafe { attesor_jit_enter(&mut translated, host); }
+            if translated.exit_reason != EXIT_CONTINUE { break; }
+        }
+        assert_eq!(STATS_BLOCKS.load(Ordering::Relaxed), jit0, "must execute disk code, not a JIT replacement");
+        let pending = PENDING.with(|p| p.take());
+        if snapshot(&reference) != snapshot(&translated) || expected_memory != memory
+            || reference.pc() != translated.pc() || translated.exit_reason != EXIT_SVC
+            || Some(translated.exit_data as u16) != svc || pending.is_some() {
+            bad += 1;
+            if bad < 5 { println!("MISMATCH offline #{it} seed={seed:#x} words={prog:x?}\nreference={:x?}\ntranslated={:x?}", snapshot(&reference), snapshot(&translated)); }
+        } else { ok += 1; }
+    }
+    invalidate_range(page, 4096);
+    unsafe { libc::munmap(page as *mut _, 4096); }
+    std::fs::remove_dir_all(root).unwrap();
+    let removed = super::offline::REMOVED_STORES.load(Ordering::Relaxed) - removed0;
+    assert!(!super::offline::enabled() || count < 9 || removed > 0, "optimizer was not exercised");
+    println!("jit selftest [offline]: removed_stores={removed} ok={ok} mismatch={bad} disk_loaded_blocks={loaded} seed={seed:#x} optimized={}", super::offline::enabled());
+    assert_eq!(bad, 0, "offline differential mismatches");
+}
+
 pub fn run_selftest(class: &str, count: usize, seed: Option<u64>) {
+    if class == "offline" { return run_selftest_offline(count, seed.unwrap_or(0xd0ff_11ae_1234_5678)); }
     if class == "calls" { return run_selftest_calls(count); }
     if class == "loops" { return run_selftest_loops(count, seed.unwrap_or(0x100f_5e1f_7e57_cafe)); }
     if class == "tbiblocks" { return run_selftest_tbiblocks(count); }
