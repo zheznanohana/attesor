@@ -176,8 +176,14 @@ pub fn fmulx<T: Fp>(a: T, b: T) -> T {
 }
 #[inline(always)]
 pub fn fsqrt<T: Fp>(a: T) -> T {
+    fsqrt_dn(a, false)
+}
+/// FSQRT's FPProcessNaN rule. DN controls NaN results only; the caller
+/// retains responsibility for host rounding/flush modes and exception status.
+#[inline(always)]
+pub fn fsqrt_dn<T: Fp>(a: T, default_nan: bool) -> T {
     if a.is_nan() {
-        return if a.is_snan() { a.quiet() } else { a };
+        return if default_nan { T::default_nan() } else if a.is_snan() { a.quiet() } else { a };
     }
     // Classify the invalid domain before host arithmetic. Besides expressing
     // ARM's positive default NaN directly, this avoids relying on a post-sqrt

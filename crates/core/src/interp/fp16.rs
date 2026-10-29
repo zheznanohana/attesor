@@ -73,6 +73,7 @@ fn two_misc(cpu: &mut Cpu, insn: u32, scalar: bool, u: bool, a: bool) -> Option<
     let rd = bits(insn, 4, 0);
     let n = cpu.vq(rn);
     let elems = if scalar { 1 } else if q { 8 } else { 4 };
+    let dn = cpu.fpcr & (1 << 25) != 0;
     // Element function: half bits -> half bits.
     let f: Box<dyn Fn(u64) -> u64> = match (u, a, opc) {
         (false, false, 0x18) => Box::new(|x| hh(rint(h(x), 0))),
@@ -105,7 +106,7 @@ fn two_misc(cpu: &mut Cpu, insn: u32, scalar: bool, u: bool, a: bool) -> Option<
         (true, true, 0x0f) => Box::new(|x| (x & 0xFFFF) ^ 0x8000),
         (false, true, 0x1d) => Box::new(|x| hh(sf::frecpe(h(x)))),
         (true, true, 0x1d) => Box::new(|x| hh(sf::frsqrte(h(x)))),
-        (true, true, 0x1f) => Box::new(|x| hh(sf::fsqrt(h(x)))),
+        (true, true, 0x1f) => Box::new(move |x| hh(sf::fsqrt_dn(h(x), dn))),
         _ => return None,
     };
     let mut r = 0u128;

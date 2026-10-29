@@ -6584,3 +6584,55 @@ mod flags_liveness_tests {
         }
     }
 }
+
+#[cfg(test)]
+mod fsqrt_dn_tests {
+    use super::*;
+    use attesor_core::{cpu::Cpu, interp};
+
+    #[test]
+    fn dn_guard_fallback_agrees_with_arm_bits_for_all_sqrt_forms() {
+        const PC: u64 = 0x2000_0000;
+        for (word, width, lanes, dnan, quiet, inputs) in [
+            (0x1ee1c020, 16, 1, 0x7e00u64, 0x0200, [0x7e34u64, 0xfe34, 0x7c34, 0xfc34]),
+            (0x2ef9f820, 16, 4, 0x7e00, 0x0200, [0x7e34, 0xfe34, 0x7c34, 0xfc34]),
+            (0x6ef9f820, 16, 8, 0x7e00, 0x0200, [0x7e34, 0xfe34, 0x7c34, 0xfc34]),
+            (0x1e21c020, 32, 1, 0x7fc00000, 0x00400000, [0x7fc01234, 0xffc01234, 0x7f801234, 0xff801234]),
+            (0x2ea1f820, 32, 2, 0x7fc00000, 0x00400000, [0x7fc01234, 0xffc01234, 0x7f801234, 0xff801234]),
+            (0x6ea1f820, 32, 4, 0x7fc00000, 0x00400000, [0x7fc01234, 0xffc01234, 0x7f801234, 0xff801234]),
+            (0x1e61c020, 64, 1, 0x7ff8000000000000, 0x0008000000000000,
+             [0x7ff8000000001234, 0xfff8000000001234, 0x7ff0000000001234, 0xfff0000000001234]),
+            (0x6ee1f820, 64, 2, 0x7ff8000000000000, 0x0008000000000000,
+             [0x7ff8000000001234, 0xfff8000000001234, 0x7ff0000000001234, 0xfff0000000001234]),
+        ] {
+            let mut u = Unit::new(StubKind::Plain, false);
+            for p in [PC, PC + 4] { let l = u.a.create_label(); u.labels.insert(p, l); }
+            let read = |p| if p == PC { Some(word) } else if p == PC + 4 { Some(0xd4001001) } else { None };
+            emit_block(&mut u, PC, &read); emit_block(&mut u, PC + 4, &read); u.finish();
+            let host = crate::jit::code_cache().alloc(16384);
+            let result = u.a.assemble_options(host, iced_x86::BlockEncoderOptions::RETURN_NEW_INSTRUCTION_OFFSETS).unwrap();
+            let entry = result.label_ip(&u.labels[&PC]).unwrap();
+            let next = result.label_ip(&u.labels[&(PC + 4)]).unwrap();
+            assert!(result.inner.code_buffer.len() <= 16384);
+            unsafe { std::ptr::copy_nonoverlapping(result.inner.code_buffer.as_ptr(), host as *mut u8, result.inner.code_buffer.len()); }
+            for input in inputs { for dn in [false, true] {
+                let expected = if dn { dnan } else { input | quiet };
+                let (mut source, mut want) = (0u128, 0u128);
+                for lane in 0..lanes { source |= (input as u128) << (lane*width); want |= (expected as u128) << (lane*width); }
+                let mut c = Cpu::new(); crate::jit::setup_cpu(&mut c); c.pc = PC;
+                c.fpcr = if dn { 1 << 25 } else { 0 }; let mode = c.fpcr;
+                c.set_vq(1, source); c.set_vq(0, u128::MAX);
+                unsafe { crate::jit::attesor_jit_enter(&mut *c, entry); }
+                if dn {
+                    assert_eq!(c.exit_reason, EXIT_INTERP); assert_eq!(c.pc, PC);
+                    assert_eq!(c.vq(0), u128::MAX); assert_eq!(c.vq(1), source);
+                    interp::exec(&mut c, word).unwrap();
+                    unsafe { crate::jit::attesor_jit_enter(&mut *c, next); }
+                }
+                assert_eq!(c.exit_reason, EXIT_SVC);
+                assert_eq!(c.vq(0), want, "word={word:08x} input={input:x} dn={dn}");
+                assert_eq!(c.fpcr, mode);
+            }}
+        }
+    }
+}

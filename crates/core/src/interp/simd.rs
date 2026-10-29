@@ -544,6 +544,7 @@ fn fp_2src<T: Fp>(a: T, b: T, opcode: u32) -> Option<T> {
 
 fn fp_1src(cpu: &mut Cpu, insn: u32, ptype: u32, opcode: u32, rd: u32, rn: u32) -> R {
     let rmode = fpcr_rmode(cpu);
+    let dn = cpu.fpcr & (1 << 25) != 0;
     // FCVT between precisions
     if opcode & 0b111100 == 0b000100 {
         let to = opcode & 3;
@@ -587,7 +588,7 @@ fn fp_1src(cpu: &mut Cpu, insn: u32, ptype: u32, opcode: u32, rd: u32, rn: u32) 
                 0 => a,
                 1 => a.abs(),
                 2 => -a,
-                3 => sf::fsqrt(a),
+                3 => sf::fsqrt_dn(a, dn),
                 8 => frint(a, 0),
                 9 => frint(a, 1),
                 10 => frint(a, 2),
@@ -616,7 +617,7 @@ fn fp_1src(cpu: &mut Cpu, insn: u32, ptype: u32, opcode: u32, rd: u32, rn: u32) 
                 _ => {
                     let a = sf::f16_to_f32(h);
                     let r = match opcode {
-                        3 => sf::fsqrt(a),
+                        3 => sf::fsqrt_dn(a, dn),
                         8 => frint(a, 0),
                         9 => frint(a, 1),
                         10 => frint(a, 2),
@@ -1345,6 +1346,7 @@ fn two_misc_fp(cpu: &mut Cpu, insn: u32, scalar: bool, q: bool, u: bool, size: u
     }
     let elems = if scalar { 1 } else if q { 128 / esz } else { 64 / esz };
     let rmode = fpcr_rmode(cpu);
+    let dn = cpu.fpcr & (1 << 25) != 0;
     let key = ((u as u32) << 6) | (fa << 5) | opcode;
     let r = match key {
         0b0_0_11000 => fp_vec1(a, esz, elems, |x| fbits(frint(x, 0)), |x| fbits(frint(x, 0))),
@@ -1380,7 +1382,7 @@ fn two_misc_fp(cpu: &mut Cpu, insn: u32, scalar: bool, q: bool, u: bool, size: u
         0b1_1_01101 => fp_vec1(a, esz, elems, |x| mask_if(x <= 0.0, 32), |x| mask_if(x <= 0.0, 64)),
         0b0_1_01111 => fp_vec1(a, esz, elems, |x| (x.to_bits() & 0x7fff_ffff) as u64, |x| x.to_bits() & 0x7fff_ffff_ffff_ffff),
         0b1_1_01111 => fp_vec1(a, esz, elems, |x| (x.to_bits() ^ 0x8000_0000) as u64, |x| x.to_bits() ^ 0x8000_0000_0000_0000),
-        0b1_1_11111 => fp_vec1(a, esz, elems, |x| fbits(sf::fsqrt(x)), |x| fbits(sf::fsqrt(x))),
+        0b1_1_11111 => fp_vec1(a, esz, elems, |x| fbits(sf::fsqrt_dn(x, dn)), |x| fbits(sf::fsqrt_dn(x, dn))),
         0b0_1_11101 => fp_vec1(a, esz, elems, |x| fbits(sf::frecpe(x)), |x| fbits(sf::frecpe(x))),
         0b1_1_11101 => fp_vec1(a, esz, elems, |x| fbits(sf::frsqrte(x)), |x| fbits(sf::frsqrte(x))),
         _ => return Err(unimpl(insn)),
@@ -2460,6 +2462,34 @@ mod tests {
                     super::super::exec(&mut c, word | rd).unwrap(); assert_eq!(c.vq(rd), output);
                 }
             }
+        }
+    }
+
+    #[test]
+    fn fsqrt_dn_modes_cover_every_scalar_and_vector_form() {
+        // Independent bit expectations for ±qNaN/±sNaN. Encodings assembled
+        // with clang -march=armv8.2-a+fp16, including 64-bit vector forms.
+        for (width, inputs, dnan, quiet) in [
+            (16, [0x7e34u64, 0xfe34, 0x7c34, 0xfc34], 0x7e00, 0x0200),
+            (32, [0x7fc01234, 0xffc01234, 0x7f801234, 0xff801234], 0x7fc00000, 0x00400000),
+            (64, [0x7ff8000000001234, 0xfff8000000001234, 0x7ff0000000001234, 0xfff0000000001234],
+                  0x7ff8000000000000, 0x0008000000000000),
+        ] {
+            let forms: &[(u32, u32)] = match width {
+                16 => &[(0x1ee1c020, 1), (0x2ef9f820, 4), (0x6ef9f820, 8)],
+                32 => &[(0x1e21c020, 1), (0x2ea1f820, 2), (0x6ea1f820, 4)],
+                _ => &[(0x1e61c020, 1), (0x6ee1f820, 2)],
+            };
+            for &(word, lanes) in forms { for input in inputs { for dn in [false, true] { for rd in [0, 1] {
+                let expected = if dn { dnan } else { input | quiet };
+                let (mut source, mut want) = (0u128, 0u128);
+                for lane in 0..lanes { source |= (input as u128) << (lane*width); want |= (expected as u128) << (lane*width); }
+                let mut c = Cpu::new(); c.fpcr = if dn { 1 << 25 } else { 0 };
+                c.set_vq(1, std::hint::black_box(source)); let mode = c.fpcr;
+                super::super::exec(&mut c, word | rd).unwrap();
+                assert_eq!(c.vq(rd), want, "word={word:08x} input={input:x} dn={dn}");
+                assert_eq!(c.fpcr, mode);
+            }}}}
         }
     }
 
