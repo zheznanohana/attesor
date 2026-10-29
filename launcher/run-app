@@ -42,11 +42,7 @@ fi
 cd "$APP/Contents/MacOS" || exit 1
 echo "=== $(date) ===" >> "$LOG"
 # every guest process also copies its stderr to ~/Library/Logs/Attesor/stderr/ (helpers' stderr is often piped away)
-ATTESOR_STDERR_LOG=1 "$ATTESOR" "${flags[@]}" "$@" >> "$LOG" 2>&1
-rc=$?
-if [ $rc -ne 0 ] && [ "${ATTESOR_NO_ALERT:-0}" != 1 ]; then
-  osascript -e 'on run argv
-    display alert ((item 1 of argv) & " 在 Attesor 下退出（代码 " & (item 2 of argv) & "）") message ("日志：" & (item 3 of argv))
-  end run' -- "$name" "$rc" "$LOG" >/dev/null 2>&1 || true
-fi
-exit $rc
+# Preserve the PID registered when LaunchServices started the stub: the runner
+# is replaced, rather than supervising the actual GUI in a child process.
+# Runtime failures retain their exit status and are recorded in this log.
+ATTESOR_STDERR_LOG=1 exec "$ATTESOR" "${flags[@]}" "$@" >> "$LOG" 2>&1

@@ -88,3 +88,31 @@ executable as a Node child. With `--attesor`, both fixtures also execute a real 
 program through the transparent child path. All **17** checks pass. This suite is
 called by `launcher-check.py` after its original **25** checks. Real DeepSeek
 Harness and ARM VS Code validation remains a separate integration check.
+
+
+## One PID from GUI entry to guest
+
+The top-level GUI runner now uses `exec` as the Node/child runner already did.
+The x86 stub, shell runner and translator therefore retain the PID originally
+started for the application; the GUI no longer runs behind a waiting Bash
+supervisor. Existing GUI GPU switches, cwd, log rotation, stdout/stderr logging,
+and translated-program exit status remain unchanged. Node and Chromium child
+paths retain their inherited pipes and environment.
+
+A runtime's nonzero GUI exit is now written to the GUI log without a modal exit
+alert: there is no foreground supervisor left to display one after the runtime
+exits. A missing runtime also fails directly through shell `exec` and its error
+is logged (the platform shell supplies the failure status). The native stub's
+separate missing-runner startup message is unchanged.
+
+The process-role regression now captures the `Popen.pid` used to start the stub
+and compares it with the actual translator PID, for GUI and every child role.
+Both framework fixtures additionally run a real ARM program that writes
+`getpid()` to a private file, proving identity through the real GUI and Node
+paths rather than only a fake translator. These checks do not claim that a PID
+alone proves every LaunchServices or GUI automation behavior.
+
+Final regression: the original **25** launcher checks and **35** extended role/
+PID checks passed. The latter includes both real ARM GUI/Node PID comparisons
+and confirms a GUI runtime failure does not invoke the old post-exit alert path.
+[Recorded output](measurements/2026-10-29-gui-exec.txt).
