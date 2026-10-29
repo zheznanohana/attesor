@@ -1,0 +1,113 @@
+{
+  "access_date": "2026-10-29",
+  "attesor_base": "c57a0683917597ac62bc011bf6e2e7086f4ed5a5",
+  "note": "Only primary source snapshots were inspected; no production code copied or performance tests run. Hashes identify inspected downloads, not benchmark results.",
+  "code_sources": [
+    {
+      "project": "box64",
+      "repository": "https://github.com/ptitSeb/box64",
+      "commit": "30d5c77188fa9cf8bea7064d93ced554c3a34cde",
+      "commit_date": "2026-10-28T11:16:15Z",
+      "files": [
+        {
+          "path": "docs/USAGE.md",
+          "sha256": "f36813ae6931346c7e8991f80ff21935d8e02ff754db77ef1e1095518c94af14",
+          "url": "https://github.com/ptitSeb/box64/blob/30d5c77188fa9cf8bea7064d93ced554c3a34cde/docs/USAGE.md"
+        },
+        {
+          "path": "src/dynarec/arm64/dynarec_arm64_helper.c",
+          "sha256": "19ca52833f02427177f89865e01210660f31f33ecec9c77fe3104af02be2501c",
+          "url": "https://github.com/ptitSeb/box64/blob/30d5c77188fa9cf8bea7064d93ced554c3a34cde/src/dynarec/arm64/dynarec_arm64_helper.c"
+        },
+        {
+          "path": "src/dynarec/arm64/dynarec_arm64_private.h",
+          "sha256": "6444567960fd890af1b96153f201669e4bc5934005a46e3c517d011a03327b40",
+          "url": "https://github.com/ptitSeb/box64/blob/30d5c77188fa9cf8bea7064d93ced554c3a34cde/src/dynarec/arm64/dynarec_arm64_private.h"
+        },
+        {
+          "path": "src/dynarec/dynarec_native.c",
+          "sha256": "b096ffdc988209cd5031bbcec17e0e8743986aa019b2e183d0fbf309d07d9734",
+          "url": "https://github.com/ptitSeb/box64/blob/30d5c77188fa9cf8bea7064d93ced554c3a34cde/src/dynarec/dynarec_native.c"
+        },
+        {
+          "path": "src/tools/dynacache.c",
+          "sha256": "7546a7cece1debf191f43078bc40d8192a0452df61fc8fc733449a566a422022",
+          "url": "https://github.com/ptitSeb/box64/blob/30d5c77188fa9cf8bea7064d93ced554c3a34cde/src/tools/dynacache.c"
+        }
+      ]
+    },
+    {
+      "project": "fex",
+      "repository": "https://github.com/FEX-Emu/FEX",
+      "commit": "fb48e2d19de4bd49bbc66d42242609357883a302",
+      "commit_date": "2026-10-28T13:59:06Z",
+      "files": [
+        {
+          "path": "FEXCore/Source/Interface/Core/LookupCache.cpp",
+          "sha256": "93338457a4d2cc8701f697af97244f58d94ca614251add174ee98f8c4532d113",
+          "url": "https://github.com/FEX-Emu/FEX/blob/fb48e2d19de4bd49bbc66d42242609357883a302/FEXCore/Source/Interface/Core/LookupCache.cpp"
+        },
+        {
+          "path": "FEXCore/Source/Interface/IR/Passes/RedundantFlagCalculationElimination.cpp",
+          "sha256": "73a9afab26fbd9509686379230b34263cd1a83b7a50ff11a994b484fd259697f",
+          "url": "https://github.com/FEX-Emu/FEX/blob/fb48e2d19de4bd49bbc66d42242609357883a302/FEXCore/Source/Interface/IR/Passes/RedundantFlagCalculationElimination.cpp"
+        },
+        {
+          "path": "FEXCore/Source/Interface/IR/Passes/RegisterAllocationPass.cpp",
+          "sha256": "81f98229a48235c346766b777401405bfa1015abd8885a151d28e779d135eff6",
+          "url": "https://github.com/FEX-Emu/FEX/blob/fb48e2d19de4bd49bbc66d42242609357883a302/FEXCore/Source/Interface/IR/Passes/RegisterAllocationPass.cpp"
+        },
+        {
+          "path": "ThunkLibs/README.md",
+          "sha256": "69b187654b70c6c6b601189377ed6b51fe45e8b21ecdc87a70f982a3dd858480",
+          "url": "https://github.com/FEX-Emu/FEX/blob/fb48e2d19de4bd49bbc66d42242609357883a302/ThunkLibs/README.md"
+        }
+      ]
+    },
+    {
+      "project": "qemu",
+      "repository": "https://github.com/qemu/qemu",
+      "commit": "73294d096cc591e122fde9e63db4739de6d84f2b",
+      "commit_date": "2026-10-28T11:21:59Z",
+      "files": [
+        {
+          "path": "docs/devel/tcg.rst",
+          "sha256": "318ead626f8c3188131f5421d900209b625c94cfeb8dbd9897d74ac074fc116a",
+          "url": "https://github.com/qemu/qemu/blob/73294d096cc591e122fde9e63db4739de6d84f2b/docs/devel/tcg.rst"
+        },
+        {
+          "path": "target/i386/tcg/translate.c",
+          "sha256": "74b0294a08d55669ce841a25138fd9608433d891bd4f8b08f366e1c71e949131",
+          "url": "https://github.com/qemu/qemu/blob/73294d096cc591e122fde9e63db4739de6d84f2b/target/i386/tcg/translate.c"
+        },
+        {
+          "path": "tcg/tcg.c",
+          "sha256": "91f1b277d318b9b8d8226492899ee65ebeba81a2a6d6720ecce8403a1930202c",
+          "url": "https://github.com/qemu/qemu/blob/73294d096cc591e122fde9e63db4739de6d84f2b/tcg/tcg.c"
+        }
+      ]
+    }
+  ],
+  "documentation": [
+    {
+      "project": "Apple",
+      "url": "https://support.apple.com/en-sg/guide/security/secebb113be1/web",
+      "html_sha256": "27cc5c93a62257a430600c97a764d1bf8b84912e0542d1f0b1f174f15b671627"
+    },
+    {
+      "project": "LLVM",
+      "version": "18.1.8",
+      "url": "https://releases.llvm.org/18.1.8/docs/StackMaps.html"
+    },
+    {
+      "project": "FEX",
+      "release": "2212 (historical tradeoff example)",
+      "url": "https://fex-emu.com/FEX-2212/"
+    },
+    {
+      "project": "FEX",
+      "release": "2208 (ownership/callback design)",
+      "url": "https://fex-emu.com/FEX-2208/"
+    }
+  ]
+}
