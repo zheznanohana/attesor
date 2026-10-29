@@ -1,0 +1,438 @@
+{
+  "date": "2026-10-29",
+  "production_detection": "CPUID F/VL/BW/DQ AND four macOS sysctls; sysctl EPERM => false",
+  "host_features": "cpuid.1 ecx=7ffafbbf\ncpuid.7 ebx=f3bfa7eb ecx=18c05fce\nxcr0=0000000000000007\nhw.optional.avx512f rc=-1 errno=1 value=-1\nhw.optional.avx512vl rc=-1 errno=1 value=-1\nhw.optional.avx512dq rc=-1 errno=1 value=-1\nhw.optional.avx512bw rc=-1 errno=1 value=-1\n22:32  2 users, load averages: 9.01 7.88 8.65\n",
+  "fixtures": {
+    "fixture-step1": {
+      "warning": "TEST ONLY; substituted OS detector, never install",
+      "source_sha256": "726efd0262e3c2191a9f9eae5983eeacd846cc94fb6df8f55f1ef71c81ef2298",
+      "fixture_sha256": "e5232f430c444e6a0e725b14a4b45fb2ee8ee1d92654db1bbc299f38f2346aae",
+      "probe": "XCR0 before: 0x7\nXCR0 after: 0xe7; correct=1\n",
+      "uptime": "22:26  2 users, load averages: 2.92 5.50 8.48"
+    },
+    "fixture-nan": {
+      "warning": "TEST ONLY; substituted OS detector, never install",
+      "source_sha256": "18404e1f8e9ae0982c677a0fbb89d8c74b483b36c6d6d55134ea69e12b9136d7",
+      "fixture_sha256": "e5bc282437a877ec3af7fb5076289ed8193a9739c179ad34e575f4f79032b90f",
+      "probe": "XCR0 before: 0x7\nXCR0 after: 0xe7; correct=1\n",
+      "uptime": "22:27  2 users, load averages: 7.07 6.28 8.56"
+    }
+  },
+  "measurements": {
+    "measure-step1": {
+      "timings": [
+        {
+          "run": 1,
+          "flag": "",
+          "uptime": "22:24  2 users, load averages: 2.97 6.73 9.31",
+          "stdout": "fp-nbody 116.001 ms checksum=5276637\nmatmul 80.579 ms checksum=2694\nneon-dot 6.632 ms checksum=33848033760\n"
+        },
+        {
+          "run": 1,
+          "flag": "avx512",
+          "uptime": "22:24  2 users, load averages: 2.97 6.73 9.31",
+          "stdout": "fp-nbody 108.261 ms checksum=5276637\nmatmul 80.528 ms checksum=2694\nneon-dot 7.134 ms checksum=33848033760\n"
+        },
+        {
+          "run": 2,
+          "flag": "",
+          "uptime": "22:24  2 users, load averages: 2.97 6.73 9.31",
+          "stdout": "fp-nbody 114.789 ms checksum=5276637\nmatmul 83.000 ms checksum=2694\nneon-dot 7.968 ms checksum=33848033760\n"
+        },
+        {
+          "run": 2,
+          "flag": "avx512",
+          "uptime": "22:24  2 users, load averages: 2.89 6.66 9.26",
+          "stdout": "fp-nbody 141.483 ms checksum=5276637\nmatmul 88.516 ms checksum=2694\nneon-dot 9.016 ms checksum=33848033760\n"
+        },
+        {
+          "run": 3,
+          "flag": "",
+          "uptime": "22:24  2 users, load averages: 2.89 6.66 9.26",
+          "stdout": "fp-nbody 110.997 ms checksum=5276637\nmatmul 84.394 ms checksum=2694\nneon-dot 7.934 ms checksum=33848033760\n"
+        },
+        {
+          "run": 3,
+          "flag": "avx512",
+          "uptime": "22:24  2 users, load averages: 2.89 6.66 9.26",
+          "stdout": "fp-nbody 122.712 ms checksum=5276637\nmatmul 86.139 ms checksum=2694\nneon-dot 7.284 ms checksum=33848033760\n"
+        }
+      ],
+      "counts": [
+        {
+          "flag": "",
+          "kernel": "fp-nbody",
+          "guest_insns": 23,
+          "hot_host_insns": 163
+        },
+        {
+          "flag": "",
+          "kernel": "matmul",
+          "guest_insns": 7,
+          "hot_host_insns": 39
+        },
+        {
+          "flag": "",
+          "kernel": "neon-dot",
+          "guest_insns": 9,
+          "hot_host_insns": 47
+        },
+        {
+          "flag": "avx512",
+          "kernel": "fp-nbody",
+          "guest_insns": 23,
+          "hot_host_insns": 163
+        },
+        {
+          "flag": "avx512",
+          "kernel": "matmul",
+          "guest_insns": 7,
+          "hot_host_insns": 39
+        },
+        {
+          "flag": "avx512",
+          "kernel": "neon-dot",
+          "guest_insns": 9,
+          "hot_host_insns": 47
+        }
+      ]
+    },
+    "measure-native-step1": {
+      "timings": [
+        {
+          "run": 1,
+          "flag": "",
+          "uptime": "22:27  2 users, load averages: 6.56 6.16 8.54",
+          "stdout": "fp-nbody 119.694 ms checksum=5276637\nmatmul 86.244 ms checksum=2694\nneon-dot 7.525 ms checksum=33848033760\n"
+        },
+        {
+          "run": 1,
+          "flag": "avx512",
+          "uptime": "22:27  2 users, load averages: 6.56 6.16 8.54",
+          "stdout": "fp-nbody 117.900 ms checksum=5276637\nmatmul 94.157 ms checksum=2694\nneon-dot 8.567 ms checksum=33848033760\n"
+        },
+        {
+          "run": 2,
+          "flag": "",
+          "uptime": "22:27  2 users, load averages: 6.56 6.16 8.54",
+          "stdout": "fp-nbody 152.993 ms checksum=5276637\nmatmul 119.482 ms checksum=2694\nneon-dot 12.536 ms checksum=33848033760\n"
+        },
+        {
+          "run": 2,
+          "flag": "avx512",
+          "uptime": "22:27  2 users, load averages: 6.56 6.16 8.54",
+          "stdout": "fp-nbody 203.748 ms checksum=5276637\nmatmul 173.246 ms checksum=2694\nneon-dot 15.652 ms checksum=33848033760\n"
+        },
+        {
+          "run": 3,
+          "flag": "",
+          "uptime": "22:27  2 users, load averages: 6.56 6.16 8.54",
+          "stdout": "fp-nbody 243.826 ms checksum=5276637\nmatmul 161.675 ms checksum=2694\nneon-dot 15.369 ms checksum=33848033760\n"
+        },
+        {
+          "run": 3,
+          "flag": "avx512",
+          "uptime": "22:27  2 users, load averages: 6.56 6.16 8.54",
+          "stdout": "fp-nbody 194.905 ms checksum=5276637\nmatmul 121.520 ms checksum=2694\nneon-dot 8.844 ms checksum=33848033760\n"
+        }
+      ],
+      "counts": [
+        {
+          "flag": "",
+          "kernel": "fp-nbody",
+          "guest_insns": 23,
+          "hot_host_insns": 163
+        },
+        {
+          "flag": "",
+          "kernel": "matmul",
+          "guest_insns": 7,
+          "hot_host_insns": 39
+        },
+        {
+          "flag": "",
+          "kernel": "neon-dot",
+          "guest_insns": 9,
+          "hot_host_insns": 47
+        },
+        {
+          "flag": "avx512",
+          "kernel": "fp-nbody",
+          "guest_insns": 23,
+          "hot_host_insns": 163
+        },
+        {
+          "flag": "avx512",
+          "kernel": "matmul",
+          "guest_insns": 7,
+          "hot_host_insns": 39
+        },
+        {
+          "flag": "avx512",
+          "kernel": "neon-dot",
+          "guest_insns": 9,
+          "hot_host_insns": 47
+        }
+      ]
+    },
+    "measure-native-nan": {
+      "timings": [
+        {
+          "run": 1,
+          "flag": "",
+          "uptime": "22:29  2 users, load averages: 7.65 6.66 8.51",
+          "stdout": "fp-nbody 124.275 ms checksum=5276637\nmatmul 88.606 ms checksum=2694\nneon-dot 8.084 ms checksum=33848033760\n"
+        },
+        {
+          "run": 1,
+          "flag": "avx512nan",
+          "uptime": "22:29  2 users, load averages: 7.65 6.66 8.51",
+          "stdout": "fp-nbody 111.886 ms checksum=5276637\nmatmul 87.006 ms checksum=2694\nneon-dot 7.391 ms checksum=33848033760\n"
+        },
+        {
+          "run": 1,
+          "flag": "avx512,avx512nan",
+          "uptime": "22:29  2 users, load averages: 7.65 6.66 8.51",
+          "stdout": "fp-nbody 115.659 ms checksum=5276637\nmatmul 90.930 ms checksum=2694\nneon-dot 8.358 ms checksum=33848033760\n"
+        },
+        {
+          "run": 2,
+          "flag": "",
+          "uptime": "22:29  2 users, load averages: 7.65 6.66 8.51",
+          "stdout": "fp-nbody 113.331 ms checksum=5276637\nmatmul 86.724 ms checksum=2694\nneon-dot 7.494 ms checksum=33848033760\n"
+        },
+        {
+          "run": 2,
+          "flag": "avx512nan",
+          "uptime": "22:29  2 users, load averages: 7.65 6.66 8.51",
+          "stdout": "fp-nbody 112.112 ms checksum=5276637\nmatmul 86.739 ms checksum=2694\nneon-dot 7.453 ms checksum=33848033760\n"
+        },
+        {
+          "run": 2,
+          "flag": "avx512,avx512nan",
+          "uptime": "22:29  2 users, load averages: 7.65 6.66 8.51",
+          "stdout": "fp-nbody 113.019 ms checksum=5276637\nmatmul 87.128 ms checksum=2694\nneon-dot 8.115 ms checksum=33848033760\n"
+        },
+        {
+          "run": 3,
+          "flag": "",
+          "uptime": "22:29  2 users, load averages: 7.65 6.66 8.51",
+          "stdout": "fp-nbody 120.507 ms checksum=5276637\nmatmul 91.269 ms checksum=2694\nneon-dot 7.962 ms checksum=33848033760\n"
+        },
+        {
+          "run": 3,
+          "flag": "avx512nan",
+          "uptime": "22:29  2 users, load averages: 7.65 6.66 8.51",
+          "stdout": "fp-nbody 119.424 ms checksum=5276637\nmatmul 84.263 ms checksum=2694\nneon-dot 7.221 ms checksum=33848033760\n"
+        },
+        {
+          "run": 3,
+          "flag": "avx512,avx512nan",
+          "uptime": "22:29  2 users, load averages: 7.65 6.66 8.51",
+          "stdout": "fp-nbody 114.094 ms checksum=5276637\nmatmul 86.882 ms checksum=2694\nneon-dot 8.130 ms checksum=33848033760\n"
+        }
+      ],
+      "counts": [
+        {
+          "flag": "",
+          "kernel": "fp-nbody",
+          "guest_insns": 23,
+          "hot_host_insns": 163
+        },
+        {
+          "flag": "",
+          "kernel": "matmul",
+          "guest_insns": 7,
+          "hot_host_insns": 39
+        },
+        {
+          "flag": "",
+          "kernel": "neon-dot",
+          "guest_insns": 9,
+          "hot_host_insns": 47
+        },
+        {
+          "flag": "avx512nan",
+          "kernel": "fp-nbody",
+          "guest_insns": 23,
+          "hot_host_insns": 163
+        },
+        {
+          "flag": "avx512nan",
+          "kernel": "matmul",
+          "guest_insns": 7,
+          "hot_host_insns": 39
+        },
+        {
+          "flag": "avx512nan",
+          "kernel": "neon-dot",
+          "guest_insns": 9,
+          "hot_host_insns": 47
+        },
+        {
+          "flag": "avx512,avx512nan",
+          "kernel": "fp-nbody",
+          "guest_insns": 23,
+          "hot_host_insns": 163
+        },
+        {
+          "flag": "avx512,avx512nan",
+          "kernel": "matmul",
+          "guest_insns": 7,
+          "hot_host_insns": 39
+        },
+        {
+          "flag": "avx512,avx512nan",
+          "kernel": "neon-dot",
+          "guest_insns": 9,
+          "hot_host_insns": 47
+        }
+      ]
+    }
+  },
+  "unit_evidence": [
+    "test jit::emit::avx512_tests::macos_detection_uses_kernel_policy_not_eager_xcr0 ... AVX512 runtime detection: false",
+    "test jit::emit::avx512_tests::nan_range_results_and_mutants_match_interpreter ... AVX512 NaN sensitivity: mutant=1 word=1e220820 mismatch=252",
+    "AVX512 NaN sensitivity: mutant=1 word=1e221820 mismatch=252",
+    "AVX512 NaN sensitivity: mutant=1 word=1e222820 mismatch=252",
+    "AVX512 NaN sensitivity: mutant=1 word=1e223820 mismatch=252",
+    "AVX512 NaN sensitivity: mutant=1 word=1e224820 mismatch=756",
+    "AVX512 NaN sensitivity: mutant=2 word=1e224820 mismatch=1960",
+    "AVX512 NaN sensitivity: mutant=1 word=1e225820 mismatch=756",
+    "AVX512 NaN sensitivity: mutant=2 word=1e225820 mismatch=1960",
+    "AVX512 NaN sensitivity: mutant=2 word=1e226820 mismatch=1960",
+    "AVX512 NaN sensitivity: mutant=2 word=1e227820 mismatch=1960",
+    "AVX512 NaN sensitivity: mutant=1 word=1e21c020 mismatch=392",
+    "AVX512 NaN sensitivity: mutant=1 word=1f020c20 mismatch=162",
+    "AVX512 NaN sensitivity: mutant=1 word=1f028c20 mismatch=162",
+    "AVX512 NaN sensitivity: mutant=1 word=1f220c20 mismatch=162",
+    "AVX512 NaN sensitivity: mutant=1 word=1f228c20 mismatch=162",
+    "AVX512 NaN sensitivity: mutant=1 word=0e22d420 mismatch=504",
+    "AVX512 NaN sensitivity: mutant=1 word=0ea2d420 mismatch=504",
+    "AVX512 NaN sensitivity: mutant=1 word=2e22dc20 mismatch=504",
+    "AVX512 NaN sensitivity: mutant=1 word=2e22fc20 mismatch=504",
+    "AVX512 NaN sensitivity: mutant=1 word=0e22f420 mismatch=1064",
+    "AVX512 NaN sensitivity: mutant=2 word=0e22f420 mismatch=2408",
+    "AVX512 NaN sensitivity: mutant=1 word=0ea2f420 mismatch=1064",
+    "AVX512 NaN sensitivity: mutant=2 word=0ea2f420 mismatch=2408",
+    "AVX512 NaN sensitivity: mutant=2 word=0e22c420 mismatch=2408",
+    "AVX512 NaN sensitivity: mutant=2 word=0ea2c420 mismatch=2408",
+    "AVX512 NaN sensitivity: mutant=1 word=0f821020 mismatch=196",
+    "AVX512 NaN sensitivity: mutant=1 word=0f825020 mismatch=196",
+    "AVX512 NaN sensitivity: mutant=1 word=0e22cc20 mismatch=324",
+    "AVX512 NaN sensitivity: mutant=1 word=0ea2cc20 mismatch=324",
+    "AVX512 NaN sensitivity: mutant=1 word=4e22d420 mismatch=1008",
+    "AVX512 NaN sensitivity: mutant=1 word=4ea2d420 mismatch=1008",
+    "AVX512 NaN sensitivity: mutant=1 word=6e22dc20 mismatch=1008",
+    "AVX512 NaN sensitivity: mutant=1 word=6e22fc20 mismatch=1008",
+    "AVX512 NaN sensitivity: mutant=1 word=4e22f420 mismatch=1680",
+    "AVX512 NaN sensitivity: mutant=2 word=4e22f420 mismatch=3304",
+    "AVX512 NaN sensitivity: mutant=1 word=4ea2f420 mismatch=1680",
+    "AVX512 NaN sensitivity: mutant=2 word=4ea2f420 mismatch=3304",
+    "AVX512 NaN sensitivity: mutant=2 word=4e22c420 mismatch=3304",
+    "AVX512 NaN sensitivity: mutant=2 word=4ea2c420 mismatch=3304",
+    "AVX512 NaN sensitivity: mutant=1 word=4f821020 mismatch=264",
+    "AVX512 NaN sensitivity: mutant=1 word=4f825020 mismatch=264",
+    "AVX512 NaN sensitivity: mutant=1 word=4e22cc20 mismatch=648",
+    "AVX512 NaN sensitivity: mutant=1 word=4ea2cc20 mismatch=648",
+    "AVX512 NaN sensitivity: mutant=1 word=1e620820 mismatch=252",
+    "AVX512 NaN sensitivity: mutant=1 word=1e621820 mismatch=252",
+    "AVX512 NaN sensitivity: mutant=1 word=1e622820 mismatch=252",
+    "AVX512 NaN sensitivity: mutant=1 word=1e623820 mismatch=252",
+    "AVX512 NaN sensitivity: mutant=1 word=1e624820 mismatch=756",
+    "AVX512 NaN sensitivity: mutant=2 word=1e624820 mismatch=1960",
+    "AVX512 NaN sensitivity: mutant=1 word=1e625820 mismatch=756",
+    "AVX512 NaN sensitivity: mutant=2 word=1e625820 mismatch=1960",
+    "AVX512 NaN sensitivity: mutant=2 word=1e626820 mismatch=1960",
+    "AVX512 NaN sensitivity: mutant=2 word=1e627820 mismatch=1960",
+    "AVX512 NaN sensitivity: mutant=1 word=1e61c020 mismatch=392",
+    "AVX512 NaN sensitivity: mutant=1 word=1f420c20 mismatch=162",
+    "AVX512 NaN sensitivity: mutant=1 word=1f428c20 mismatch=162",
+    "AVX512 NaN sensitivity: mutant=1 word=1f620c20 mismatch=162",
+    "AVX512 NaN sensitivity: mutant=1 word=1f628c20 mismatch=162",
+    "AVX512 NaN sensitivity: mutant=1 word=4e62d420 mismatch=504",
+    "AVX512 NaN sensitivity: mutant=1 word=4ee2d420 mismatch=504",
+    "AVX512 NaN sensitivity: mutant=1 word=6e62dc20 mismatch=504",
+    "AVX512 NaN sensitivity: mutant=1 word=6e62fc20 mismatch=504",
+    "AVX512 NaN sensitivity: mutant=1 word=4e62f420 mismatch=1512",
+    "AVX512 NaN sensitivity: mutant=2 word=4e62f420 mismatch=3136",
+    "AVX512 NaN sensitivity: mutant=1 word=4ee2f420 mismatch=1512",
+    "AVX512 NaN sensitivity: mutant=2 word=4ee2f420 mismatch=3136",
+    "AVX512 NaN sensitivity: mutant=2 word=4e62c420 mismatch=3136",
+    "AVX512 NaN sensitivity: mutant=2 word=4ee2c420 mismatch=3136",
+    "AVX512 NaN sensitivity: mutant=1 word=4fc21020 mismatch=252",
+    "AVX512 NaN sensitivity: mutant=1 word=4fc25020 mismatch=252",
+    "AVX512 NaN sensitivity: mutant=1 word=4e62cc20 mismatch=324",
+    "AVX512 NaN sensitivity: mutant=1 word=4ee2cc20 mismatch=324",
+    "AVX512 NaN/range directed: cases=340256 mismatch=0 FZ=off/on",
+    "test jit::emit::avx512_tests::nan_templates_encode_xmm_only_and_preserve_cold_registers ... AVX512 static fixup: double=false template=add cold_instructions=52 -> 13",
+    "AVX512 static fixup: double=false template=max cold_instructions=69 -> 9",
+    "AVX512 static fixup: double=false template=maxnm cold_instructions=63 -> 0",
+    "AVX512 static fixup: double=false template=fma cold_instructions=93 -> 37",
+    "AVX512 static fixup: double=true template=add cold_instructions=52 -> 13",
+    "AVX512 static fixup: double=true template=max cold_instructions=69 -> 9",
+    "AVX512 static fixup: double=true template=maxnm cold_instructions=63 -> 0",
+    "AVX512 static fixup: double=true template=fma cold_instructions=93 -> 37",
+    "test jit::emit::avx512_tests::native_feature_selftest_matrix ... AVX512 native selftest features=(true, false) seed=1 count=20000",
+    "jit selftest [fpblocks]: ok=20000 mismatch=0 skipped=0 insns=129744 fallback_insns=0",
+    "jit selftest [fpnan]: ok=20000 mismatch=0 skipped=0 native=20000",
+    "jit selftest [0E20D400:0E20D400]: ok=4377 mismatch=0 skipped=15623 native=1288",
+    "jit selftest [0F800000:0F800000]: ok=2262 mismatch=0 skipped=17738 native=273",
+    "jit selftest [1F000000:1F000000]: ok=3197 mismatch=0 skipped=16803 native=1200",
+    "AVX512 native selftest features=(false, true) seed=1 count=20000",
+    "jit selftest [fpblocks]: ok=20000 mismatch=0 skipped=0 insns=129744 fallback_insns=0",
+    "jit selftest [fpnan]: ok=20000 mismatch=0 skipped=0 native=20000",
+    "jit selftest [0E20D400:0E20D400]: ok=4377 mismatch=0 skipped=15623 native=1288",
+    "jit selftest [0F800000:0F800000]: ok=2262 mismatch=0 skipped=17738 native=273",
+    "jit selftest [1F000000:1F000000]: ok=3197 mismatch=0 skipped=16803 native=1200",
+    "AVX512 native selftest features=(true, true) seed=1 count=20000",
+    "jit selftest [fpblocks]: ok=20000 mismatch=0 skipped=0 insns=129744 fallback_insns=0",
+    "jit selftest [fpnan]: ok=20000 mismatch=0 skipped=0 native=20000",
+    "jit selftest [0E20D400:0E20D400]: ok=4377 mismatch=0 skipped=15623 native=1288",
+    "jit selftest [0F800000:0F800000]: ok=2262 mismatch=0 skipped=17738 native=273",
+    "jit selftest [1F000000:1F000000]: ok=3197 mismatch=0 skipped=16803 native=1200",
+    "test jit::emit::avx512_tests::pressure_results_match_interpreter_with_sensitivity_mutant ... AVX512 sensitivity: single=false op=0 aliases=false mismatch=141",
+    "AVX512 sensitivity: single=false op=0 aliases=false mismatch=141",
+    "AVX512 sensitivity: single=false op=0 aliases=true mismatch=165",
+    "AVX512 sensitivity: single=false op=0 aliases=true mismatch=165",
+    "AVX512 sensitivity: single=false op=1 aliases=false mismatch=159",
+    "AVX512 sensitivity: single=false op=1 aliases=false mismatch=159",
+    "AVX512 sensitivity: single=false op=1 aliases=true mismatch=177",
+    "AVX512 sensitivity: single=false op=1 aliases=true mismatch=177",
+    "AVX512 sensitivity: single=false op=2 aliases=false mismatch=144",
+    "AVX512 sensitivity: single=false op=2 aliases=false mismatch=144",
+    "AVX512 sensitivity: single=false op=2 aliases=true mismatch=192",
+    "AVX512 sensitivity: single=false op=2 aliases=true mismatch=192",
+    "AVX512 sensitivity: single=false op=3 aliases=false mismatch=159",
+    "AVX512 sensitivity: single=false op=3 aliases=false mismatch=159",
+    "AVX512 sensitivity: single=false op=3 aliases=true mismatch=117",
+    "AVX512 sensitivity: single=false op=3 aliases=true mismatch=117",
+    "AVX512 sensitivity: single=true op=0 aliases=false mismatch=141",
+    "AVX512 sensitivity: single=true op=0 aliases=false mismatch=141",
+    "AVX512 sensitivity: single=true op=0 aliases=true mismatch=165",
+    "AVX512 sensitivity: single=true op=0 aliases=true mismatch=165",
+    "AVX512 sensitivity: single=true op=1 aliases=false mismatch=159",
+    "AVX512 sensitivity: single=true op=1 aliases=false mismatch=159",
+    "AVX512 sensitivity: single=true op=1 aliases=true mismatch=177",
+    "AVX512 sensitivity: single=true op=1 aliases=true mismatch=177",
+    "AVX512 sensitivity: single=true op=2 aliases=false mismatch=144",
+    "AVX512 sensitivity: single=true op=2 aliases=false mismatch=144",
+    "AVX512 sensitivity: single=true op=2 aliases=true mismatch=192",
+    "AVX512 sensitivity: single=true op=2 aliases=true mismatch=192",
+    "AVX512 sensitivity: single=true op=3 aliases=false mismatch=159",
+    "AVX512 sensitivity: single=true op=3 aliases=false mismatch=159",
+    "AVX512 sensitivity: single=true op=3 aliases=true mismatch=117",
+    "AVX512 sensitivity: single=true op=3 aliases=true mismatch=117",
+    "test result: ok. 75 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 46.14s",
+    "test result: ok. 9 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s",
+    "test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s",
+    "test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s"
+  ],
+  "execution_checks": {
+    "check-native-step1": "python3: warning: confstr() failed with code 5: couldn't get path of DARWIN_USER_TEMP_DIR; using /tmp instead\n{\"flag\": \"\", \"class\": \"fpblocks\", \"seed\": null, \"stdout\": \"jit selftest [fpblocks]: ok=20000 mismatch=0 skipped=0 insns=129744 fallback_insns=0\"}\n{\"flag\": \"\", \"class\": \"fpnan\", \"seed\": null, \"stdout\": \"jit selftest [fpnan]: ok=20000 mismatch=0 skipped=0 native=20000\"}\n{\"flag\": \"\", \"class\": \"0E20D400:0E20D400\", \"seed\": null, \"stdout\": \"jit selftest [0E20D400:0E20D400]: ok=4377 mismatch=0 skipped=15623 native=1288\"}\n{\"flag\": \"\", \"class\": \"0F800000:0F800000\", \"seed\": null, \"stdout\": \"jit selftest [0F800000:0F800000]: ok=2262 mismatch=0 skipped=17738 native=273\"}\n{\"flag\": \"\", \"class\": \"1F000000:1F000000\", \"seed\": null, \"stdout\": \"jit selftest [1F000000:1F000000]: ok=3197 mismatch=0 skipped=16803 native=1200\"}\nPASS int-hash: native=interp=cold-JIT=warm-AOT checksum 18597cb650ab5d23; blocks=7 aot_loop_regions=1\nPASS int-hash: loopra=off rejects on-cache, distinct identity, warm output matches, aot_loop_regions=0\nPASS crc32: native=interp=cold-JIT=warm-AOT checksum 00000000f941502b; blocks=15 aot_loop_regions=3\nPASS crc32: loopra=off rejects on-cache, distinct identity, warm output matches, aot_loop_regions=0\nPASS sieve: native=interp=cold-JIT=warm-AOT checksum 0000000000000404; blocks=21 aot_loop_regions=39\nPASS sieve: loopra=off rejects on-cache, distinct identity, warm output matches, aot_loop_regions=0\nPASS branchy: native=interp=cold-JIT=warm-AOT checksum ffffffffffffff64; blocks=13 aot_loop_regions=2\nPASS branchy: loopra=off rejects on-cache, distinct identity, warm output matches, aot_loop_regions=0\nPASS pointer: native=interp=cold-JIT=warm-AOT checksum 0000000000176bcd; blocks=13 aot_loop_regions=2\nPASS pointer: loopra=off rejects on-cache, distinct identity, warm output matches, aot_loop_regions=0\nPASS pre-post: native=interp=cold-JIT=warm-AOT checksum 0000000007ac5100; blocks=17 aot_loop_regions=3\nPASS pre-post: loopra=off rejects on-cache, distinct identity, warm output matches, aot_loop_regions=0\nPASS ldp-stp: native=interp=cold-JIT=warm-AOT checksum 000000000f681980; blocks=17 aot_loop_regions=3\nPASS ldp-stp: loopra=off rejects on-cache, distinct identity, warm output matches, aot_loop_regions=0\nPASS loopra AOT: all 7 workloads and cache identities match\n\n{\"flag\": \"avx512\", \"class\": \"fpblocks\", \"seed\": null, \"stdout\": \"jit selftest [fpblocks]: ok=20000 mismatch=0 skipped=0 insns=129744 fallback_insns=0\"}\n{\"flag\": \"avx512\", \"class\": \"fpnan\", \"seed\": null, \"stdout\": \"jit selftest [fpnan]: ok=20000 mismatch=0 skipped=0 native=20000\"}\n{\"flag\": \"avx512\", \"class\": \"0E20D400:0E20D400\", \"seed\": null, \"stdout\": \"jit selftest [0E20D400:0E20D400]: ok=4377 mismatch=0 skipped=15623 native=1288\"}\n{\"flag\": \"avx512\", \"class\": \"0F800000:0F800000\", \"seed\": null, \"stdout\": \"jit selftest [0F800000:0F800000]: ok=2262 mismatch=0 skipped=17738 native=273\"}\n{\"flag\": \"avx512\", \"class\": \"1F000000:1F000000\", \"seed\": null, \"stdout\": \"jit selftest [1F000000:1F000000]: ok=3197 mismatch=0 skipped=16803 native=1200\"}\nPASS int-hash: native=interp=cold-JIT=warm-AOT checksum 18597cb650ab5d23; blocks=7 aot_loop_regions=1\nPASS int-hash: loopra=off rejects on-cache, distinct identity, warm output matches, aot_loop_regions=0\nPASS crc32: native=interp=cold-JIT=warm-AOT checksum 00000000f941502b; blocks=15 aot_loop_regions=3\nPASS crc32: loopra=off rejects on-cache, distinct identity, warm output matches, aot_loop_regions=0\nPASS sieve: native=interp=cold-JIT=warm-AOT checksum 0000000000000404; blocks=21 aot_loop_regions=39\nPASS sieve: loopra=off rejects on-cache, distinct identity, warm output matches, aot_loop_regions=0\nPASS branchy: native=interp=cold-JIT=warm-AOT checksum ffffffffffffff64; blocks=13 aot_loop_regions=2\nPASS branchy: loopra=off rejects on-cache, distinct identity, warm output matches, aot_loop_regions=0\nPASS pointer: native=interp=cold-JIT=warm-AOT checksum 0000000000176bcd; blocks=13 aot_loop_regions=2\nPASS pointer: loopra=off rejects on-cache, distinct identity, warm output matches, aot_loop_regions=0\nPASS pre-post: native=interp=cold-JIT=warm-AOT checksum 0000000007ac5100; blocks=17 aot_loop_regions=3\nPASS pre-post: loopra=off rejects on-cache, distinct identity, warm output matches, aot_loop_regions=0\nPASS ldp-stp: native=interp=cold-JIT=warm-AOT checksum 000000000f681980; blocks=17 aot_loop_regions=3\nPASS ldp-stp: loopra=off rejects on-cache, distinct identity, warm output matches, aot_loop_regions=0\nPASS loopra AOT: all 7 workloads and cache identities match\n\nPASS neon_edge: interpreter == JIT for flags=['', 'avx512'] (runtime gating applies)\n",
+    "check-native-nan": "python3: warning: confstr() failed with code 5: couldn't get path of DARWIN_USER_TEMP_DIR; using /tmp instead\n{\"flag\": \"\", \"class\": \"fpblocks\", \"seed\": null, \"stdout\": \"jit selftest [fpblocks]: ok=20000 mismatch=0 skipped=0 insns=129744 fallback_insns=0\"}\n{\"flag\": \"\", \"class\": \"fpnan\", \"seed\": null, \"stdout\": \"jit selftest [fpnan]: ok=20000 mismatch=0 skipped=0 native=20000\"}\n{\"flag\": \"\", \"class\": \"0E20D400:0E20D400\", \"seed\": null, \"stdout\": \"jit selftest [0E20D400:0E20D400]: ok=4377 mismatch=0 skipped=15623 native=1288\"}\n{\"flag\": \"\", \"class\": \"0F800000:0F800000\", \"seed\": null, \"stdout\": \"jit selftest [0F800000:0F800000]: ok=2262 mismatch=0 skipped=17738 native=273\"}\n{\"flag\": \"\", \"class\": \"1F000000:1F000000\", \"seed\": null, \"stdout\": \"jit selftest [1F000000:1F000000]: ok=3197 mismatch=0 skipped=16803 native=1200\"}\nPASS int-hash: native=interp=cold-JIT=warm-AOT checksum 18597cb650ab5d23; blocks=7 aot_loop_regions=1\nPASS int-hash: loopra=off rejects on-cache, distinct identity, warm output matches, aot_loop_regions=0\nPASS crc32: native=interp=cold-JIT=warm-AOT checksum 00000000f941502b; blocks=15 aot_loop_regions=3\nPASS crc32: loopra=off rejects on-cache, distinct identity, warm output matches, aot_loop_regions=0\nPASS sieve: native=interp=cold-JIT=warm-AOT checksum 0000000000000404; blocks=21 aot_loop_regions=39\nPASS sieve: loopra=off rejects on-cache, distinct identity, warm output matches, aot_loop_regions=0\nPASS branchy: native=interp=cold-JIT=warm-AOT checksum ffffffffffffff64; blocks=13 aot_loop_regions=2\nPASS branchy: loopra=off rejects on-cache, distinct identity, warm output matches, aot_loop_regions=0\nPASS pointer: native=interp=cold-JIT=warm-AOT checksum 0000000000176bcd; blocks=13 aot_loop_regions=2\nPASS pointer: loopra=off rejects on-cache, distinct identity, warm output matches, aot_loop_regions=0\nPASS pre-post: native=interp=cold-JIT=warm-AOT checksum 0000000007ac5100; blocks=17 aot_loop_regions=3\nPASS pre-post: loopra=off rejects on-cache, distinct identity, warm output matches, aot_loop_regions=0\nPASS ldp-stp: native=interp=cold-JIT=warm-AOT checksum 000000000f681980; blocks=17 aot_loop_regions=3\nPASS ldp-stp: loopra=off rejects on-cache, distinct identity, warm output matches, aot_loop_regions=0\nPASS loopra AOT: all 7 workloads and cache identities match\n\n{\"flag\": \"avx512nan\", \"class\": \"fpblocks\", \"seed\": null, \"stdout\": \"jit selftest [fpblocks]: ok=20000 mismatch=0 skipped=0 insns=129744 fallback_insns=0\"}\n{\"flag\": \"avx512nan\", \"class\": \"fpnan\", \"seed\": null, \"stdout\": \"jit selftest [fpnan]: ok=20000 mismatch=0 skipped=0 native=20000\"}\n{\"flag\": \"avx512nan\", \"class\": \"0E20D400:0E20D400\", \"seed\": null, \"stdout\": \"jit selftest [0E20D400:0E20D400]: ok=4377 mismatch=0 skipped=15623 native=1288\"}\n{\"flag\": \"avx512nan\", \"class\": \"0F800000:0F800000\", \"seed\": null, \"stdout\": \"jit selftest [0F800000:0F800000]: ok=2262 mismatch=0 skipped=17738 native=273\"}\n{\"flag\": \"avx512nan\", \"class\": \"1F000000:1F000000\", \"seed\": null, \"stdout\": \"jit selftest [1F000000:1F000000]: ok=3197 mismatch=0 skipped=16803 native=1200\"}\nPASS int-hash: native=interp=cold-JIT=warm-AOT checksum 18597cb650ab5d23; blocks=7 aot_loop_regions=1\nPASS int-hash: loopra=off rejects on-cache, distinct identity, warm output matches, aot_loop_regions=0\nPASS crc32: native=interp=cold-JIT=warm-AOT checksum 00000000f941502b; blocks=15 aot_loop_regions=3\nPASS crc32: loopra=off rejects on-cache, distinct identity, warm output matches, aot_loop_regions=0\nPASS sieve: native=interp=cold-JIT=warm-AOT checksum 0000000000000404; blocks=21 aot_loop_regions=39\nPASS sieve: loopra=off rejects on-cache, distinct identity, warm output matches, aot_loop_regions=0\nPASS branchy: native=interp=cold-JIT=warm-AOT checksum ffffffffffffff64; blocks=13 aot_loop_regions=2\nPASS branchy: loopra=off rejects on-cache, distinct identity, warm output matches, aot_loop_regions=0\nPASS pointer: native=interp=cold-JIT=warm-AOT checksum 0000000000176bcd; blocks=13 aot_loop_regions=2\nPASS pointer: loopra=off rejects on-cache, distinct identity, warm output matches, aot_loop_regions=0\nPASS pre-post: native=interp=cold-JIT=warm-AOT checksum 0000000007ac5100; blocks=17 aot_loop_regions=3\nPASS pre-post: loopra=off rejects on-cache, distinct identity, warm output matches, aot_loop_regions=0\nPASS ldp-stp: native=interp=cold-JIT=warm-AOT checksum 000000000f681980; blocks=17 aot_loop_regions=3\nPASS ldp-stp: loopra=off rejects on-cache, distinct identity, warm output matches, aot_loop_regions=0\nPASS loopra AOT: all 7 workloads and cache identities match\n\n{\"flag\": \"avx512,avx512nan\", \"class\": \"fpblocks\", \"seed\": null, \"stdout\": \"jit selftest [fpblocks]: ok=20000 mismatch=0 skipped=0 insns=129744 fallback_insns=0\"}\n{\"flag\": \"avx512,avx512nan\", \"class\": \"fpnan\", \"seed\": null, \"stdout\": \"jit selftest [fpnan]: ok=20000 mismatch=0 skipped=0 native=20000\"}\n{\"flag\": \"avx512,avx512nan\", \"class\": \"0E20D400:0E20D400\", \"seed\": null, \"stdout\": \"jit selftest [0E20D400:0E20D400]: ok=4377 mismatch=0 skipped=15623 native=1288\"}\n{\"flag\": \"avx512,avx512nan\", \"class\": \"0F800000:0F800000\", \"seed\": null, \"stdout\": \"jit selftest [0F800000:0F800000]: ok=2262 mismatch=0 skipped=17738 native=273\"}\n{\"flag\": \"avx512,avx512nan\", \"class\": \"1F000000:1F000000\", \"seed\": null, \"stdout\": \"jit selftest [1F000000:1F000000]: ok=3197 mismatch=0 skipped=16803 native=1200\"}\nPASS int-hash: native=interp=cold-JIT=warm-AOT checksum 18597cb650ab5d23; blocks=7 aot_loop_regions=1\nPASS int-hash: loopra=off rejects on-cache, distinct identity, warm output matches, aot_loop_regions=0\nPASS crc32: native=interp=cold-JIT=warm-AOT checksum 00000000f941502b; blocks=15 aot_loop_regions=3\nPASS crc32: loopra=off rejects on-cache, distinct identity, warm output matches, aot_loop_regions=0\nPASS sieve: native=interp=cold-JIT=warm-AOT checksum 0000000000000404; blocks=21 aot_loop_regions=39\nPASS sieve: loopra=off rejects on-cache, distinct identity, warm output matches, aot_loop_regions=0\nPASS branchy: native=interp=cold-JIT=warm-AOT checksum ffffffffffffff64; blocks=13 aot_loop_regions=2\nPASS branchy: loopra=off rejects on-cache, distinct identity, warm output matches, aot_loop_regions=0\nPASS pointer: native=interp=cold-JIT=warm-AOT checksum 0000000000176bcd; blocks=13 aot_loop_regions=2\nPASS pointer: loopra=off rejects on-cache, distinct identity, warm output matches, aot_loop_regions=0\nPASS pre-post: native=interp=cold-JIT=warm-AOT checksum 0000000007ac5100; blocks=17 aot_loop_regions=3\nPASS pre-post: loopra=off rejects on-cache, distinct identity, warm output matches, aot_loop_regions=0\nPASS ldp-stp: native=interp=cold-JIT=warm-AOT checksum 000000000f681980; blocks=17 aot_loop_regions=3\nPASS ldp-stp: loopra=off rejects on-cache, distinct identity, warm output matches, aot_loop_regions=0\nPASS loopra AOT: all 7 workloads and cache identities match\n\nPASS neon_edge: interpreter == JIT for flags=['', 'avx512nan', 'avx512,avx512nan'] (runtime gating applies)\nPASS pressure: interpreter=cold-JIT=warm-main-AOT flag='' pressure a442eaf722d4a374\nPASS pressure: interpreter=cold-JIT=warm-main-AOT flag='avx512nan' pressure a442eaf722d4a374\nPASS pressure: interpreter=cold-JIT=warm-main-AOT flag='avx512,avx512nan' pressure a442eaf722d4a374\n",
+    "directed-native-step1": "python3: warning: confstr() failed with code 5: couldn't get path of DARWIN_USER_TEMP_DIR; using /tmp instead\nPASS neon_edge: interpreter == JIT for flags=['avx512'] (runtime gating applies)\nPASS pressure: interpreter=cold-JIT=warm-main-AOT flag='avx512' pressure a442eaf722d4a374\n",
+    "directed-native-nan": "python3: warning: confstr() failed with code 5: couldn't get path of DARWIN_USER_TEMP_DIR; using /tmp instead\nPASS neon_edge: interpreter == JIT for flags=['avx512nan', 'avx512,avx512nan'] (runtime gating applies)\nPASS pressure: interpreter=cold-JIT=warm-main-AOT flag='avx512nan' pressure a442eaf722d4a374\nPASS pressure: interpreter=cold-JIT=warm-main-AOT flag='avx512,avx512nan' pressure a442eaf722d4a374\n"
+  },
+  "status": "opt-in candidate; not accepted/default-on; L1 complete matrix and L2 pending"
+}

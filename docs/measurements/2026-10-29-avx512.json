@@ -1,0 +1,398 @@
+{
+  "status": "incomplete: step 1 candidate; AVX-512 execution and sensitivity unavailable; NaN step deferred",
+  "host_probe": "CPUID and OS probes\ncpuid.1 ecx=7ffafbbf\ncpuid.7 ebx=f3bfa7eb ecx=18c05fce\nxcr0=0000000000000007\navx=true avx512f=false avx512vl=false avx512dq=false avx512bw=false\nhw.optional.avx512f rc=-1 errno=1 value=-1\nhw.optional.avx512vl rc=-1 errno=1 value=-1\nhw.optional.avx512dq rc=-1 errno=1 value=-1\nhw.optional.avx512bw rc=-1 errno=1 value=-1\n",
+  "baseline": [
+    {
+      "run": 1,
+      "flag": "",
+      "uptime": "21:57  2 users, load averages: 11.00 11.59 10.86",
+      "stdout": "fp-nbody 200.347 ms checksum=5276637\nmatmul 152.627 ms checksum=2694\nneon-dot 11.418 ms checksum=33848033760\n"
+    },
+    {
+      "run": 2,
+      "flag": "",
+      "uptime": "21:57  2 users, load averages: 11.00 11.59 10.86",
+      "stdout": "fp-nbody 188.864 ms checksum=5276637\nmatmul 146.772 ms checksum=2694\nneon-dot 9.625 ms checksum=33848033760\n"
+    },
+    {
+      "run": 3,
+      "flag": "",
+      "uptime": "21:57  2 users, load averages: 11.00 11.59 10.86",
+      "stdout": "fp-nbody 162.493 ms checksum=5276637\nmatmul 131.097 ms checksum=2694\nneon-dot 10.376 ms checksum=33848033760\n"
+    }
+  ],
+  "comparison": [
+    {
+      "run": 1,
+      "flag": "",
+      "uptime": "22:04  2 users, load averages: 7.45 7.83 9.09",
+      "stdout": "fp-nbody 237.870 ms checksum=5276637\nmatmul 169.846 ms checksum=2694\nneon-dot 14.601 ms checksum=33848033760\n"
+    },
+    {
+      "run": 1,
+      "flag": "avx512",
+      "uptime": "22:04  2 users, load averages: 7.45 7.83 9.09",
+      "stdout": "fp-nbody 233.388 ms checksum=5276637\nmatmul 159.381 ms checksum=2694\nneon-dot 14.263 ms checksum=33848033760\n"
+    },
+    {
+      "run": 2,
+      "flag": "",
+      "uptime": "22:04  2 users, load averages: 7.45 7.83 9.09",
+      "stdout": "fp-nbody 235.642 ms checksum=5276637\nmatmul 124.343 ms checksum=2694\nneon-dot 8.022 ms checksum=33848033760\n"
+    },
+    {
+      "run": 2,
+      "flag": "avx512",
+      "uptime": "22:04  2 users, load averages: 7.45 7.83 9.09",
+      "stdout": "fp-nbody 127.126 ms checksum=5276637\nmatmul 119.220 ms checksum=2694\nneon-dot 8.681 ms checksum=33848033760\n"
+    },
+    {
+      "run": 3,
+      "flag": "",
+      "uptime": "22:04  2 users, load averages: 7.45 7.83 9.09",
+      "stdout": "fp-nbody 152.888 ms checksum=5276637\nmatmul 97.690 ms checksum=2694\nneon-dot 8.961 ms checksum=33848033760\n"
+    },
+    {
+      "run": 3,
+      "flag": "avx512",
+      "uptime": "22:04  2 users, load averages: 7.45 7.83 9.09",
+      "stdout": "fp-nbody 115.271 ms checksum=5276637\nmatmul 95.321 ms checksum=2694\nneon-dot 8.328 ms checksum=33848033760\n"
+    }
+  ],
+  "baseline_counts": [
+    {
+      "flag": "",
+      "kernel": "fp-nbody",
+      "guest_insns": 23,
+      "hot_host_insns": 163
+    },
+    {
+      "flag": "",
+      "kernel": "matmul",
+      "guest_insns": 7,
+      "hot_host_insns": 39
+    },
+    {
+      "flag": "",
+      "kernel": "neon-dot",
+      "guest_insns": 9,
+      "hot_host_insns": 47
+    }
+  ],
+  "comparison_counts": [
+    {
+      "flag": "",
+      "kernel": "fp-nbody",
+      "guest_insns": 23,
+      "hot_host_insns": 163
+    },
+    {
+      "flag": "",
+      "kernel": "matmul",
+      "guest_insns": 7,
+      "hot_host_insns": 39
+    },
+    {
+      "flag": "",
+      "kernel": "neon-dot",
+      "guest_insns": 9,
+      "hot_host_insns": 47
+    },
+    {
+      "flag": "avx512",
+      "kernel": "fp-nbody",
+      "guest_insns": 23,
+      "hot_host_insns": 163
+    },
+    {
+      "flag": "avx512",
+      "kernel": "matmul",
+      "guest_insns": 7,
+      "hot_host_insns": 39
+    },
+    {
+      "flag": "avx512",
+      "kernel": "neon-dot",
+      "guest_insns": 9,
+      "hot_host_insns": 47
+    }
+  ],
+  "selftests": [
+    {
+      "flag": "",
+      "class": "blocks",
+      "seed": null,
+      "stdout": "jit selftest [blocks]: ok=8893 mismatch=0 skipped=91107 insns=30638 fallback_insns=1178"
+    },
+    {
+      "flag": "",
+      "class": "fuse",
+      "seed": null,
+      "stdout": "jit selftest [fuse]: ok=63096 mismatch=0 skipped=36904 native=63096 pairs=63096 dead_flag_skips=0"
+    },
+    {
+      "flag": "",
+      "class": "fuse2",
+      "seed": null,
+      "stdout": "jit selftest [fuse2]: ok=32637 mismatch=0 skipped=67363 native=32637 pairs=32637 dead_flag_skips=34629"
+    },
+    {
+      "flag": "",
+      "class": "selchain",
+      "seed": null,
+      "stdout": "jit selftest [selchain]: ok=36205 mismatch=0 skipped=63795 native=36205 dead_flag_skips=26730"
+    },
+    {
+      "flag": "",
+      "class": "fpblocks",
+      "seed": null,
+      "stdout": "jit selftest [fpblocks]: ok=100000 mismatch=0 skipped=0 insns=650599 fallback_insns=0"
+    },
+    {
+      "flag": "",
+      "class": "dpimm",
+      "seed": null,
+      "stdout": "jit selftest [dpimm]: ok=70035 mismatch=0 skipped=29965 native=56675"
+    },
+    {
+      "flag": "",
+      "class": "dpreg",
+      "seed": null,
+      "stdout": "jit selftest [dpreg]: ok=31044 mismatch=0 skipped=68956 native=30899"
+    },
+    {
+      "flag": "",
+      "class": "ldst",
+      "seed": null,
+      "stdout": "jit selftest [ldst]: ok=52288 mismatch=0 skipped=47712 native=43879"
+    },
+    {
+      "flag": "",
+      "class": "branch",
+      "seed": null,
+      "stdout": "jit selftest [branch]: ok=53072 mismatch=0 skipped=46928 native=53072"
+    },
+    {
+      "flag": "",
+      "class": "loops",
+      "seed": 1,
+      "stdout": "jit selftest [loops]: ok=100000 mismatch=0 skipped=0 native=87500 loop_regions=93357 seed=0x1 max_blocks=3125 nested_entries=56544 aliases=21875 q_scale16=2922 negative_sxtw=25000"
+    },
+    {
+      "flag": "",
+      "class": "loops",
+      "seed": 305419896,
+      "stdout": "jit selftest [loops]: ok=100000 mismatch=0 skipped=0 native=87500 loop_regions=92963 seed=0x12345678 max_blocks=3125 nested_entries=56737 aliases=21875 q_scale16=2965 negative_sxtw=25000"
+    },
+    {
+      "flag": "",
+      "class": "loops",
+      "seed": 4276993775,
+      "stdout": "jit selftest [loops]: ok=100000 mismatch=0 skipped=0 native=87500 loop_regions=91783 seed=0xfeedbeef max_blocks=3125 nested_entries=55465 aliases=21875 q_scale16=2913 negative_sxtw=25000"
+    },
+    {
+      "flag": "",
+      "class": "calls",
+      "seed": null,
+      "stdout": "jit selftest [calls]: ok=100000 mismatch=0 skipped=0 native=87500 callret=0 deep=12500"
+    },
+    {
+      "flag": "",
+      "class": "fpnan",
+      "seed": null,
+      "stdout": "jit selftest [fpnan]: ok=100000 mismatch=0 skipped=0 native=100000"
+    },
+    {
+      "flag": "",
+      "class": "tbiblocks",
+      "seed": null,
+      "stdout": "jit selftest [tbiblocks]: ok=100000 mismatch=0 skipped=0 native=1400000 fallback_insns=200000"
+    },
+    {
+      "flag": "",
+      "class": "0E20D400:0E20D400",
+      "seed": null,
+      "stdout": "jit selftest [0E20D400:0E20D400]: ok=21980 mismatch=0 skipped=78020 native=6623"
+    },
+    {
+      "flag": "",
+      "class": "0F800000:0F800000",
+      "seed": null,
+      "stdout": "jit selftest [0F800000:0F800000]: ok=11188 mismatch=0 skipped=88812 native=1326"
+    },
+    {
+      "flag": "",
+      "class": "1F000000:1F000000",
+      "seed": null,
+      "stdout": "jit selftest [1F000000:1F000000]: ok=16066 mismatch=0 skipped=83934 native=6303"
+    },
+    {
+      "flag": "avx512",
+      "class": "blocks",
+      "seed": null,
+      "stdout": "jit selftest [blocks]: ok=8893 mismatch=0 skipped=91107 insns=30638 fallback_insns=1178"
+    },
+    {
+      "flag": "avx512",
+      "class": "fuse",
+      "seed": null,
+      "stdout": "jit selftest [fuse]: ok=63096 mismatch=0 skipped=36904 native=63096 pairs=63096 dead_flag_skips=0"
+    },
+    {
+      "flag": "avx512",
+      "class": "fuse2",
+      "seed": null,
+      "stdout": "jit selftest [fuse2]: ok=32637 mismatch=0 skipped=67363 native=32637 pairs=32637 dead_flag_skips=34629"
+    },
+    {
+      "flag": "avx512",
+      "class": "selchain",
+      "seed": null,
+      "stdout": "jit selftest [selchain]: ok=36205 mismatch=0 skipped=63795 native=36205 dead_flag_skips=26730"
+    },
+    {
+      "flag": "avx512",
+      "class": "fpblocks",
+      "seed": null,
+      "stdout": "jit selftest [fpblocks]: ok=100000 mismatch=0 skipped=0 insns=650599 fallback_insns=0"
+    },
+    {
+      "flag": "avx512",
+      "class": "dpimm",
+      "seed": null,
+      "stdout": "jit selftest [dpimm]: ok=70035 mismatch=0 skipped=29965 native=56675"
+    },
+    {
+      "flag": "avx512",
+      "class": "dpreg",
+      "seed": null,
+      "stdout": "jit selftest [dpreg]: ok=31044 mismatch=0 skipped=68956 native=30899"
+    },
+    {
+      "flag": "avx512",
+      "class": "ldst",
+      "seed": null,
+      "stdout": "jit selftest [ldst]: ok=52288 mismatch=0 skipped=47712 native=43879"
+    },
+    {
+      "flag": "avx512",
+      "class": "branch",
+      "seed": null,
+      "stdout": "jit selftest [branch]: ok=53072 mismatch=0 skipped=46928 native=53072"
+    },
+    {
+      "flag": "avx512",
+      "class": "loops",
+      "seed": 1,
+      "stdout": "jit selftest [loops]: ok=100000 mismatch=0 skipped=0 native=87500 loop_regions=93357 seed=0x1 max_blocks=3125 nested_entries=56544 aliases=21875 q_scale16=2922 negative_sxtw=25000"
+    },
+    {
+      "flag": "avx512",
+      "class": "loops",
+      "seed": 305419896,
+      "stdout": "jit selftest [loops]: ok=100000 mismatch=0 skipped=0 native=87500 loop_regions=92963 seed=0x12345678 max_blocks=3125 nested_entries=56737 aliases=21875 q_scale16=2965 negative_sxtw=25000"
+    },
+    {
+      "flag": "avx512",
+      "class": "loops",
+      "seed": 4276993775,
+      "stdout": "jit selftest [loops]: ok=100000 mismatch=0 skipped=0 native=87500 loop_regions=91783 seed=0xfeedbeef max_blocks=3125 nested_entries=55465 aliases=21875 q_scale16=2913 negative_sxtw=25000"
+    },
+    {
+      "flag": "avx512",
+      "class": "calls",
+      "seed": null,
+      "stdout": "jit selftest [calls]: ok=100000 mismatch=0 skipped=0 native=87500 callret=0 deep=12500"
+    },
+    {
+      "flag": "avx512",
+      "class": "fpnan",
+      "seed": null,
+      "stdout": "jit selftest [fpnan]: ok=100000 mismatch=0 skipped=0 native=100000"
+    },
+    {
+      "flag": "avx512",
+      "class": "tbiblocks",
+      "seed": null,
+      "stdout": "jit selftest [tbiblocks]: ok=100000 mismatch=0 skipped=0 native=1400000 fallback_insns=200000"
+    },
+    {
+      "flag": "avx512",
+      "class": "0E20D400:0E20D400",
+      "seed": null,
+      "stdout": "jit selftest [0E20D400:0E20D400]: ok=21980 mismatch=0 skipped=78020 native=6623"
+    },
+    {
+      "flag": "avx512",
+      "class": "0F800000:0F800000",
+      "seed": null,
+      "stdout": "jit selftest [0F800000:0F800000]: ok=11188 mismatch=0 skipped=88812 native=1326"
+    },
+    {
+      "flag": "avx512",
+      "class": "1F000000:1F000000",
+      "seed": null,
+      "stdout": "jit selftest [1F000000:1F000000]: ok=16066 mismatch=0 skipped=83934 native=6303"
+    }
+  ],
+  "workspace_tests": {
+    "off": [
+      "test result: ok. 71 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.43s",
+      "test result: ok. 9 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s",
+      "test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s",
+      "test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s"
+    ],
+    "on": [
+      "test result: ok. 71 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.35s",
+      "test result: ok. 9 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s",
+      "test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s",
+      "test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s"
+    ]
+  },
+  "real_workloads": [
+    {
+      "label": "before",
+      "script": "js",
+      "returncode": 0,
+      "stdout": "loops         464 ms 28665\nobjects       592 ms -259384288\njson          172 ms 80000\nregex         211 ms 400000\nstrings        97 ms 2025151008\nclosures      413 ms 19360\nsort          573 ms 6448448\n",
+      "stderr": "[1029/220345.246371:ERROR:electron/shell/common/mac/codesign_util.cc:79] task_name_for_pid: (os/kern) failure (5)\n"
+    },
+    {
+      "label": "before",
+      "script": "tls",
+      "returncode": 0,
+      "stdout": "sha256 ca6073392ee71dbd\nsha512 fcf47d64f5ceadd9\ngcm 89788ae8c19a5009 tag de047988105bcc38\necdsa verify true\necdh true\nstring 13 e5b7a6e4b88ae8a792e9a1b6e6a08f\nhttps error ENOTFOUND\n",
+      "stderr": "[1029/220349.692421:ERROR:electron/shell/common/mac/codesign_util.cc:79] task_name_for_pid: (os/kern) failure (5)\n"
+    },
+    {
+      "label": "off",
+      "script": "js",
+      "returncode": 0,
+      "stdout": "loops         475 ms 28665\nobjects       592 ms -259384288\njson          169 ms 80000\nregex         208 ms 400000\nstrings       105 ms 2025151008\nclosures      321 ms 19360\nsort          686 ms 6448448\n",
+      "stderr": "[1029/220352.214500:ERROR:electron/shell/common/mac/codesign_util.cc:79] task_name_for_pid: (os/kern) failure (5)\n"
+    },
+    {
+      "label": "off",
+      "script": "tls",
+      "returncode": 0,
+      "stdout": "sha256 ca6073392ee71dbd\nsha512 fcf47d64f5ceadd9\ngcm 89788ae8c19a5009 tag de047988105bcc38\necdsa verify true\necdh true\nstring 13 e5b7a6e4b88ae8a792e9a1b6e6a08f\nhttps error ENOTFOUND\n",
+      "stderr": "[1029/220356.369819:ERROR:electron/shell/common/mac/codesign_util.cc:79] task_name_for_pid: (os/kern) failure (5)\n"
+    },
+    {
+      "label": "on",
+      "script": "js",
+      "returncode": 0,
+      "stdout": "loops         464 ms 28665\nobjects       592 ms -259384288\njson          174 ms 80000\nregex         211 ms 400000\nstrings        95 ms 2025151008\nclosures      323 ms 19360\nsort          690 ms 6448448\n",
+      "stderr": "[1029/220358.990525:ERROR:electron/shell/common/mac/codesign_util.cc:79] task_name_for_pid: (os/kern) failure (5)\n"
+    },
+    {
+      "label": "on",
+      "script": "tls",
+      "returncode": 0,
+      "stdout": "sha256 ca6073392ee71dbd\nsha512 fcf47d64f5ceadd9\ngcm 89788ae8c19a5009 tag de047988105bcc38\necdsa verify true\necdh true\nstring 13 e5b7a6e4b88ae8a792e9a1b6e6a08f\nhttps error ENOTFOUND\n",
+      "stderr": "[1029/220403.098313:ERROR:electron/shell/common/mac/codesign_util.cc:79] task_name_for_pid: (os/kern) failure (5)\n"
+    }
+  ],
+  "kernel_interpreter": "fp-nbody 10011.284 ms checksum=5276637\nmatmul 5387.460 ms checksum=2694\nneon-dot 382.027 ms checksum=33848033760\n",
+  "encoding_tests": "\ntest jit::emit::avx512_tests::all_high_register_transfers_encode_without_wide_vectors ... ok\ntest jit::emit::avx512_tests::cold_contract_protects_all_extended_cache_registers ... ok\ntest jit::emit::avx512_tests::pressure_results_match_interpreter_with_sensitivity_mutant ... AVX512_EXECUTION_UNAVAILABLE: high-bank differential and execution sensitivity NOT RUN (fallback pressure still tested)\nok\ntest jit::emit::avx512_tests::pressure_uses_every_high_slot_and_fallback_uses_none ... ok\n\ntest result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 67 filtered out; finished in 0.09s\n\n"
+}
