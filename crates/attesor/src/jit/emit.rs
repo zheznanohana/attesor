@@ -97,6 +97,9 @@ pub struct Unit {
     /// The V register(s) the instruction being translated may write: never read from the cache, since
     /// its own code may have stored part of them already.
     pub vc_dest: [u8; 2],
+    /// r11 holds the TBI mask on every path to this point. Per-block, never
+    /// established under conditional emission, invalidated by scratch writes/calls.
+    pub tbi_mask_live: bool,
 }
 
 pub const NCREGS: usize = 5;
@@ -222,6 +225,7 @@ impl Unit {
             inline_queue: Vec::new(),
             vc: VCache::new(),
             vc_dest: [0xff; 2],
+            tbi_mask_live: false,
         }
     }
 
@@ -371,6 +375,7 @@ impl<'a> E<'a> {
         }
     }
     fn rc_clear(&mut self) {
+        self.u.tbi_mask_live = false;
         self.u.rc = RegCache::new();
         self.u.vc = VCache::new();
     }
@@ -513,6 +518,7 @@ impl<'a> E<'a> {
         self.rc_wrote(n, r);
     }
     fn mov_imm(&mut self, r: R64, v: u64) {
+        if r == r11 { self.u.tbi_mask_live = false; }
         if v == 0 {
             a!(self, xor(r32_of(r), r32_of(r)));
         } else if v <= u32::MAX as u64 {
@@ -693,9 +699,21 @@ impl<'a> E<'a> {
 
     /// Guest effective address in rax; applies commpage redirection if needed.
     fn commpage_fix(&mut self) {
-        // arm64 top-byte-ignore: drop bits 63:56 (flags are dead across memory accesses).
-        a!(self, shl(rax, 8));
-        a!(self, shr(rax, 8));
+        // ARM top-byte-ignore: keep 55:0, with one dependent operation instead
+        // of shl/shr. r11 is otherwise only st_imm's scratch; mov_imm invalidates
+        // this copy. Do not establish it under conditional emission: a branch
+        // could skip the load and join code that would otherwise trust it.
+        // Redirected commpages call a host helper, so keep their existing path.
+        if !self.u.commpage_checks && !jit_off("tbimask") {
+            if !self.u.tbi_mask_live {
+                self.mov_imm(r11, 0x00ff_ffff_ffff_ffff);
+                self.u.tbi_mask_live = !self.u.rc_frozen;
+            }
+            a!(self, and(rax, r11));
+        } else {
+            a!(self, shl(rax, 8));
+            a!(self, shr(rax, 8));
+        }
         if !self.u.commpage_checks {
             return;
         }
@@ -911,6 +929,7 @@ pub fn has_f16c() -> bool {
 /// Returns the guest address just past the block.
 pub fn emit_block(u: &mut Unit, pc: u64, read: &dyn Fn(u64) -> Option<u32>) -> u64 {
     u.fuse = None;
+    u.tbi_mask_live = false;
     u.rc = RegCache::new();
     u.vc = VCache::new();
     u.rc_frozen = false;
@@ -1020,6 +1039,7 @@ pub fn emit_block(u: &mut Unit, pc: u64, read: &dyn Fn(u64) -> Option<u32>) -> u
         e.u.vc_dest = [0xff; 2];
         if e.u.skip_next || e.u.a.instructions()[code_start..].iter().any(|i| i.mnemonic() == iced_x86::Mnemonic::Call) {
             e.u.vc = VCache::new(); // fused pair (writes the next one's Vd too) or helper call (clobbers xmm8-15)
+            e.u.tbi_mask_live = false; // host calls may overwrite caller-saved r11
         }
         if !translated {
             if term {
@@ -5661,3 +5681,60 @@ impl<'a> E<'a> {
 }
 
 const XMM_TMP: [AsmRegisterXmm; 4] = [xmm0, xmm1, xmm2, xmm3];
+
+#[cfg(test)]
+mod tbi_mask_tests {
+    use super::*;
+    use attesor_core::cpu::Cpu;
+
+    // Execute both sides of a join with r11 poisoned before entry. A mask first
+    // loaded by a skipped path cannot be trusted by the following instruction.
+    // Also cover a conditional scratch write that invalidates an earlier mask.
+    #[test]
+    fn conditional_mask_load_and_scratch_join_execute_correctly() {
+        for initial_mask in [false, true] {
+            let mut unit = Unit::new(StubKind::Plain, false);
+            {
+                let mut e = E { u: &mut unit, pc: 0, fuse_in: None, scalar_inputs: None };
+                e.mov_imm(r11, 0xabab_abab_abab_abab);
+                if initial_mask {
+                    a!(e, mov(rax, qword_ptr(r15 + xoff(1))));
+                    e.commpage_fix();
+                }
+                let mut skip = e.new_label();
+                a!(e, test(qword_ptr(r15 + xoff(0)), 1));
+                a!(e, jz(skip));
+                if initial_mask {
+                    e.st_imm(3, 0x1234_5678_9abc_def0);
+                } else {
+                    a!(e, mov(rax, qword_ptr(r15 + xoff(1))));
+                    e.commpage_fix();
+                }
+                e.u.a.set_label(&mut skip).unwrap();
+                a!(e, nop());
+                // A new guest instruction begins after the internal join.
+                e.u.rc_frozen = false;
+                a!(e, mov(rax, qword_ptr(r15 + xoff(1))));
+                e.commpage_fix();
+                a!(e, mov(rcx, qword_ptr(rax)));
+                e.stx(2, rcx, false);
+                e.st_pc_and_exit(0);
+            }
+            unit.finish();
+            let cache = crate::jit::code_cache();
+            let host = cache.alloc(4096);
+            let bytes = unit.a.assemble(host).unwrap();
+            assert!(bytes.len() <= 4096);
+            unsafe { std::ptr::copy_nonoverlapping(bytes.as_ptr(), host as *mut u8, bytes.len()); }
+            let expected = 0xfeed_face_1122_3344u64;
+            for branch in [0, 1] {
+                let mut cpu = Cpu::new();
+                cpu.x[0] = branch;
+                cpu.x[1] = (&expected as *const u64 as u64) | 0xab00_0000_0000_0000;
+                crate::jit::setup_cpu(&mut cpu);
+                unsafe { crate::jit::attesor_jit_enter(&mut *cpu, host); }
+                assert_eq!(cpu.x[2], expected, "initial_mask={initial_mask} branch={branch}");
+            }
+        }
+    }
+}

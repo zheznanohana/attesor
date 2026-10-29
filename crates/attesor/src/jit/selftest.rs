@@ -569,7 +569,88 @@ fn run_selftest_fpnan(count: usize) {
     println!("jit selftest [fpnan]: ok={ok} mismatch={bad} skipped={skipped} native={native}");
 }
 
+/// Memory-block test with tagged pointers, literal scratch writes and a
+/// deliberately hostile (but ABI-conforming) fallback helper. r11 is caller-saved.
+extern "C" fn tbi_clobbering_helper(cpu: *mut Cpu, insn: u32, pc: u64) -> u64 {
+    let status = helper_interp(cpu, insn, pc);
+    unsafe { std::arch::asm!("mov r11, 0xabababababababab", out("r11") _, options(nomem, nostack, preserves_flags)); }
+    status
+}
+
+fn run_selftest_tbiblocks(count: usize) {
+    let page = unsafe {
+        libc::mmap(std::ptr::null_mut(), 0x1000, libc::PROT_READ | libc::PROT_WRITE,
+                   libc::MAP_ANON | libc::MAP_PRIVATE, -1, 0) as u64
+    };
+    let mut memory = vec![0u8; 8192];
+    let addr = memory.as_mut_ptr() as u64;
+    let mut rng = Rng(0x7142_19a5_0022_8bb1);
+    let (mut ok, mut bad, mut native, mut fallbacks) = (0u64, 0u64, 0u64, 0u64);
+    for it in 0..count {
+        for chunk in memory.chunks_exact_mut(8) { chunk.copy_from_slice(&rng.next().to_le_bytes()); }
+        let prog = [
+            0xf940_0280, // ldr x0, [x20]
+            0xf940_06a1, // ldr x1, [x21, #8] (cached mask)
+            0xd2e0_0006 | (((0x1234 + it as u32) & 0xffff) << 5), // movz x6, #imm, lsl #48: r11 scratch
+            0xf840_86c2, // ldr x2, [x22], #8 (must reload mask after scratch)
+            0xf940_06c3, // ldr x3, [x22, #8]
+            0x1ee0_c020, // fabs h0, h1: valid interpreted half instruction
+            0xf940_0a84, // ldr x4, [x20, #16] (must reload after helper)
+            0x9ac1_0808, // udiv x8, x0, x1: internal conditional paths
+            0xf900_0be3, // str x3, [sp, #16]
+            0xa902_16e4, // stp x4, x5, [x23, #32]
+            0xa942_16e4, // ldp x4, x5, [x23, #32]
+            0x4c40_7282, // ld1 {v2.16b}, [x20]
+            0x4c00_72a2, // st1 {v2.16b}, [x21]
+            0x3940_3289, // ldrb w9, [x20, #12]
+            0x7940_1aaa, // ldrh w10, [x21, #12]
+            0xb940_0ecb, // ldr w11, [x22, #12]
+        ];
+        let mut init = Cpu::new();
+        init.pc = page;
+        init.set_nzcv((rng.next() & 15) as u32);
+        for r in 0..31 { init.x[r] = rng.val(); }
+        for r in 0..32 { init.v[r] = [rng.next(), rng.next()]; }
+        for r in 20..24 {
+            let tag = ((it + r) & 255) as u64;
+            init.x[r] = (addr + ((r - 20) * 1024 + (rng.next() as usize & 127) * 4) as u64) | (tag << 56);
+        }
+        init.x[31] = (addr + 6144) | (((it & 255) as u64) << 56);
+        let before = memory.clone();
+        let mut reference = clone_cpu(&init);
+        for (i, insn) in prog.iter().enumerate() {
+            reference.pc = page + i as u64 * 4;
+            interp::exec(&mut reference, *insn).expect("valid TBI probe instruction");
+        }
+        let expected_memory = memory.clone();
+        memory.copy_from_slice(&before);
+        unsafe {
+            for (i, w) in prog.iter().enumerate() { *((page + i as u64 * 4) as *mut u32) = *w; }
+            *((page + prog.len() as u64 * 4) as *mut u32) = 0xd400_1001;
+        }
+        invalidate_range(page, (prog.len() * 4 + 4) as u64);
+        let mut translated = clone_cpu(&init);
+        setup_cpu(&mut translated);
+        translated.helpers[HELPER_INTERP] = tbi_clobbering_helper as usize as u64;
+        let before_fallback = STATS_FALLBACK.load(Ordering::Relaxed);
+        let host = lookup_or_translate(page);
+        let fb = STATS_FALLBACK.load(Ordering::Relaxed) - before_fallback;
+        fallbacks += fb;
+        native += prog.len() as u64 - fb;
+        unsafe { attesor_jit_enter(&mut translated, host) };
+        let pending = PENDING.with(|p| p.take());
+        if snapshot(&reference) != snapshot(&translated) || memory != expected_memory
+            || translated.exit_reason != EXIT_SVC || pending.is_some() {
+            bad += 1;
+            if bad <= 5 { println!("MISMATCH TBI block #{it} tag={} memory={}", it & 255, memory != expected_memory); }
+        } else { ok += 1; }
+    }
+    unsafe { libc::munmap(page as *mut libc::c_void, 0x1000); }
+    println!("jit selftest [tbiblocks]: ok={ok} mismatch={bad} skipped=0 native={native} fallback_insns={fallbacks}");
+}
+
 pub fn run_selftest(class: &str, count: usize) {
+    if class == "tbiblocks" { return run_selftest_tbiblocks(count); }
     if class == "fpnan" {
         return run_selftest_fpnan(count);
     }
