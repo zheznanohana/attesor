@@ -40,6 +40,9 @@ Verified on an Intel laptop (RTX 3060 with a third-party NVIDIA Metal driver, ma
 | Sandboxed apps | **container emulated**: guests signed with `com.apple.security.app-sandbox` get the same `~/Library/Containers/<id>/Data` home, Documents and container id as natively. Not enforced: the kernel sandbox profile is not applied, and `NSTemporaryDirectory()` stays the system temp dir. Opt out with `ATTESOR_NO_CONTAINER=1`. |
 | Swift / SwiftUI | **works** for the tested programs: Codable, actors, task groups, existentials, Regex, SwiftUI state and `.task`. Large Swift apps are not yet tested. |
 | IOKit | basic queries work: platform expert/serial, power sources, HID manager. |
+| Metal coverage | `supportsFamily:` and device limits match native; ray tracing (acceleration structure build + intersector in a compute kernel) and the MetalFX spatial scaler give bit-identical results (`rtprobe.m`). |
+| VideoToolbox | **works, in software**: H.264 and HEVC encode → decode round trips are correct (`vtcodec.m`). The host's hardware HEVC encoder is not reached from the guest (HEVC encode 2.1 s vs 0.15 s native for 60 720p frames; decode 76 vs 58 ms). |
+| Debugger | `attesor --gdb PORT`: lldb/gdb remote debugging of the guest (breakpoints, stepping, expressions; see docs/DEBUGGING.md). |
 | JIT | native x86 translations for TBL/TBX, all FRINT forms, SHA-256 (`sha256h/h2/su0/su1`, no SHA extension needed), vector UCVTF/SCVTF, FCVTZU — each checked with the differential self-test (`mismatch=0`). |
 
 
