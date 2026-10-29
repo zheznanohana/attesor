@@ -2528,6 +2528,64 @@ impl<'a> E<'a> {
             }
         }
 
+        // ---- Advanced SIMD permute: 64-bit ZIP/UZP via one PSHUFB of n.lo:m.lo; TRN1/TRN2 (both widths)
+        // by shifting one operand by an element and blending odd/even elements ----
+        if insn & 0xBF20_8C00 == 0x0E00_0800 && !jit_off("permute") {
+            let size = bits(insn, 23, 22);
+            let opc = bits(insn, 14, 12);
+            if !q && size < 3 && matches!(opc, 0b001 | 0b101 | 0b011 | 0b111) {
+                let eb = 1usize << size;            // element bytes
+                let k = 8 / eb;                      // elements per 64-bit half
+                let elems: Vec<usize> = match opc {
+                    0b011 => (0..k / 2).flat_map(|i| [i, k + i]).collect(),               // ZIP1
+                    0b111 => (k / 2..k).flat_map(|i| [i, k + i]).collect(),               // ZIP2
+                    0b001 => (0..k).map(|i| 2 * i).collect(),                             // UZP1
+                    _ => (0..k).map(|i| 2 * i + 1).collect(),                             // UZP2
+                };
+                let mut tbl = [0x80u8; 16];
+                for (j, &e) in elems.iter().enumerate() {
+                    for b in 0..eb {
+                        tbl[j * eb + b] = (e * eb + b) as u8;
+                    }
+                }
+                a!(self, movq(xmm0, qword_ptr(r15 + voff(rn))));
+                a!(self, movq(xmm1, qword_ptr(r15 + voff(rm))));
+                a!(self, punpcklqdq(xmm0, xmm1));
+                self.vconst128(xmm2, u64::from_le_bytes(tbl[..8].try_into().unwrap()), u64::from_le_bytes(tbl[8..].try_into().unwrap()));
+                a!(self, pshufb(xmm0, xmm2));
+                self.vfin(rd, false);
+                return true;
+            }
+            if matches!(opc, 0b010 | 0b110) && (q || size < 3) {
+                // TRN1: even lanes n[2i], odd lanes m[2i]; TRN2: even n[2i+1], odd m[2i+1]
+                let trn2 = opc == 0b110;
+                self.vld(xmm0, rn, q);
+                self.vld(xmm1, rm, q);
+                let shift = |e: &mut Self, x: AsmRegisterXmm, left: bool| match (size, left) {
+                    (0, true) => a!(e, psllw(x, 8)),
+                    (0, false) => a!(e, psrlw(x, 8)),
+                    (1, true) => a!(e, pslld(x, 16)),
+                    (1, false) => a!(e, psrld(x, 16)),
+                    (2, true) => a!(e, psllq(x, 32)),
+                    (2, false) => a!(e, psrlq(x, 32)),
+                    (_, true) => a!(e, pslldq(x, 8)),
+                    (_, false) => a!(e, psrldq(x, 8)),
+                };
+                if trn2 { shift(self, xmm0, false); } else { shift(self, xmm1, true); }
+                // mask of odd elements
+                self.vconst(xmm2, match size { 0 => 0xFF00_FF00_FF00_FF00, 1 => 0xFFFF_0000_FFFF_0000, 2 => 0xFFFF_FFFF_0000_0000, _ => 0 });
+                if size == 3 {
+                    self.vconst128(xmm2, 0, u64::MAX);
+                }
+                a!(self, pand(xmm1, xmm2));
+                a!(self, pandn(xmm2, xmm0));
+                a!(self, por(xmm1, xmm2));
+                a!(self, movdqa(xmm0, xmm1));
+                self.vfin(rd, q);
+                return true;
+            }
+        }
+
         // ---- Advanced SIMD permute: ZIP/UZP (128-bit) ----
         if insn & 0xBF20_8C00 == 0x0E00_0800 && q {
             let size = bits(insn, 23, 22);
@@ -3114,6 +3172,14 @@ impl<'a> E<'a> {
     }
 
     /// Load a 64-bit constant into all lanes of `x`.
+    /// 128-bit constant (low and high halves).
+    fn vconst128(&mut self, x: AsmRegisterXmm, lo: u64, hi: u64) {
+        self.mov_imm(rax, lo);
+        a!(self, movq(x, rax));
+        self.mov_imm(rax, hi);
+        a!(self, pinsrq(x, rax, 1));
+    }
+
     fn vconst(&mut self, x: AsmRegisterXmm, v: u64) {
         self.mov_imm(rax, v);
         a!(self, movq(x, rax));
@@ -3878,7 +3944,7 @@ impl<'a> E<'a> {
             return true;
         }
 
-        // ---- shifts by immediate: USHR/SSHR/URSHR/SHL ----
+        // ---- shifts by immediate: USHR/SSHR/URSHR, USRA/SSRA/URSRA (accumulate), SHL ----
         if insn & 0x9F80_0400 == 0x0F00_0400 && bits(insn, 22, 19) != 0 {
             let immh = bits(insn, 22, 19);
             let immb = bits(insn, 18, 16);
@@ -3893,13 +3959,14 @@ impl<'a> E<'a> {
             let esize = 8u32 << sz;
             let immv = (immh << 3) | immb;
             match opcode {
-                0b00000 | 0b00100 => {
-                    // USHR/SSHR (00000), URSHR/SRSHR (00100)
+                0b00000 | 0b00100 | 0b00010 | 0b00110 => {
+                    // USHR/SSHR (00000), URSHR/SRSHR (00100); the 00x10 forms add the result to Vd
                     let n = 2 * esize - immv;
                     if n == 0 || n > esize {
                         return false;
                     }
-                    let rounding = opcode == 0b00100;
+                    let rounding = opcode & 0b00100 != 0;
+                    let accumulate = opcode & 0b00010 != 0;
                     if !u && (sz == 0 || sz == 3) {
                         return false; // no arithmetic byte/qword shifts in SSE2
                     }
@@ -3929,6 +3996,10 @@ impl<'a> E<'a> {
                         self.vconst(xmm2, match sz { 0 => 0x0101_0101_0101_0101, 1 => 0x0001_0001_0001_0001, 2 => 0x0000_0001_0000_0001, _ => 1 });
                         a!(self, pand(xmm1, xmm2));
                         self.padd_elem(xmm0, xmm1, sz);
+                    }
+                    if accumulate {
+                        self.vld(xmm3, rd, q);
+                        self.padd_elem(xmm0, xmm3, sz);
                     }
                     self.vfin(rd, q);
                     return true;
