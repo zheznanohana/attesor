@@ -10,6 +10,8 @@ import os, re, subprocess, sys, tempfile
 from pathlib import Path
 binary = Path(sys.argv[1]).resolve()
 clean = {k: v for k, v in os.environ.items() if not k.startswith('ATTESOR_')}
+# Preserve the requested translator opt-in while retaining private per-test caches.
+clean['ATTESOR_JIT_ON'] = os.environ.get('ATTESOR_JIT_ON', '')
 def run(cmd, extra=None):
     return subprocess.run([str(x) for x in cmd], env={**clean, **(extra or {})},
                           text=True, capture_output=True, check=True, timeout=300)

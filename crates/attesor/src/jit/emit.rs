@@ -103,7 +103,7 @@ pub struct Unit {
     /// Blocks to translate into this unit after the current one: call continuations, so a translated
     /// RET lands on code that runs straight into the caller's next block.
     pub inline_queue: Vec<u64>,
-    /// Guest V registers held in xmm8-xmm15 within the current block (see `VCache`).
+    /// Guest V registers held in xmm8-xmm15 (optionally through xmm31), per block.
     pub vc: VCache,
     /// Current result stores proven dead before an in-block full overwrite.
     dead_v: u32,
@@ -119,14 +119,17 @@ pub struct Unit {
     constants: HashMap<u64, CodeLabel>,
     constant_pool: Vec<(CodeLabel, u64)>,
     pool_avx: bool,
+    /// Opt-in 128-bit EVEX cache bank; never enable without host/OS support.
+    avx512: bool,
     #[cfg(any(debug_assertions, test))]
     cold_ranges: Vec<(std::ops::Range<usize>, bool)>,
 }
 
 pub const NCREGS: usize = 5;
-pub const NVREGS: usize = 8;
+pub const NVREGS: usize = 24;
+const BASE_NVREGS: usize = 8;
 
-/// Cache of guest V registers in xmm8-xmm15, within one block. Stores proven dead
+/// Cache of guest V registers in xmm8-xmm15, optionally xmm16-xmm31, within one block. Stores proven dead
 /// before a full overwrite may be register-only; dirty eviction writes them back.
 /// Dependent FP operations read a register instead
 /// of reloading what the previous instruction just stored (store-forwarding latency on the critical
@@ -147,7 +150,13 @@ impl VCache {
     }
 }
 
-const VREGS: [AsmRegisterXmm; NVREGS] = [xmm8, xmm9, xmm10, xmm11, xmm12, xmm13, xmm14, xmm15];
+const VREGS: [AsmRegisterXmm; NVREGS] = [
+    xmm8, xmm9, xmm10, xmm11, xmm12, xmm13, xmm14, xmm15,
+    xmm16, xmm17, xmm18, xmm19, xmm20, xmm21, xmm22, xmm23,
+    xmm24, xmm25, xmm26, xmm27, xmm28, xmm29, xmm30, xmm31,
+];
+
+fn high_xmm(x: AsmRegisterXmm) -> bool { iced_x86::Register::from(x).number() >= 16 }
 
 /// V registers `insn` may write: `None` = none, `Some([a, b])` (0xff = unused), or all of them when
 /// the encoding is not understood (structure loads, anything new).
@@ -402,6 +411,7 @@ impl Unit {
             constants: HashMap::new(),
             constant_pool: Vec::new(),
             pool_avx: has_avx(),
+            avx512: avx512_enabled(),
             #[cfg(any(debug_assertions, test))]
             cold_ranges: Vec::new(),
         }
@@ -568,6 +578,12 @@ const CREGS32: [R32; NCREGS] = [ebx, ebp, r12d, r13d, r14d];
 
 macro_rules! a {
     ($e:expr, $m:ident ( $($arg:expr),* )) => { $e.u.a.$m($($arg),*).unwrap() };
+}
+
+// iced's default VEX preference does not promote high-XMM operands to EVEX.
+// Explicitly select EVEX for instructions whose operands can name xmm16-xmm31.
+macro_rules! evex {
+    ($e:expr, $m:ident ( $($arg:expr),* )) => { $e.u.a.evex().$m($($arg),*).unwrap() };
 }
 
 // Legacy SSE arithmetic memory operands require alignment. VEX forms allow
@@ -899,14 +915,17 @@ impl<'a> E<'a> {
     }
     fn vc_alloc(&mut self, n: u32) -> usize {
         let vc = &self.u.vc;
-        let s = (0..NVREGS).find(|&i| vc.reg[i] == 0xff).unwrap_or_else(|| {
-            if jit_off("nextuse") { (0..NVREGS).min_by_key(|&i| vc.stamp[i]).unwrap() }
-            else { (0..NVREGS).max_by_key(|&i| (self.u.cache_uses[1][vc.reg[i] as usize], u32::MAX - vc.stamp[i])).unwrap() }
+        let slots = if self.u.avx512 { NVREGS } else { BASE_NVREGS };
+        let s = (0..slots).find(|&i| vc.reg[i] == 0xff).unwrap_or_else(|| {
+            if jit_off("nextuse") { (0..slots).min_by_key(|&i| vc.stamp[i]).unwrap() }
+            else { (0..slots).max_by_key(|&i| (self.u.cache_uses[1][vc.reg[i] as usize], u32::MAX - vc.stamp[i])).unwrap() }
         });
         // A dead memory store can still have live cache consumers. Eviction must
         // materialize it before any later operand can fall back to Cpu memory.
         if vc.dirty[s] {
-            a!(self, movdqu(xmmword_ptr(r15 + voff(vc.reg[s] as u32)), VREGS[s]));
+            let dst = xmmword_ptr(r15 + voff(vc.reg[s] as u32));
+            if high_xmm(VREGS[s]) { a!(self, vmovdqu64(dst, VREGS[s])); }
+            else { a!(self, movdqu(dst, VREGS[s])); }
         }
         self.u.vc.dirty[s] = false;
         self.u.vc.reg[s] = n as u8;
@@ -930,7 +949,7 @@ impl<'a> E<'a> {
             self.vfill(d, x);
         } else {
             let s = self.vc_find(d).unwrap_or_else(|| self.vc_alloc(d));
-            a!(self, movdqa(VREGS[s], x));
+            self.cache_copy(VREGS[s], x);
             self.u.vc.dirty[s] = true;
             self.vc_touch(s);
         }
@@ -946,9 +965,19 @@ impl<'a> E<'a> {
             None if self.used_soon_bank(d, true) => self.vc_alloc(d),
             None => return,
         };
-        a!(self, movdqa(VREGS[s], x));
+        self.cache_copy(VREGS[s], x);
         self.u.vc.dirty[s] = false;
         self.vc_touch(s);
+    }
+    /// Legacy SSE cannot name xmm16-xmm31. Keep all cache transfers 128-bit;
+    /// low-bank emission stays byte-for-byte unchanged when the flag is off.
+    fn cache_copy(&mut self, dst: AsmRegisterXmm, src: AsmRegisterXmm) {
+        if high_xmm(dst) || high_xmm(src) { a!(self, vmovdqa64(dst, src)); }
+        else { a!(self, movdqa(dst, src)); }
+    }
+    fn cache_low64(&mut self, dst: AsmRegisterXmm, src: AsmRegisterXmm) {
+        if high_xmm(src) { evex!(self, vmovq(dst, src)); }
+        else { a!(self, movq(dst, src)); }
     }
     /// Scalar FP operand Vn into `x` (64-bit lane for double, 32-bit otherwise), rest of `x` zero.
     fn fld_scalar(&mut self, x: AsmRegisterXmm, n: u32, double: bool) {
@@ -965,10 +994,11 @@ impl<'a> E<'a> {
     }
     fn fld_source(&mut self, x: AsmRegisterXmm, src: FpSource, double: bool) {
         match src.cached {
-            Some(c) if double => a!(self, movq(x, c)),
+            Some(c) if double => self.cache_low64(x, c),
             Some(c) => {
                 a!(self, xorps(x, x));
-                a!(self, movss(x, c));
+                if high_xmm(c) { evex!(self, vmovss_3(x, x, c)); }
+                else { a!(self, movss(x, c)); }
             }
             None if double => a!(self, movsd_2(x, qword_ptr(r15 + src.offset))),
             None => a!(self, movss(x, dword_ptr(r15 + src.offset))),
@@ -1751,6 +1781,49 @@ fn has_avx() -> bool {
     *F.get_or_init(|| std::is_x86_feature_detected!("avx"))
 }
 
+/// Only 128-bit EVEX forms are used, but all four feature sets are required.
+/// macOS lazily enables AVX-512 state on the first instruction: XCR0 can be
+/// 0x7 on a fully supported thread, so Rust's XCR0-based detector is not valid
+/// there. Require CPUID *and* the kernel's sysctl policy; errors fail closed.
+pub fn has_avx512() -> bool {
+    static F: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *F.get_or_init(|| {
+        #[cfg(target_os = "macos")]
+        {
+            let leaf = std::arch::x86_64::__cpuid_count(7, 0);
+            let os = [c"hw.optional.avx512f", c"hw.optional.avx512vl",
+                      c"hw.optional.avx512bw", c"hw.optional.avx512dq"].map(|name| {
+                let mut value: libc::c_int = 0;
+                let mut len = std::mem::size_of_val(&value);
+                let rc = unsafe { libc::sysctlbyname(name.as_ptr(),
+                    &mut value as *mut _ as *mut libc::c_void, &mut len,
+                    std::ptr::null_mut(), 0) };
+                rc == 0 && len == std::mem::size_of_val(&value) && value == 1
+            });
+            avx512_macos_policy(leaf.ebx, os)
+        }
+        #[cfg(not(target_os = "macos"))]
+        {
+            std::is_x86_feature_detected!("avx512f")
+                && std::is_x86_feature_detected!("avx512vl")
+                && std::is_x86_feature_detected!("avx512bw")
+                && std::is_x86_feature_detected!("avx512dq")
+        }
+    })
+}
+
+#[cfg(any(target_os = "macos", test))]
+fn avx512_macos_policy(features: u32, os: [bool; 4]) -> bool {
+    const REQUIRED: u32 = (1 << 16) | (1 << 31) | (1 << 30) | (1 << 17); // F/VL/BW/DQ
+    features & REQUIRED == REQUIRED && os.into_iter().all(|v| v)
+}
+
+pub fn avx512_enabled() -> bool {
+    static F: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *F.get_or_init(|| has_avx512() && !jit_off("avx512")
+        && std::env::var("ATTESOR_JIT_ON").unwrap_or_default().split(',').any(|g| g == "avx512"))
+}
+
 /// FMA3 (fused multiply-add) on the host: FMLA/FMADD are translated natively only with it, since an
 /// unfused multiply + add rounds twice. Not part of the SSE4.1 baseline, so detected at run time.
 pub fn has_fma() -> bool {
@@ -1970,7 +2043,7 @@ pub fn emit_block(u: &mut Unit, pc: u64, read: &dyn Fn(u64) -> Option<u32>) -> u
         e.u.dead_v = 0;
         e.u.vc_dest = [0xff; 2];
         if e.u.skip_next || e.u.a.instructions()[code_start..].iter().any(|i| i.mnemonic() == iced_x86::Mnemonic::Call) {
-            e.u.vc = VCache::new(); // fused pair (writes the next one's Vd too) or helper call (clobbers xmm8-15)
+            e.u.vc = VCache::new(); // fused pair (writes the next one's Vd too) or helper call (clobbers caller-saved V cache)
             e.u.tbi_mask_live = false; // host calls may overwrite caller-saved r11
         }
         if !translated {
@@ -3801,8 +3874,8 @@ impl<'a> E<'a> {
         self.cold_path(cold, move |e| {
             e.vfix_default_nan(double);
             match src.cached {
-                Some(c) if q => a!(e, movdqa(xmm6, c)),
-                Some(c) => a!(e, movq(xmm6, c)),
+                Some(c) if q => e.cache_copy(xmm6, c),
+                Some(c) => e.cache_low64(xmm6, c),
                 None if q => a!(e, movdqu(xmm6, xmmword_ptr(r15 + src.offset))),
                 None => a!(e, movq(xmm6, qword_ptr(r15 + src.offset))),
             }
@@ -4533,7 +4606,18 @@ impl<'a> E<'a> {
             let double = ftype == 1;
             let cm = self.scalar_source(rm).cached;
             self.fld_scalar(xmm0, rn, double);
-            if double {
+            if let Some(c) = cm.filter(|&c| high_xmm(c)) {
+                match (double, opcode) {
+                    (true, 0) => evex!(self, vmulsd(xmm0, xmm0, c)),
+                    (true, 1) => evex!(self, vdivsd(xmm0, xmm0, c)),
+                    (true, 2) => evex!(self, vaddsd(xmm0, xmm0, c)),
+                    (true, _) => evex!(self, vsubsd(xmm0, xmm0, c)),
+                    (false, 0) => evex!(self, vmulss(xmm0, xmm0, c)),
+                    (false, 1) => evex!(self, vdivss(xmm0, xmm0, c)),
+                    (false, 2) => evex!(self, vaddss(xmm0, xmm0, c)),
+                    (false, _) => evex!(self, vsubss(xmm0, xmm0, c)),
+                }
+            } else if double {
                 if let Some(c) = cm {
                     match opcode {
                         0 => a!(self, mulsd(xmm0, c)),
@@ -7038,8 +7122,9 @@ mod cache_nextuse_tests {
         u.cache_uses = cache_next_uses(&u.look);
         let mut e = E { u: &mut u, pc: 0, fuse_in: None, scalar_inputs: None };
         assert_eq!(e.rc_alloc(9), 1); // oldest dead slot (X1), not live X0
-        e.u.vc.reg = [0, 1, 2, 3, 4, 5, 6, 7];
-        e.u.vc.stamp = [1, 2, 3, 4, 5, 6, 7, 8];
+        e.u.avx512 = false;
+        e.u.vc.reg = [0xff; NVREGS]; e.u.vc.reg[..8].copy_from_slice(&[0, 1, 2, 3, 4, 5, 6, 7]);
+        e.u.vc.stamp[..8].copy_from_slice(&[1, 2, 3, 4, 5, 6, 7, 8]);
         e.u.look = vec![0x1e622820]; // V1/V2 read now, V0 written
         e.u.cache_uses = cache_next_uses(&e.u.look);
         assert_eq!(e.vc_alloc(9), 0); // old V0 is killed; bank-local decision
@@ -7048,8 +7133,9 @@ mod cache_nextuse_tests {
         e.u.look = vec![0x8b01000a, 0x8b03004b, 0x8b05008c];
         e.u.cache_uses = cache_next_uses(&e.u.look);
         assert_eq!(e.rc_alloc(9), 4); // newest slot, but used furthest away
-        e.u.vc.reg = [0, 1, 2, 3, 4, 5, 6, 7];
-        e.u.vc.stamp = [1, 2, 3, 4, 5, 6, 7, 8];
+        e.u.avx512 = false;
+        e.u.vc.reg = [0xff; NVREGS]; e.u.vc.reg[..8].copy_from_slice(&[0, 1, 2, 3, 4, 5, 6, 7]);
+        e.u.vc.stamp[..8].copy_from_slice(&[1, 2, 3, 4, 5, 6, 7, 8]);
         e.u.look = (0..8).map(|r| 0x1e60281f | (r << 5) | (r << 16)).collect();
         e.u.cache_uses = cache_next_uses(&e.u.look);
         assert_eq!(e.vc_alloc(9), 7);
@@ -8271,5 +8357,216 @@ mod vdead_tests {
                 }
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod avx512_tests {
+    use super::*;
+    use attesor_core::{cpu::Cpu, interp};
+    use iced_x86::{EncodingKind, Register};
+    const PC: u64 = 0x2800_0000;
+
+    #[test]
+    fn macos_detection_uses_kernel_policy_not_eager_xcr0() {
+        let required = (1 << 16) | (1 << 31) | (1 << 30) | (1 << 17);
+        // No XCR0 input: lazy state (0x7) must not veto kernel-approved hardware.
+        assert!(avx512_macos_policy(required, [true; 4]));
+        for i in [16, 31, 30, 17] {
+            assert!(!avx512_macos_policy(required & !(1 << i), [true; 4]));
+        }
+        for i in 0..4 {
+            let mut os = [true; 4]; os[i] = false;
+            assert!(!avx512_macos_policy(required, os));
+        }
+        eprintln!("AVX512 runtime detection: {}", has_avx512());
+    }
+
+    // Test-only execution authorization, not a product feature override. Set only
+    // after an independent EVEX probe succeeds on this host. Some sandboxes deny
+    // sysctl queries even though the kernel correctly promotes AVX-512 threads.
+    pub(super) fn execution_available() -> bool {
+        has_avx512() || (std::env::var("ATTESOR_TEST_AVX512").as_deref() == Ok("1")
+            && avx512_macos_policy(std::arch::x86_64::__cpuid_count(7, 0).ebx, [true; 4]))
+    }
+
+    fn compile(words: &[u32], extended: bool, kind: StubKind) -> Unit {
+        let mut u = Unit::new(kind, false);
+        // Encoder-only tests may select the new bank even on unsupported hosts.
+        // Execution tests below must separately check has_avx512(). No user-facing
+        // override can bypass the host/OS detector.
+        u.avx512 = extended;
+        u.no_internal_jumps = true;
+        let l = u.a.create_label(); u.labels.insert(PC, l);
+        emit_block(&mut u, PC, &|p| words.get(((p-PC)/4) as usize).copied());
+        u.finish();
+        u
+    }
+
+    fn assert_xmm_only(u: &Unit) {
+        for i in u.a.instructions() {
+            for op in 0..i.op_count() {
+                let r = i.op_register(op);
+                assert!(!r.is_ymm() && !r.is_zmm(), "wider-than-128-bit operand: {i:?}");
+            }
+        }
+        for (range, live) in &u.cold_ranges {
+            check_cold_registers(&u.a.instructions()[range.clone()], *live).unwrap();
+        }
+    }
+
+    fn pressure_words(single: bool, op: u32, aliases: bool) -> Vec<u32> {
+        // 28 dirty values exceed *both* cache sizes, so xmm31 and dirty
+        // eviction are mandatory. The second wave reads old values and leaves
+        // its results observable in Cpu (do not overwrite them with constants).
+        let ty = if single { 0 } else { 1 << 22 };
+        let mut words: Vec<u32> = (0..28).map(|d| 0x1e20_2800 | ty | (31 << 16) | (d << 5) | d).collect();
+        for d in 0..28 {
+            let m = if aliases { d } else { (d+1)%28 };
+            words.push(0x1e20_0800 | ty | (op << 12) | (m << 16) | (d << 5) | d);
+        }
+        words.push(0xd400_1001);
+        words
+    }
+
+    #[test]
+    fn all_high_register_transfers_encode_without_wide_vectors() {
+        let mut u = Unit::new(StubKind::Plain, false); u.avx512 = true;
+        let mut e = E { u: &mut u, pc: PC, fuse_in: None, scalar_inputs: None };
+        for r in VREGS.into_iter().skip(BASE_NVREGS) {
+            e.cache_copy(r, xmm0);
+            e.cache_copy(xmm6, r);
+            e.cache_low64(xmm0, r);
+            e.fld_source(xmm1, FpSource { cached: Some(r), offset: 0 }, false);
+        }
+        assert_xmm_only(&u);
+        let evex = u.a.instructions().iter().filter(|i| i.encoding() == EncodingKind::EVEX).count();
+        assert_eq!(evex, 16*4);
+        u.a.assemble(0x1000).unwrap(); // Invalid high-register legacy forms fail here.
+    }
+
+    #[test]
+    fn pressure_uses_every_high_slot_and_fallback_uses_none() {
+        for single in [false, true] { for op in 0..4 { for aliases in [false, true] {
+            for kind in [StubKind::Plain, StubKind::Patchable] {
+                let words = pressure_words(single, op, aliases);
+                for extended in [false, true] {
+                    let mut u = compile(&words, extended, kind);
+                    assert_xmm_only(&u);
+                    let mut high = [false; 16];
+                    for i in u.a.instructions() {
+                        for op in 0..i.op_count() {
+                            let r = i.op_register(op);
+                            if r.is_xmm() && r.number() >= 16 {
+                                high[r.number()-16] = true;
+                                assert_eq!(i.encoding(), EncodingKind::EVEX);
+                            }
+                        }
+                    }
+                    assert_eq!(high, [extended; 16]);
+                    if extended {
+                        assert!(u.a.instructions().iter().any(|i| i.mnemonic() == iced_x86::Mnemonic::Vmovdqu64
+                            && i.op0_kind() == iced_x86::OpKind::Memory), "missing dirty high-bank spill");
+                    }
+                    u.a.assemble(0x1000).unwrap();
+                }
+            }
+        }}}
+    }
+
+    #[test]
+    fn cold_contract_protects_all_extended_cache_registers() {
+        for reg in VREGS.into_iter().skip(BASE_NVREGS) {
+            let mut a = CodeAssembler::new(64).unwrap();
+            a.vmovdqa64(xmm7, reg).unwrap();
+            assert!(check_cold_registers(a.instructions(), true).is_ok());
+            a.vmovdqa64(reg, xmm7).unwrap();
+            assert!(check_cold_registers(a.instructions(), true).is_err());
+        }
+    }
+
+    #[test]
+    fn pressure_results_match_interpreter_with_sensitivity_mutant() {
+        if !execution_available() {
+            eprintln!("AVX512_EXECUTION_UNAVAILABLE: high-bank differential and execution sensitivity NOT RUN (fallback pressure still tested)");
+        }
+        // Keep the deliberately broken code confined to this test's private
+        // assembler: corrupt the xmm31 cache copy. Correct and mutant runs must
+        // respectively match and disagree with the *same* interpreter oracle.
+        for single in [false, true] { for op in 0..4 { for aliases in [false, true] {
+            for kind in [StubKind::Plain, StubKind::Patchable] {
+                let words = pressure_words(single, op, aliases);
+                for extended in [false, true].into_iter().filter(|&extended| !extended || execution_available()) {
+                let mut mutant_mismatches = 0;
+                for mutant in [false, true].into_iter().filter(|&mutant| !mutant || extended) {
+                    let mut u = compile(&words, extended, kind);
+                    if mutant {
+                        let mut insns = u.a.instructions().to_vec();
+                        let copy = insns.iter_mut().find(|i| i.op0_register() == Register::XMM31
+                            && i.mnemonic() == iced_x86::Mnemonic::Vmovdqa64).unwrap();
+                        copy.set_op1_register(Register::XMM5);
+                        // Preserve labels and constant-pool relocations by changing
+                        // only the encoded operand after normal assembly below.
+                        let host = crate::jit::code_cache().alloc(65536);
+                        let result = u.a.assemble_options(host, iced_x86::BlockEncoderOptions::RETURN_NEW_INSTRUCTION_OFFSETS).unwrap();
+                        let idx = u.a.instructions().iter().position(|i| i.op0_register() == Register::XMM31
+                            && i.mnemonic() == iced_x86::Mnemonic::Vmovdqa64).unwrap();
+                        let offset = result.inner.new_instruction_offsets[idx] as usize;
+                        let mut encoder = iced_x86::Encoder::new(64);
+                        encoder.encode(copy, host+offset as u64).unwrap();
+                        let broken = encoder.take_buffer();
+                        let mut bytes = result.inner.code_buffer;
+                        bytes[offset..offset+broken.len()].copy_from_slice(&broken);
+                        unsafe { std::ptr::copy_nonoverlapping(bytes.as_ptr(),host as *mut u8,bytes.len()); }
+                        mutant_mismatches += execute_cases(host, &words, single, true);
+                    } else {
+                        let host = crate::jit::code_cache().alloc(65536);
+                        let bytes = u.a.assemble(host).unwrap();
+                        assert!(bytes.len()<65536);
+                        unsafe { std::ptr::copy_nonoverlapping(bytes.as_ptr(),host as *mut u8,bytes.len()); }
+                        assert_eq!(execute_cases(host, &words, single, false), 0);
+                    }
+                }
+                if extended {
+                    assert!(mutant_mismatches > 0, "insensitive pressure oracle");
+                    eprintln!("AVX512 sensitivity: single={single} op={op} aliases={aliases} mismatch={mutant_mismatches}");
+                }
+                }
+            }
+        }}}
+    }
+
+    fn execute_cases(host: u64, words: &[u32], single: bool, mutant: bool) -> usize {
+        let values: &[u64] = if single {
+            &[0x3f800001, 0x40000001, 0x7fc01234, 0xff801234, 0x7f800000, 0, 1, 0x80000000]
+        } else {
+            &[0x3ff0000000000001, 0x4000000000000001, 0x7ff8000000001234,
+              0xfff0000000001234, 0x7ff0000000000000, 0, 1, 0x8000000000000000]
+        };
+        let mut mismatches = 0;
+        for seed in [1u64, 0x12345678, 0xfeedbeef] {
+            for a in values { for b in values {
+                let mut c = Cpu::new(); crate::jit::setup_cpu(&mut c); c.set_pc(PC);
+                // Distinct bit patterns in every guest register detect register
+                // swaps as well as corruption; identical accumulators would hide them.
+                for n in 0..32 { c.v[n] = [a.wrapping_add(n as u64 * ((seed & 15)+1)), !seed]; }
+                c.v[30] = [*a, !seed]; c.v[31] = [*b, !seed];
+                let mut reference = Cpu::new(); reference.v = c.v; reference.set_pc(PC);
+                for &w in words {
+                    match interp::exec(&mut reference, w) {
+                        Ok(()) => {}, Err(interp::Exit::Svc(_)) => break, Err(e) => panic!("{w:08x}: {e:?}"),
+                    }
+                }
+                unsafe { crate::jit::attesor_jit_enter(&mut *c, host); }
+                assert_eq!(c.exit_reason, EXIT_SVC);
+                assert_eq!(c.x, reference.x); assert_eq!(c.nzcv(), reference.nzcv());
+                assert_eq!(c.fpcr, reference.fpcr);
+                if c.v != reference.v {
+                    mismatches += 1;
+                    if !mutant { panic!("single={single} seed={seed:x} a={a:x} b={b:x}: {:?} != {:?}", c.v, reference.v); }
+                }
+            }}
+        }
+        mismatches
     }
 }
