@@ -5,6 +5,7 @@
 ```
 attesor [options] ./arm64-binary [args...]
 
+  --prewarm          statically translate executable/.app targets and dyld without running guest code (--aot alias)
   --dyld PATH        arm64 dyld to use (default /usr/lib/dyld; $ATTESOR_DYLD)
   --sysroot DIR      directory with the arm64e dyld shared cache (else auto-discovered, see SETUP.md)
   --gpu              route the guest's Metal API to the host GPU
@@ -22,9 +23,10 @@ Notes that apply to every app:
 - Programs must be **arm64** Mach-Os (`file app` should say `arm64`); arm64e-only or FairPlay-encrypted
   (App Store / iOS-on-Mac) binaries do not work.
 - Run **ad-hoc re-signed** copies if a binary complains about signatures: `codesign -f -s - file`.
-- First launch of a big app is slow (translation happens on the fly). **Quit apps normally** (Cmd+Q, or a
-  graceful `Browser.close` over DevTools): the translation cache (`~/Library/Caches/Attesor/aot/`) is written on
-  a normal exit, and subsequent launches are several times faster. A killed process saves nothing.
+- First launch may spend time translating code. `attesor --prewarm App.app` prepares main/helper
+  executable and dyld translations without executing the app; see [AOT-PREWARM.md](AOT-PREWARM.md).
+  Normal exit saves the latest execution profile, and completed periodic checkpoints can survive a
+  forced exit. Cache-file existence alone does not prove a startup speedup; measure the application.
 - Electron/Chromium apps need `--no-sandbox` (the Chromium sandbox cannot initialise under Attesor).
 - Every Attesor version bump that changes code generation invalidates the translation cache.
 

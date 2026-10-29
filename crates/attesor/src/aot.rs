@@ -586,10 +586,9 @@ fn discover(entries: &[u64], start: u64, end: u64, read: &dyn Fn(u64) -> Option<
             let sext = |v: u64, n: u32| (((v << (64 - n)) as i64) >> (64 - n)) as u64;
             if insn & 0x7C00_0000 == 0x1400_0000 {
                 let t = cur.wrapping_add(sext((insn & 0x03ff_ffff) as u64, 26) << 2);
+                work.push(t); // B target or BL callee, including binaries without function starts
                 if insn & 0x8000_0000 != 0 {
                     work.push(next); // return point after BL
-                } else {
-                    work.push(t);
                 }
                 break;
             } else if insn & 0xFF00_0000 == 0x5400_0000 || insn & 0x7E00_0000 == 0x3400_0000 {
@@ -624,7 +623,7 @@ fn build(img: &Image, profile: &BTreeSet<u64>) -> std::io::Result<()> {
     // Profile-guided expansion: also follow direct branches from hot blocks.
     let hot: Vec<u64> = profile.iter().copied().collect();
     blocks.extend(discover(&hot, img.start, img.end, &read, profile.len() * 4 + 1000));
-    let blocks: Vec<u64> = blocks.into_iter().filter(|&pc| read(pc).is_some()).collect();
+    let blocks: Vec<u64> = blocks.into_iter().filter(|&pc| pc >= img.start && pc < img.end && pc & 3 == 0 && read(pc).is_some()).collect();
     if blocks.is_empty() {
         return Ok(());
     }
@@ -701,37 +700,145 @@ fn build(img: &Image, profile: &BTreeSet<u64>) -> std::io::Result<()> {
     Ok(())
 }
 
-/// `attesor --aot <exe>`: translate the main executable ahead of time
-/// without running it.
-pub fn build_standalone(path: &str) -> std::io::Result<usize> {
-    let m = crate::macho::MachO::open_arm64(path, false)?;
-    let (lo, hi) = m.vm_range();
-    let file = std::fs::File::open(path)?;
+/// Result of a static prewarm. These blocks use the same fixed guest addresses,
+/// UUID/path keys and code-generation compatibility checks as normal execution.
+pub struct PrewarmImage {
+    pub path: String,
+    pub kind: &'static str,
+    pub blocks: usize,
+}
+
+/// Reserve before MAP_FIXED so offline translation never clobbers unrelated
+/// mappings. Each image is unmapped afterwards, allowing a batch to reuse the
+/// runtime's main-image base without leaking previous images into discovery.
+struct PrewarmMapping { start: u64, bytes: usize }
+impl Drop for PrewarmMapping {
+    fn drop(&mut self) { unsafe { libc::munmap(self.start as *mut _, self.bytes); } }
+}
+
+fn map_prewarm_text(path: &str, m: &crate::macho::MachO, base: u64) -> std::io::Result<PrewarmMapping> {
     use std::os::unix::io::AsRawFd;
-    let slide = crate::loader::MAIN_BASE.wrapping_sub(lo);
-    // Map __TEXT read-only at the runtime address.
-    for seg in &m.segments {
-        if seg.name != "__TEXT" {
-            continue;
-        }
-        let addr = seg.vmaddr.wrapping_add(slide);
-        let p = unsafe {
-            libc::mmap(addr as *mut _, seg.filesize as usize, libc::PROT_READ, libc::MAP_PRIVATE | libc::MAP_FIXED, file.as_raw_fd(), (m.slice_offset + seg.fileoff) as i64)
-        };
-        if p as u64 != addr {
-            return Err(std::io::Error::last_os_error());
-        }
+    let (lo, hi) = m.vm_range();
+    let bytes = hi.checked_sub(lo).and_then(|n| usize::try_from(n).ok())
+        .filter(|&n| n > 0 && n <= isize::MAX as usize)
+        .ok_or_else(|| std::io::Error::other(format!("{path}: invalid image range")))?;
+    let file = std::fs::File::open(path)?;
+    let file_bytes = file.metadata()?.len();
+    let p = unsafe { libc::mmap(base as *mut _, bytes, libc::PROT_NONE,
+                                libc::MAP_ANON | libc::MAP_PRIVATE, -1, 0) };
+    if p as u64 != base {
+        if p != libc::MAP_FAILED { unsafe { libc::munmap(p, bytes); } }
+        return Err(std::io::Error::other(format!("{path}: prewarm address {base:#x} unavailable")));
     }
-    let entries = function_starts(path, &m, slide);
-    let img_start = lo.wrapping_add(slide);
-    let img_end = hi.wrapping_add(slide);
-    let key = format!("main-{}-{}", hex(&m.uuid), fnv(&[path.as_bytes()]));
-    let img = Image { name: path.to_string(), key, start: img_start, end: img_end, entries, loaded: false };
-    let _ = std::fs::create_dir_all(cache_dir());
+    let mapping = PrewarmMapping { start: base, bytes };
+    let mut code_segments = 0;
+    for seg in &m.segments {
+        if seg.name == "__PAGEZERO" || seg.initprot & 4 == 0 || seg.filesize == 0 { continue; }
+        let relative = seg.vmaddr.checked_sub(lo)
+            .ok_or_else(|| std::io::Error::other("prewarm segment precedes its image"))?;
+        if relative.checked_add(seg.vmsize).is_none_or(|end| end > bytes as u64) {
+            return Err(std::io::Error::other(format!("{path}: executable segment outside reserved image")));
+        }
+        let addr = base.checked_add(relative)
+            .ok_or_else(|| std::io::Error::other("prewarm address overflow"))?;
+        let offset = m.slice_offset.checked_add(seg.fileoff)
+            .ok_or_else(|| std::io::Error::other("prewarm file offset overflow"))?;
+        if addr & 0xfff != 0 || offset & 0xfff != 0 || seg.filesize > seg.vmsize
+            || offset.checked_add(seg.filesize).is_none_or(|end| end > file_bytes)
+        {
+            return Err(std::io::Error::other(format!("{path}: invalid executable segment {}", seg.name)));
+        }
+        let mapped = unsafe { libc::mmap(addr as *mut _, seg.filesize as usize, libc::PROT_READ,
+                                         libc::MAP_PRIVATE | libc::MAP_FIXED, file.as_raw_fd(), offset as i64) };
+        if mapped as u64 != addr { return Err(std::io::Error::last_os_error()); }
+        code_segments += 1;
+    }
+    if code_segments == 0 { return Err(std::io::Error::other(format!("{path}: no executable segments"))); }
+    Ok(mapping)
+}
+
+fn prewarm_image(path: &str, dyld: bool) -> std::io::Result<PrewarmImage> {
+    let m = crate::macho::MachO::open_arm64(path, dyld)?;
+    let expected_type = if dyld { crate::macho::MH_DYLINKER } else { crate::macho::MH_EXECUTE };
+    if m.cputype != crate::macho::CPU_TYPE_ARM64 || m.filetype != expected_type {
+        return Err(std::io::Error::other(format!("{path}: not an arm64 {}", if dyld { "dyld" } else { "executable" })));
+    }
+    let (lo, hi) = m.vm_range();
+    let base = if dyld { crate::loader::DYLD_BASE } else { crate::loader::MAIN_BASE };
+    let slide = base.wrapping_sub(lo);
+    let _mapping = map_prewarm_text(path, &m, base)?;
+    let mut entries = function_starts(path, &m, slide);
+    if let Some(off) = m.main_entryoff { entries.push(m.text_vmaddr().wrapping_add(off).wrapping_add(slide)); }
+    if let Some(pc) = m.thread_pc { entries.push(pc.wrapping_add(slide)); }
+    entries.sort_unstable();
+    entries.dedup();
+    let kind = if dyld { "dyld" } else { "main" };
+    let key = format!("{kind}-{}-{}", hex(&m.uuid), fnv(&[path.as_bytes()]));
+    let img = Image { name: path.to_string(), key, start: base, end: hi.wrapping_add(slide), entries, loaded: false };
+    std::fs::create_dir_all(cache_dir())?;
     let prof = read_profile(&file_for(&img, "profile"));
     build(&img, &prof)?;
-    let n = load_count(&file_for(&img, "aot"));
-    Ok(n)
+    let blocks = compatible_count(&file_for(&img, "aot")).filter(|&n| n > 0)
+        .ok_or_else(|| std::io::Error::other(format!("{path}: no discoverable executable blocks")))?;
+    Ok(PrewarmImage { path: path.to_string(), kind, blocks })
+}
+
+fn collect_bundle_executables(dir: &std::path::Path, out: &mut BTreeSet<String>) -> std::io::Result<()> {
+    for entry in std::fs::read_dir(dir)? {
+        let entry = entry?;
+        let ty = entry.file_type()?;
+        let path = entry.path();
+        if ty.is_dir() {
+            collect_bundle_executables(&path, out)?;
+        } else if ty.is_file() {
+            // Avoid trying to parse arbitrary resources as Mach-O load commands.
+            let mut magic = [0u8; 4];
+            let mut f = std::fs::File::open(&path)?;
+            if f.read(&mut magic)? != 4 { continue; }
+            if !matches!(u32::from_be_bytes(magic), crate::macho::FAT_MAGIC | crate::macho::FAT_MAGIC_64)
+                && u32::from_le_bytes(magic) != crate::macho::MH_MAGIC_64 { continue; }
+            let path = std::fs::canonicalize(path)?.to_string_lossy().into_owned();
+            if let Ok(m) = crate::macho::MachO::open_arm64(&path, false) {
+                if m.cputype == crate::macho::CPU_TYPE_ARM64 && m.filetype == crate::macho::MH_EXECUTE {
+                    out.insert(path);
+                }
+            }
+        }
+        // Do not follow symlink directories into cycles or outside the bundle.
+        // Their real targets inside the bundle are visited through normal paths.
+    }
+    Ok(())
+}
+
+/// Static ahead-of-time translation of executable targets and dyld. App bundles
+/// include ARM executables in nested helper bundles; libraries have unknown
+/// runtime slides until dyld maps them and are deliberately not claimed here.
+pub fn prewarm_paths(targets: &[String], dyld_path: &str) -> std::io::Result<Vec<PrewarmImage>> {
+    if !ENABLED.load(Ordering::Relaxed) || !crate::jit::JIT_ENABLED.load(Ordering::Relaxed) {
+        return Err(std::io::Error::other("--prewarm cannot be combined with --no-aot, --interp or debugger mode"));
+    }
+    let mut executables = BTreeSet::new();
+    for target in targets {
+        let path = std::fs::canonicalize(target)?;
+        if path.is_dir() {
+            if !path.extension().is_some_and(|s| s.eq_ignore_ascii_case("app")) {
+                return Err(std::io::Error::other(format!("{target}: expected an executable or .app bundle")));
+            }
+            let mut bundle = BTreeSet::new();
+            collect_bundle_executables(&path, &mut bundle)?;
+            if bundle.is_empty() {
+                return Err(std::io::Error::other(format!("{target}: no arm64 executables in bundle")));
+            }
+            executables.extend(bundle);
+        } else {
+            executables.insert(path.to_string_lossy().into_owned());
+        }
+    }
+    if executables.is_empty() { return Err(std::io::Error::other("no prewarm targets")); }
+    let mut images = Vec::new();
+    for path in executables { images.push(prewarm_image(&path, false)?); }
+    images.push(prewarm_image(dyld_path, true)?);
+    Ok(images)
 }
 
 // An older/incompatible file must not suppress a rebuild or win the
@@ -768,10 +875,6 @@ fn profile_fingerprint(profile: &BTreeSet<u64>) -> u64 {
     hash
 }
 
-fn load_count(p: &std::path::Path) -> usize {
-    std::fs::read(p).ok().filter(|d| d.len() >= 32).map(|d| u64::from_le_bytes(d[16..24].try_into().unwrap()) as usize).unwrap_or(0)
-}
-
 /// Function entry points from LC_FUNCTION_STARTS (runtime addresses).
 pub fn function_starts(path: &str, m: &crate::macho::MachO, slide: u64) -> Vec<u64> {
     let Some((off, size)) = m.function_starts else { return vec![] };
@@ -790,6 +893,26 @@ pub fn function_starts(path: &str, m: &crate::macho::MachO, slide: u64) -> Vec<u
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn prewarm_mapping_does_not_overwrite_an_existing_region() {
+        let p = unsafe { libc::mmap(std::ptr::null_mut(), 4096, libc::PROT_READ | libc::PROT_WRITE,
+                                    libc::MAP_ANON | libc::MAP_PRIVATE, -1, 0) };
+        assert_ne!(p, libc::MAP_FAILED);
+        let occupied = PrewarmMapping { start: p as u64, bytes: 4096 };
+        unsafe { *(p as *mut u64) = 0xfeed_beef_1234_5678; }
+        let m = crate::macho::MachO {
+            slice_offset: 0, slice_size: 4096, cputype: crate::macho::CPU_TYPE_ARM64,
+            cpusubtype: 0, filetype: crate::macho::MH_EXECUTE,
+            segments: vec![crate::macho::Segment { name: "__TEXT".into(), vmaddr: 0x100000000,
+                vmsize: 4096, fileoff: 0, filesize: 4096, maxprot: 5, initprot: 5 }],
+            main_entryoff: None, thread_pc: None, dylinker: None, function_starts: None,
+            uuid: [0; 16], header_bytes: Vec::new(),
+        };
+        let exe = std::env::current_exe().unwrap();
+        assert!(map_prewarm_text(exe.to_str().unwrap(), &m, occupied.start).is_err());
+        assert_eq!(unsafe { *(p as *const u64) }, 0xfeed_beef_1234_5678);
+    }
 
     #[test]
     fn checkpoints_publish_idle_and_exited_thread_tails() {

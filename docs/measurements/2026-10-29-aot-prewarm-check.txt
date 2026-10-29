@@ -1,0 +1,49 @@
+AOT unit tests
+running 3 tests
+test aot::tests::checkpoints_publish_idle_and_exited_thread_tails ... ok
+test aot::tests::incompatible_larger_cache_does_not_block_replacement ... ok
+test aot::tests::prewarm_mapping_does_not_overwrite_an_existing_region ... ok
+
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+Static prewarm process checks
+PASS: prewarm executes neither constructor nor main
+PASS: main and dyld are statically translated
+PASS: prewarm does not create an execution profile
+PASS: prewarm executes neither constructor nor main
+PASS: explicit prewarm preserves an existing execution profile
+PASS: actual execution reaches constructor and checksum
+PASS: new process actually loads main and dyld translations
+PASS: prewarmed runtime matches independent native output
+PASS: prewarm executes neither constructor nor main
+PASS: redirected commpage compatibility is recorded
+PASS: actual execution reaches constructor and checksum
+PASS: new process actually loads main and dyld translations
+PASS: redirected prewarm is reusable by a new process
+PASS: prewarm executes neither constructor nor main
+PASS: entry fallback follows BL to its callee without function starts
+PASS: actual execution reaches constructor and checksum
+PASS: new process actually loads main and dyld translations
+PASS: stripped executable runs from prewarmed translations
+PASS: prewarm executes neither constructor nor main
+PASS: bundle/helper discovery deduplicates aliases and skips native/resources/symlink loops
+PASS: actual execution reaches constructor and checksum
+PASS: new process actually loads main and dyld translations
+PASS: bundle executable has a reusable runtime cache
+PASS: actual execution reaches constructor and checksum
+PASS: new process actually loads main and dyld translations
+PASS: bundle executable has a reusable runtime cache
+PASS: incompatible --interp is rejected before cache writes
+PASS: incompatible --no-aot is rejected before cache writes
+PASS: native-only targets are rejected clearly
+aot-prewarm: PASS (29 checks)
+
+Existing checkpoint/fork/exec process checks
+PASS: checkpoint survived SIGKILL and next process loaded main-image blocks
+PASS: changed code-generation switches reject the default cache
+PASS: incompatible cache rebuilt from unchanged profile and loaded on restart
+PASS: interrupted coverage rebuild retries without new profile blocks
+PASS: failed exec preserves checkpoints and SIGKILL cache reuse
+PASS: multithreaded guest fork keeps parent and child checkpoints running
+PASS: parent/child checkpoint output survives SIGKILL and loads on restart
+

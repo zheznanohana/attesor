@@ -26,7 +26,8 @@ use std::sync::atomic::Ordering;
 
 fn usage() -> ! {
     eprintln!("usage: attesor [options] <arm64-program> [args...]");
-    eprintln!("       attesor --aot <arm64-program>     translate ahead of time and exit");
+    eprintln!("       attesor --prewarm [options] <arm64-program|App.app>...  translate without running guest code");
+    eprintln!("                  --aot is an alias; app bundles include ARM executable helpers");
     eprintln!("options:");
     eprintln!("  --interp        interpreter only (no JIT/AOT)");
     eprintln!("  --no-aot        JIT only: don't load or build AOT translations");
@@ -42,6 +43,7 @@ fn usage() -> ! {
 
 fn main() {
     let mut args: Vec<String> = std::env::args().skip(1).collect();
+    let mut prewarm = false;
     let mut dyld = std::env::var("ATTESOR_DYLD").unwrap_or_else(|_| "/usr/lib/dyld".to_string());
     while let Some(a) = args.first().cloned() {
         match a.as_str() {
@@ -116,23 +118,9 @@ fn main() {
                 }
                 paths::set_cache_dir(&args.remove(0));
             }
-            "--aot" => {
+            "--aot" | "--prewarm" => {
+                prewarm = true;
                 args.remove(0);
-                if args.is_empty() {
-                    usage();
-                }
-                let exe = resolve_path(&args[0]);
-    let _ = syscalls::GUEST_NAME.set(exe.rsplit('/').next().unwrap_or(&exe).to_string());
-                match aot::build_standalone(&exe) {
-                    Ok(n) => {
-                        eprintln!("attesor: translated {n} blocks of {exe} ahead of time");
-                        std::process::exit(0);
-                    }
-                    Err(e) => {
-                        eprintln!("attesor: aot: {e}");
-                        std::process::exit(1);
-                    }
-                }
             }
             "--jit-dump" => {
                 aot::set_enabled(false);
@@ -157,6 +145,26 @@ fn main() {
     if paths::cache_dir().is_none() && !std::path::Path::new("/System/Library/dyld/dyld_shared_cache_arm64e").exists() {
         if let Some(d) = paths::discover_sysroot() {
             paths::set_cache_dir(&d);
+        }
+    }
+    if prewarm {
+        // Match the runtime commpage/code-generation configuration before making
+        // compatibility keys. Never initialize dyld or execute a guest entry.
+        let _cp = commpage::CommPage::install();
+        let targets: Vec<String> = args.iter().map(|p| resolve_path(p)).collect();
+        match aot::prewarm_paths(&targets, &dyld) {
+            Ok(images) => {
+                for image in &images {
+                    eprintln!("attesor: prewarm {}: {} blocks: {}", image.kind, image.blocks, image.path);
+                }
+                eprintln!("attesor: prewarm complete: {} images, {} blocks; guest code was not executed",
+                          images.len(), images.iter().map(|i| i.blocks).sum::<usize>());
+                return;
+            }
+            Err(e) => {
+                eprintln!("attesor: prewarm: {e}");
+                std::process::exit(1);
+            }
         }
     }
     {
