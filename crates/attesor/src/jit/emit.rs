@@ -104,6 +104,8 @@ pub struct Unit {
     pub inline_queue: Vec<u64>,
     /// Guest V registers held in xmm8-xmm15 within the current block (see `VCache`).
     pub vc: VCache,
+    /// Current result stores proven dead before an in-block full overwrite.
+    dead_v: u32,
     /// The V register(s) the instruction being translated may write: never read from the cache, since
     /// its own code may have stored part of them already.
     pub vc_dest: [u8; 2],
@@ -123,8 +125,9 @@ pub struct Unit {
 pub const NCREGS: usize = 5;
 pub const NVREGS: usize = 8;
 
-/// Read cache of guest V registers in xmm8-xmm15, within one block. Memory (`Cpu::v`) stays up to date
-/// (every write still stores it); a slot is a copy, so dependent FP operations read a register instead
+/// Cache of guest V registers in xmm8-xmm15, within one block. Stores proven dead
+/// before a full overwrite may be register-only; dirty eviction writes them back.
+/// Dependent FP operations read a register instead
 /// of reloading what the previous instruction just stored (store-forwarding latency on the critical
 /// path). Kept correct from the guest side: before each instruction, the V registers its encoding can
 /// write are dropped (`v_writes`); any emitted `call` (helpers, the interpreter) drops everything, since
@@ -134,11 +137,12 @@ pub struct VCache {
     pub reg: [u8; NVREGS],
     pub stamp: [u32; NVREGS],
     pub tick: u32,
+    dirty: [bool; NVREGS],
 }
 
 impl VCache {
     fn new() -> VCache {
-        VCache { reg: [0xff; NVREGS], stamp: [0; NVREGS], tick: 0 }
+        VCache { reg: [0xff; NVREGS], stamp: [0; NVREGS], tick: 0, dirty: [false; NVREGS] }
     }
 }
 
@@ -389,6 +393,7 @@ impl Unit {
             inline_ok: false,
             inline_queue: Vec::new(),
             vc: VCache::new(),
+            dead_v: 0,
             vc_dest: [0xff; 2],
             tbi_mask_live: false,
             cold_paths: Vec::new(),
@@ -896,6 +901,12 @@ impl<'a> E<'a> {
             if jit_off("nextuse") { (0..NVREGS).min_by_key(|&i| vc.stamp[i]).unwrap() }
             else { (0..NVREGS).max_by_key(|&i| (self.u.cache_uses[1][vc.reg[i] as usize], u32::MAX - vc.stamp[i])).unwrap() }
         });
+        // A dead memory store can still have live cache consumers. Eviction must
+        // materialize it before any later operand can fall back to Cpu memory.
+        if vc.dirty[s] {
+            a!(self, movdqu(xmmword_ptr(r15 + voff(vc.reg[s] as u32)), VREGS[s]));
+        }
+        self.u.vc.dirty[s] = false;
         self.u.vc.reg[s] = n as u8;
         self.vc_touch(s);
         s
@@ -911,6 +922,17 @@ impl<'a> E<'a> {
         self.vc_touch(s);
         Some(VREGS[s])
     }
+    fn store_v(&mut self, d: u32, x: AsmRegisterXmm) {
+        if self.u.dead_v & (1 << d) == 0 {
+            a!(self, movdqu(xmmword_ptr(r15 + voff(d)), x));
+            self.vfill(d, x);
+        } else {
+            let s = self.vc_find(d).unwrap_or_else(|| self.vc_alloc(d));
+            a!(self, movdqa(VREGS[s], x));
+            self.u.vc.dirty[s] = true;
+            self.vc_touch(s);
+        }
+    }
     /// All of Vd was just stored from `x` as the instruction's last V write: keep a copy if it is read
     /// soon. Only at the end of an instruction, where every path through its code has merged.
     fn vfill(&mut self, d: u32, x: AsmRegisterXmm) {
@@ -923,6 +945,7 @@ impl<'a> E<'a> {
             None => return,
         };
         a!(self, movdqa(VREGS[s], x));
+        self.u.vc.dirty[s] = false;
         self.vc_touch(s);
     }
     /// Scalar FP operand Vn into `x` (64-bit lane for double, 32-bit otherwise), rest of `x` zero.
@@ -1511,6 +1534,64 @@ fn flags_dead_at(mut pc: u64, read: &dyn Fn(u64) -> Option<u32>) -> bool {
     false
 }
 
+/// Forward proof stays within this exact public block, including AOT boundaries
+/// and the max-length cut. Unknown encodings, partial writes, helpers and exits
+/// stop it. Only audited scalar templates can consume register-only values:
+/// fld_scalar/scalar_source capture aliases and cold-path inputs before writes.
+/// Guest stores read Cpu directly (including pair/lane stores), so they are
+/// observers, NOT cache consumers. Loop-region exit writeback cannot be crossed.
+fn v_store_dead_at(d: u32, mut pc: u64, room: usize, labels: &HashMap<u64, CodeLabel>,
+                   read: &dyn Fn(u64) -> Option<u32>) -> bool {
+    for _ in 0..room {
+        if labels.contains_key(&pc) { return false; }
+        let Some(w) = read(pc) else { return false; };
+        if is_terminator(w) { return false; }
+        let scalar = bits(w, 23, 22) <= 1 && (
+            (w & 0xff20_0c00 == 0x1e20_0800 && bits(w, 15, 12) <= 3)
+            || w & 0xff3f_fc00 == 0x1e21_c000
+            || (w & 0xff00_0000 == 0x1f00_0000 && has_fma() && !jit_off("fmadd")));
+        let same = w & 0x9f20_0400 == 0x0e20_0400;
+        let op = bits(w, 15, 11);
+        let size = bits(w, 23, 22);
+        // Audited full-vector writers using vld/vfin. These inputs read Cpu
+        // directly, so aliases are observers even when the destination is a
+        // full write. BSL/BIT/BIF also read the old destination: not killers.
+        let vector = same && ((op == 3 && (bit(w, 29) == 0 || size == 0))
+            || (op == 16 && (bit(w, 30) != 0 || size < 3)));
+        if scalar {
+            if w & 31 == d { return true; } // scalar clears all upper bits
+        } else if vector {
+            if bits(w, 9, 5) == d || bits(w, 20, 16) == d { return false; }
+            if w & 31 == d { return true; }
+        } else if (w >> 25) & 5 == 4 {
+            // Only valid ordinary memory templates; commpage helpers excluded
+            // by the caller, guest faults fatal. All SIMD stores read memory.
+            if !flags_safe_passthrough(w) { return false; }
+            let pair = w & 0x3a00_0000 == 0x2800_0000;
+            let opc = bits(w, 23, 22);
+            let size = bits(w, 31, 30);
+            if w & (1 << 26) == 0 {
+                // Native pair/access_sized reject these forms before falling
+                // back. A fallback observes *all* Cpu state, even another Vd.
+                if pair {
+                    if (size == 1 && w & (1 << 22) == 0)
+                        || (w & (1 << 22) != 0 && w & 31 == bits(w, 14, 10)) { return false; }
+                } else if opc == 3 && size >= 2 { return false; }
+            } else {
+                if pair {
+                    if size > 2 { return false; }
+                } else if opc & 2 != 0 && size != 0 { return false; }
+                let touches = w & 31 == d || (pair && bits(w, 14, 10) == d);
+                if touches { return w & (1 << 22) != 0; }
+            }
+        } else if !flags_safe_passthrough(w) && !flags_safe_writer(w) {
+            return false;
+        }
+        pc += 4;
+    }
+    false
+}
+
 /// Debugging aid: ATTESOR_JIT_DISABLE=dpimm,branch,ldst,dpreg routes those
 /// instruction classes to the interpreter.
 fn disabled_classes() -> u32 {
@@ -1824,6 +1905,17 @@ pub fn emit_block(u: &mut Unit, pc: u64, read: &dyn Fn(u64) -> Option<u32>) -> u
                 DEAD_FLAG_SKIPS.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
             }
         }
+        u.dead_v = 0;
+        if !jit_off("vdead") && !jit_off("vcache") && !jit_off("scalaralias")
+            && disabled_classes() == 0 && !u.commpage_checks {
+            if let Some(regs) = v_writes(insn) {
+                for d in regs.into_iter().filter(|&d| d < 32) {
+                    if v_store_dead_at(d as u32, cur + 4, MAX_BLOCK_INSNS - count - 1, &u.labels, read) {
+                        u.dead_v |= 1 << d;
+                    }
+                }
+            }
+        }
         let scalar_inputs = if jit_off("scalaralias") { None } else { Some(u.vc) };
         let vw = v_writes(insn);
         match vw {
@@ -1832,6 +1924,7 @@ pub fn emit_block(u: &mut Unit, pc: u64, read: &dyn Fn(u64) -> Option<u32>) -> u
                 for r in regs {
                     if let Some(s) = u.vc.reg.iter().position(|&x| x == r) {
                         u.vc.reg[s] = 0xff;
+                        u.vc.dirty[s] = false;
                     }
                 }
             }
@@ -1844,6 +1937,7 @@ pub fn emit_block(u: &mut Unit, pc: u64, read: &dyn Fn(u64) -> Option<u32>) -> u
         e.u.insns_translated += 1;
         let translated = e.translate(insn);
         e.u.dead_flags = false;
+        e.u.dead_v = 0;
         e.u.vc_dest = [0xff; 2];
         if e.u.skip_next || e.u.a.instructions()[code_start..].iter().any(|i| i.mnemonic() == iced_x86::Mnemonic::Call) {
             e.u.vc = VCache::new(); // fused pair (writes the next one's Vd too) or helper call (clobbers xmm8-15)
@@ -3294,14 +3388,12 @@ impl<'a> E<'a> {
             match (kind, load) {
                 (4, true) => {
                     a!(self, movdqu(xmm0, xmmword_ptr(rax)));
-                    a!(self, movdqu(xmmword_ptr(r15 + voff(rt)), xmm0));
-                    self.vfill(rt, xmm0);
+                    self.store_v(rt, xmm0);
                 }
                 (2 | 3, true) => {
                     // through xmm0 (upper part zero) with one 16-byte store, so the value can stay cached
                     if kind == 2 { a!(self, movd(xmm0, dword_ptr(rax))); } else { a!(self, movq(xmm0, qword_ptr(rax))); }
-                    a!(self, movdqu(xmmword_ptr(r15 + voff(rt)), xmm0));
-                    self.vfill(rt, xmm0);
+                    self.store_v(rt, xmm0);
                 }
                 (4, false) => {
                     a!(self, movdqu(xmm0, xmmword_ptr(r15 + voff(rt))));
@@ -3494,7 +3586,7 @@ impl<'a> E<'a> {
         if !q {
             a!(self, movq(xmm0, xmm0));
         }
-        a!(self, movdqu(xmmword_ptr(r15 + voff(d)), xmm0));
+        self.store_v(d, xmm0);
     }
 
     /// Store the 64-bit value in rax to Vd (upper half zero unless `dup_hi`).
@@ -4398,7 +4490,7 @@ impl<'a> E<'a> {
                 return false;
             }
             let double = ftype == 1;
-            let cm = self.vsrc(rm);
+            let cm = self.scalar_source(rm).cached;
             self.fld_scalar(xmm0, rn, double);
             if double {
                 if let Some(c) = cm {
@@ -4432,8 +4524,7 @@ impl<'a> E<'a> {
                 }
             }
             self.fix_default_nan(double, rn, Some(rm));
-            a!(self, movdqu(xmmword_ptr(r15 + voff(rd)), xmm0));
-            self.vfill(rd, xmm0);
+            self.store_v(rd, xmm0);
             return true;
         }
         // FSQRT
@@ -4446,8 +4537,7 @@ impl<'a> E<'a> {
                 a!(self, sqrtss(xmm0, xmm0));
             }
             self.fix_default_nan(double, rn, None);
-            a!(self, movdqu(xmmword_ptr(r15 + voff(rd)), xmm0));
-            self.vfill(rd, xmm0);
+            self.store_v(rd, xmm0);
             return true;
         }
         // SCVTF / UCVTF (scalar, integer source)
@@ -5267,8 +5357,7 @@ impl<'a> E<'a> {
             // packed on purpose: the upper lanes are zero (movss/movsd loads) and are cleared again below
             self.fma_arm(double);
             if double { a!(self, movq(xmm0, xmm0)); } else { a!(self, insertps(xmm0, xmm0, 0x0E)); }
-            a!(self, movdqu(xmmword_ptr(r15 + voff(rd)), xmm0));
-            self.vfill(rd, xmm0);
+            self.store_v(rd, xmm0);
             return true;
         }
 
@@ -7992,6 +8081,86 @@ mod loopra_tests {
         for scratch in [0xc8a0_7c22, 0xf820_0022, 0x5e00_4000, 0x5e00_5000] {
             let words = [0x9100_0400, scratch, 0xf100_0631, 0x54ff_ffa1];
             assert!(unit(&words, &[0], StubKind::Patchable, false, false).region.is_none());
+        }
+    }
+}
+
+#[cfg(test)]
+mod vdead_tests {
+    use super::*;
+    use attesor_core::{cpu::Cpu, interp};
+    const PC: u64 = 0x1800_0000;
+
+    #[test]
+    fn forward_proof_stops_at_every_observer_and_boundary() {
+        let labels = HashMap::new();
+        let dead = |words: &[u32], room, labels: &HashMap<u64, CodeLabel>| {
+            v_store_dead_at(0, PC, room, labels, &|p| words.get(((p - PC) / 4) as usize).copied())
+        };
+        let kill = 0x1e622800; // fadd d0,d0,d2: reads old V0 through scalar_inputs
+        assert!(dead(&[0x1e602803, kill], 2, &labels));
+        assert!(dead(&[0x4e228420], 1, &labels)); // add v0.16b,v1.16b,v2.16b
+        assert!(dead(&[0x0e228420], 1, &labels)); // 64-bit vector writer zeroes upper
+        assert!(dead(&[0xfd400020], 1, &labels)); // ldr d0,[x1] zeroes upper bits
+        for barrier in [0xd4001001, 0x94000001, 0x14000001, 0,
+                        0xf9c00021, 0xa9400421, // reserved single / duplicate GPR pair -> fallback
+                        0xfd000020, // str d0,[x1], reads Cpu, not V cache
+                        0xad000420, // stp q0,q1,[x1]
+                        0x4e228400, 0x4e228403, // direct-memory vector input aliases
+                        0x6e621c20, // BSL reads old destination
+                        0x4e081c20, // ins v0.d[0],x1 (partial)
+                        0x4d408020, // lane load / structure family (unknown)
+                        0x9e660001, // fmov x1,d0 (direct memory reader)
+                        0x1e624801] { // scalar max/min: direct memory + cold path
+            assert!(!dead(&[barrier, kill], 2, &labels), "{barrier:08x}");
+        }
+        assert!(!dead(&[kill], 0, &labels));
+        let mut u = Unit::new(StubKind::Plain, false);
+        let l = u.a.create_label(); u.labels.insert(PC, l);
+        assert!(!dead(&[kill], 1, &u.labels));
+    }
+
+    #[test]
+    fn register_only_aliases_nan_eviction_and_loop_aot_match_interpreter() {
+        for kind in [StubKind::Plain, StubKind::Patchable] {
+            for looped in [false, true] {
+                // More than eight pending dead values forces dirty eviction.
+                let mut words: Vec<u32> = (0..12).map(|d| 0x1e622820 | d).collect();
+                for d in 0..12 { words.push(0x1e602800 | (d << 16) | (d << 5) | d); }
+                for d in 0..12 { words.push(0x4e3f87c0 | d); } // add vD.16b,v30.16b,v31.16b
+                // A memory-reading store is a barrier. The final writes must be visible.
+                words.push(0xfd000280); // str d0,[x20]
+                if looped {
+                    words.push(0xf10006b5); // subs x21,x21,#1
+                    words.push(0x54000001 | (((-(words.len() as i32)) as u32 & 0x7ffff) << 5));
+                }
+                words.push(0xd4001001);
+                let mut u = Unit::new(kind, false);
+                let l = u.a.create_label(); u.labels.insert(PC, l);
+                let exit_pc = PC + (words.len() as u64 - 1) * 4;
+                if looped { let l = u.a.create_label(); u.labels.insert(exit_pc, l); }
+                emit_block(&mut u, PC, &|p| words.get(((p - PC) / 4) as usize).copied());
+                if looped { emit_block(&mut u, exit_pc, &|p| words.get(((p - PC) / 4) as usize).copied()); }
+                u.finish();
+                let host = crate::jit::code_cache().alloc(65536);
+                let bytes = u.a.assemble(host).unwrap(); assert!(bytes.len() < 65536);
+                unsafe { std::ptr::copy_nonoverlapping(bytes.as_ptr(), host as *mut u8, bytes.len()); }
+                for nan in [false, true] {
+                    let mut memory = 0u64;
+                    let mut c = Cpu::new(); crate::jit::setup_cpu(&mut c);
+                    c.set_pc(PC); c.x[20] = &mut memory as *mut _ as u64; c.x[21] = 3;
+                    for i in 0..32 { c.v[i] = [if nan { 0x7ff0000000000001 + i as u64 } else { (i as f64 + 0.25).to_bits() }, !0]; }
+                    let mut r = Cpu::new(); r.x = c.x; r.v = c.v; r.set_pc(PC);
+                    for _ in 0..500 {
+                        let w = words[((r.pc() - PC) / 4) as usize];
+                        match interp::exec(&mut r, w) { Ok(()) => {}, Err(interp::Exit::Svc(_)) => break, Err(e) => panic!("{e:?}") }
+                    }
+                    let expected = memory; memory = 0;
+                    unsafe { crate::jit::attesor_jit_enter(&mut *c, host); }
+                    assert_eq!(c.v, r.v); assert_eq!(c.x, r.x); assert_eq!(c.nzcv(), r.nzcv());
+                    assert_eq!(memory, expected); assert_eq!(c.exit_reason, EXIT_SVC);
+                }
+            }
         }
     }
 }
