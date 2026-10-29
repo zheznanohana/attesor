@@ -83,7 +83,12 @@ pub fn run_thread(cpu: &mut Cpu) {
     EXIT_REQUESTED.with(|f| f.set(false));
     let key = cpu as *mut Cpu as usize;
     CPUS.lock().unwrap().push(key);
-    crate::jit::run(cpu);
+    static DEBUGGED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+    if crate::gdb::enabled() && !DEBUGGED.swap(true, std::sync::atomic::Ordering::SeqCst) {
+        crate::gdb::run(cpu); // the program's first thread
+    } else {
+        crate::jit::run(cpu);
+    }
     CPUS.lock().unwrap().retain(|&k| k != key);
 }
 

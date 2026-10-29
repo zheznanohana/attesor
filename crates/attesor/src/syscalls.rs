@@ -244,6 +244,7 @@ fn bsd_inner(cpu: &mut Cpu, n: u64, mut args: [u64; 8]) {
         }
         SYS_EXIT => {
             crate::engine::flush_profile();
+            crate::gdb::on_exit(args[0] as i32);
             let r = hostsys::unix(SYS_EXIT, &args);
             set_res(cpu, r);
         }

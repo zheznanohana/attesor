@@ -4,6 +4,7 @@ mod aot;
 mod cache;
 mod commpage;
 mod engine;
+mod gdb;
 mod gpu;
 mod guestmem;
 mod hostsys;
@@ -32,6 +33,8 @@ fn usage() -> ! {
     eprintln!("  --sysroot DIR   directory with the arm64 dyld shared cache files");
     eprintln!("  --trace         trace system calls");
     eprintln!("  --gpu           route the guest's Metal API to the host GPU");
+    eprintln!("  --gdb PORT      wait for a debugger (lldb gdb-remote / gdb target remote) on 127.0.0.1:PORT;");
+    eprintln!("                  the program runs in the interpreter");
     std::process::exit(2);
 }
 
@@ -79,6 +82,16 @@ fn main() {
                 jit::JIT_ENABLED.store(false, Ordering::Relaxed);
                 aot::set_enabled(false);
                 args.remove(0);
+            }
+            "--gdb" => {
+                args.remove(0);
+                match args.first().and_then(|p| p.parse::<u16>().ok()) {
+                    Some(p) if p != 0 => gdb::set_port(p),
+                    _ => usage(),
+                }
+                args.remove(0);
+                jit::JIT_ENABLED.store(false, Ordering::Relaxed);
+                aot::set_enabled(false);
             }
             "--no-aot" => {
                 aot::set_enabled(false);
@@ -225,6 +238,7 @@ fn main() {
         aot::register_dyld(&dyld, d.uuid, lo.wrapping_add(loaded.dyld.slide), hi.wrapping_add(loaded.dyld.slide));
     }
     aot::start_checkpoints();
+    gdb::set_main(&exe, loaded.main.slide);
     engine::run_thread(&mut cpu);
     // The main thread ended (pthread_exit on main): wait for other threads.
     while threads::LIVE_THREADS.load(Ordering::SeqCst) > 1 {
