@@ -17,3 +17,18 @@ Default concurrency gate without root thread-runtime fix:
 tests/attesor/native-zlib-check.sh: line 15: 78906 Segmentation fault: 11  ATTESOR_NATIVE_LIBS=$mode ATTESOR_NATIVE_DIR="$tmp/native" "$ATTESOR" --no-aot "$tmp/probe" "$flag" > "$tmp/result" 2> "$tmp/err"
 
 The SIGSEGV reproduces in bridge-disabled mode; see docs/NATIVE-LIBRARIES.md.
+
+Combined release build: bridge dd99394 + thread setup 06f92a6 (cherry-picked as 651e535).
+Default concurrent suite, no NATIVE_ZLIB_SINGLE_THREAD override:
+/tmp/attesor-native-check.25Dowo/native/libattesornative.dylib: replacing existing signature
+bridge-calls=0
+native-zlib: PASS
+bridge-calls=4332
+native-zlib: PASS
+bridge-calls=4332
+native-zlib: PASS
+native-chain: PASS
+bridge-calls=0
+native-zlib: PASS
+native-chain: PASS
+native-zlib suite: PASS

@@ -81,7 +81,12 @@ A fresh build matching this bridge commit reproduced the disabled-mode startup
 SIGSEGV again (PID 78906); the standalone bridge source therefore does not claim
 that concurrency is accepted. `NATIVE_ZLIB_SINGLE_THREAD=1` isolates library
 semantics from that runtime defect while leaving the default suite's concurrency
-gate intact. The integrator has supplied thread-runtime fix `06f92a6`; this bridge remains opt-in until its integrated concurrency gate passes.
+gate intact. The integrator supplied thread-runtime fix `06f92a6`. The combination of bridge
+`dd99394` and that fix passes the full default suite, including all four-thread,
+tagged-pointer and native-middleman cases, with 4332 host calls enabled and zero
+disabled. The combined validation log is in
+`measurements/2026-10-29-native-zlib.txt`. Default enablement remains pending
+serial performance acceptance and application-level evidence.
 
 ## Performance acceptance
 
