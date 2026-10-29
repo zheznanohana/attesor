@@ -8,3 +8,5 @@ tests/attesor/build/
 tools/winlist
 bench/native-ratio/*
 !bench/native-ratio/*.c
+
+native/out/

@@ -19,6 +19,9 @@ else
   BIN=target/release/attesor
 fi
 gpu/build.sh
+native/build.sh
+mkdir -p "$PREFIX/native"
+install -S -m 755 native/out/libattesornative.dylib "$PREFIX/native/"
 mkdir -p "$PREFIX/gpu"
 install -S -m 755 "$BIN" "$PREFIX/attesor"
 for l in libmclbridge libmclmetal libattesorui libattesorexec; do install -S -m 755 "gpu/out/$l.dylib" "$PREFIX/gpu/"; done

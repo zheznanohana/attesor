@@ -88,7 +88,7 @@ fn host_env(n: u64, args: &mut [u64; 8]) -> Option<(Vec<CString>, Vec<u64>)> {
     let mut inserts: Vec<String> = Vec::new();
     env.retain(|e| match e.strip_prefix("DYLD_INSERT_LIBRARIES=") {
         Some(v) => {
-            inserts.extend(v.split(':').filter(|p| !p.is_empty() && !guest_shims.iter().any(|s| s == p)).map(str::to_string));
+            inserts.extend(v.split(':').filter(|p| !p.is_empty() && !crate::native::is_shim(p) && !guest_shims.iter().any(|s| s == p)).map(str::to_string));
             false
         }
         None => true,

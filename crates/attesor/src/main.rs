@@ -12,6 +12,7 @@ mod iokit;
 mod jit;
 mod loader;
 mod macho;
+mod native;
 mod paths;
 mod sandbox;
 mod signals;
@@ -192,7 +193,7 @@ fn main() {
     let gpu_active = std::env::var_os("ATTESOR_GPU").is_some()
         && std::env::var("ATTESOR_GPU_ONLY").map(|o| args.iter().skip(1).any(|a| a.contains(&o))).unwrap_or(true);
     let mut envp: Vec<String> = std::env::vars()
-        .filter(|(k, _)| !k.starts_with("ATTESOR_") || matches!(k.as_str(), "ATTESOR_DUMP_ON_FAULT" | "ATTESOR_GPU_BRIDGE" | "ATTESOR_UI_TRACE" | "ATTESOR_NO_DOCK_ICON" | "ATTESOR_STDERR_LOG" | "ATTESOR_CACHE" | "ATTESOR_NO_AOT_BUILD" | "ATTESOR_AOT_CHECKPOINT" | "ATTESOR_AOT_SYNC" | "ATTESOR_JIT_DISABLE" | "ATTESOR_JIT_THRESHOLD" | "ATTESOR_STATS" | "ATTESOR_FALLBACK_HIST"))
+        .filter(|(k, _)| !k.starts_with("ATTESOR_") || matches!(k.as_str(), "ATTESOR_DUMP_ON_FAULT" | "ATTESOR_GPU_BRIDGE" | "ATTESOR_UI_TRACE" | "ATTESOR_NO_DOCK_ICON" | "ATTESOR_STDERR_LOG" | "ATTESOR_CACHE" | "ATTESOR_NO_AOT_BUILD" | "ATTESOR_AOT_CHECKPOINT" | "ATTESOR_AOT_SYNC" | "ATTESOR_JIT_DISABLE" | "ATTESOR_JIT_THRESHOLD" | "ATTESOR_STATS" | "ATTESOR_FALLBACK_HIST" | "ATTESOR_NATIVE_LIBS" | "ATTESOR_NATIVE_DIR"))
         .map(|(k, v)| format!("{k}={v}"))
         .collect();
 
@@ -203,6 +204,7 @@ fn main() {
     }
     gpu::strip_host_shims(&mut envp);
     gpu::inject_ui(&exe, &mut envp);
+    if let Err(e) = native::inject(&mut envp) { eprintln!("attesor: {e}"); std::process::exit(1); }
     if gpu_active && !gpu::inject(&mut envp) {
         eprintln!("attesor: --gpu: libmclmetal.dylib not found (looked next to attesor, in ./gpu, ~/.attesor/gpu, $ATTESOR_GPU_DIR)");
     }
