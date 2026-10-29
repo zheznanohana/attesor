@@ -20,7 +20,11 @@ negative indefinite NaN. The classification has the same meaning at every
 optimization level; it is not a build-profile special case.
 
 The JIT's existing block FPCR guard continues to send DN mode to the interpreter
-before executing native FP code. It is unchanged. Directed tests verify both
+before executing native FP code. MSR FPCR now ends its block and returns through
+the dispatcher; its continuation is retained by AOT discovery. Consequently a
+mode written inside a block cannot bypass the successor guard, including by a
+private region edge or a patched chain. This boundary applies to every FP
+instruction protected by that guard, not just square root. Directed tests verify both
 DN modes against independent bit tables through every interpreter form, and
 verify that the JIT DN guard leaves vectors untouched before interpreting the
 instruction. Source/destination aliases and upper-lane clearing are covered.

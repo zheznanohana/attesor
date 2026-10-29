@@ -1037,7 +1037,13 @@ pub fn is_isb(insn: u32) -> bool {
     insn & 0xFFFF_F0FF == 0xD503_30DF
 }
 
-/// Is this instruction a block terminator (changes control flow or synchronizes instructions)?
+/// FPCR changes affect every following FP instruction, including block guards.
+/// Its interpreter helper updates host rounding/flush modes before returning.
+pub fn is_fpcr_write(insn: u32) -> bool {
+    insn & 0xffff_ffe0 == 0xd51b_4400
+}
+
+/// Is this instruction a block terminator (control flow or execution context)?
 pub fn is_terminator(insn: u32) -> bool {
     (insn & 0x7C00_0000 == 0x1400_0000)          // B, BL
         || (insn & 0xFF00_0000 == 0x5400_0000)   // B.cond / BC.cond
@@ -1047,6 +1053,7 @@ pub fn is_terminator(insn: u32) -> bool {
         || (insn & 0xFF00_0000 == 0xD400_0000)   // exceptions (SVC, BRK...)
         || (insn & 0xFFFF_FFE0 == 0xD50B_7520)   // IC IVAU only (runtime must see it); DC ops are not terminators
         || is_isb(insn)                         // context synchronization must pass through dispatch
+        || is_fpcr_write(insn)                  // recheck the new FP mode at a public entry
 }
 
 /// Debugging aid: ATTESOR_JIT_OFF=ext,fma,… routes the named SIMD translation groups to the interpreter
@@ -6633,6 +6640,62 @@ mod fsqrt_dn_tests {
                 assert_eq!(c.vq(0), want, "word={word:08x} input={input:x} dn={dn}");
                 assert_eq!(c.fpcr, mode);
             }}
+        }
+    }
+}
+
+#[cfg(test)]
+mod fpcr_boundary_tests {
+    use super::*;
+    use attesor_core::cpu::Cpu;
+
+    #[test]
+    fn fpcr_write_exits_before_all_guarded_fp_successors() {
+        const PC: u64 = 0x3000_0000;
+        for r in 0..32 { assert!(is_terminator(0xd51b4400 | r)); }
+        assert!(!is_terminator(0xd51b4420)); // MSR FPSR is distinct
+        assert!(!is_terminator(0xd53b4400)); // MRS FPCR does not change mode
+        for kind in [StubKind::Plain, StubKind::Patchable] {
+            // Scalar sqrt, scalar add, vector add, fused scalar arithmetic.
+            for fp in [0x1e61c020, 0x1e612800, 0x4e21d420, 0x1f410800] {
+                for rt in [0, 7, 31] {
+                    let words = [0x91000529, 0xd51b4400 | rt, fp, 0x91000529, 0xd4001001];
+                    let mut u = Unit::new(kind, false);
+                    let entry = u.a.create_label(); u.labels.insert(PC, entry);
+                    let read = |p| if p >= PC { words.get(((p-PC)/4) as usize).copied() } else { None };
+                    let end = emit_block(&mut u, PC, &read);
+                    // Add the next public entry only after emitting the first
+                    // block: its label cannot accidentally provide the boundary.
+                    let next = u.a.create_label(); u.labels.insert(PC+8, next);
+                    let unchainable = u.stubs.is_empty();
+                    emit_block(&mut u, PC+8, &read); u.finish();
+                    let host = crate::jit::code_cache().alloc(16384);
+                    let result = u.a.assemble_options(host, iced_x86::BlockEncoderOptions::RETURN_NEW_INSTRUCTION_OFFSETS).unwrap();
+                    let first = result.label_ip(&u.labels[&PC]).unwrap();
+                    let second = result.label_ip(&u.labels[&(PC+8)]).unwrap();
+                    assert!(result.inner.code_buffer.len() <= 16384);
+                    unsafe { std::ptr::copy_nonoverlapping(result.inner.code_buffer.as_ptr(),host as *mut u8,result.inner.code_buffer.len()); }
+                    for mode in [0, 1<<25, 1<<26, 1<<19] { for initial in [0, 1<<25] {
+                        let mut c = Cpu::new(); crate::jit::setup_cpu(&mut c);
+                        c.pc = PC; c.fpcr = initial; c.x[9] = 42; c.set_nzcv(11);
+                        if rt != 31 { c.x[rt as usize] = mode; }
+                        c.v[0] = [0xfff8000000001234, 17]; c.v[1] = [0xfff8000000004321, 19];
+                        let original = c.v; let expected_mode = if rt == 31 { 0 } else { mode };
+                        unsafe { crate::jit::attesor_jit_enter(&mut *c, first); }
+                        assert_eq!(c.exit_reason, EXIT_CONTINUE, "fp={fp:08x} mode={mode:x} initial={initial:x}");
+                        assert_eq!(end, PC+8); assert!(unchainable);
+                        assert_eq!(c.pc, PC+8); assert_eq!(c.fpcr, expected_mode);
+                        assert_eq!(c.x[9],43); assert_eq!(c.v, original); assert_eq!(c.nzcv(),11);
+                        unsafe { crate::jit::attesor_jit_enter(&mut *c, second); }
+                        if expected_mode & FPCR_NONDEFAULT as u64 != 0 {
+                            assert_eq!(c.exit_reason, EXIT_INTERP); assert_eq!(c.pc,PC+8);
+                            assert_eq!(c.x[9],43); assert_eq!(c.v,original);
+                        } else {
+                            assert_eq!(c.exit_reason,EXIT_SVC); assert_eq!(c.x[9],44);
+                        }
+                    }}
+                }
+            }
         }
     }
 }
