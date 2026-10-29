@@ -1,0 +1,445 @@
+{
+  "translator": "/private/tmp/attesor-final-target/release/attesor",
+  "translator_sha256": "c19e12ad398809cec1e9cc2bb3a4610c1dff7d34f2686a3629126665a1814550",
+  "runs": 7,
+  "status": "passed",
+  "fixtures": {
+    "pressure": {
+      "source": "tests/attesor/nextuse-pressure.c",
+      "source_sha256": "111056d7a0c933a290dd27ed512bd7602e822c65c5d266c30f35f64d9c6eb498",
+      "binaries": {
+        "arm64": {
+          "path": "/private/tmp/attesor-perf/round2-serial/fixtures/pressure-arm64",
+          "sha256": "0ceabaa72cd41ebbea2129a785b87fb9e785f0664e858e3f321ce4025360b7ee"
+        },
+        "x86_64": {
+          "path": "/private/tmp/attesor-perf/round2-serial/fixtures/pressure-x86_64",
+          "sha256": "0f3c5332aa7e7c30652c78e7955e07949af94ce130a6c528612638cb2d13ebf2"
+        }
+      },
+      "semantic_output_expected": true,
+      "semantic_limitation": null
+    },
+    "short": {
+      "source": "tests/attesor/aot-prewarm-probe.c",
+      "source_sha256": "69c30b15767bc04ca510369b6a278df1c2e7e6bbca28eb1d729aeaed42f89eee",
+      "binaries": {
+        "arm64": {
+          "path": "/private/tmp/attesor-perf/round2-serial/fixtures/short-arm64",
+          "sha256": "e5ccaeeb7fe4223ac377e3b55c6901d9a25993fbfa2d09a9af45934354094b6a"
+        },
+        "x86_64": {
+          "path": "/private/tmp/attesor-perf/round2-serial/fixtures/short-x86_64",
+          "sha256": "1145580f794f53d66e7a0428d0d38c45451fde24b98a1ddf89d10b5dd11246e3"
+        }
+      },
+      "semantic_output_expected": true,
+      "semantic_limitation": null
+    },
+    "mixed": {
+      "source": "bench/native-ratio/kernels.c",
+      "source_sha256": "e06c0545309df3b721680b58b671b975fcaec6b8a0fcbd6b26cc16bd6fd32b8f",
+      "binaries": {
+        "arm64": {
+          "path": "/private/tmp/attesor-perf/round2-serial/fixtures/mixed-arm64",
+          "sha256": "c835ddb3ced6d9378a2e74a2e3351d9405b3e33005a2c51d9fa99760cb38c814"
+        },
+        "x86_64": {
+          "path": "/private/tmp/attesor-perf/round2-serial/fixtures/mixed-x86_64",
+          "sha256": "80b30555e9470ccf532db0c54ff147efe385215dad6c26578ffddd7760f14c27"
+        }
+      },
+      "semantic_output_expected": false,
+      "semantic_limitation": "Ordinary kernels print timing rows only, without checksum. Native reference checks process success and the empty semantic output only; it does not prove numerical equivalence. Separate correctness gates are required."
+    },
+    "directbranch": {
+      "source": "tests/attesor/direct-branch.c",
+      "source_sha256": "6e181d0407ee42874843f30a290f1cd44015b9bed86e363f040212c20889790a",
+      "binaries": {
+        "arm64": {
+          "path": "/private/tmp/attesor-perf/round2-serial/fixtures/directbranch-arm64",
+          "sha256": "47fc55bc847597fd4880b69a3f50b198b51760e8e577c32db2e6962fa426722a"
+        },
+        "x86_64": {
+          "path": "/private/tmp/attesor-perf/round2-serial/fixtures/directbranch-x86_64",
+          "sha256": "98077e4cb3dfe2f95b21feeab3c8b8e952eb042af521423f8e6d4644d953bd3b"
+        }
+      },
+      "semantic_output_expected": true,
+      "semantic_limitation": null
+    },
+    "tbimask": {
+      "source": "tests/attesor/tbi-chain.c",
+      "source_sha256": "d929766b23ff317276f36cbb5081e252b8050cc90ad6818108ea3451d0a724b4",
+      "binaries": {
+        "arm64": {
+          "path": "/private/tmp/attesor-perf/round2-serial/fixtures/tbimask-arm64",
+          "sha256": "877184540ae0d9e1bd8b0e61e95c43b14e1063c2a3eb39807fe330143107e14f"
+        },
+        "x86_64": {
+          "path": "/private/tmp/attesor-perf/round2-serial/fixtures/tbimask-x86_64",
+          "sha256": "43fa40785671a9ac19b48cfb3183a3cd66028b4e69ab2fda4ce088ad3ef68fe8"
+        }
+      },
+      "semantic_output_expected": true,
+      "semantic_limitation": null
+    },
+    "regioncache": {
+      "source": "tests/attesor/regioncache.c",
+      "source_sha256": "d06ae8584140ff79561f1525f28b7c8ef35e455f8bc7594eab53dcde0944407b",
+      "binaries": {
+        "arm64": {
+          "path": "/private/tmp/attesor-perf/round2-serial/fixtures/regioncache-arm64",
+          "sha256": "81d82d1f4829cc186e4a138a21f591c44420890ae659c4a560a853fa81ff5b5c"
+        },
+        "x86_64": {
+          "path": "/private/tmp/attesor-perf/round2-serial/fixtures/regioncache-x86_64",
+          "sha256": "7f3cb6d853cdf702bd5721254eab6260a89014b689d67824bf09fff1e0c8ad9e"
+        }
+      },
+      "semantic_output_expected": true,
+      "semantic_limitation": null
+    }
+  },
+  "stages": [
+    {
+      "label": "build-pressure-arm64",
+      "command": [
+        "clang",
+        "-arch",
+        "arm64",
+        "-O2",
+        "-ffp-contract=off",
+        "/Users/zhez/attesor/tests/attesor/nextuse-pressure.c",
+        "-o",
+        "/private/tmp/attesor-perf/round2-serial/fixtures/pressure-arm64"
+      ],
+      "status": "passed"
+    },
+    {
+      "label": "build-pressure-x86_64",
+      "command": [
+        "clang",
+        "-arch",
+        "x86_64",
+        "-O2",
+        "-ffp-contract=off",
+        "/Users/zhez/attesor/tests/attesor/nextuse-pressure.c",
+        "-o",
+        "/private/tmp/attesor-perf/round2-serial/fixtures/pressure-x86_64"
+      ],
+      "status": "passed"
+    },
+    {
+      "label": "build-short-arm64",
+      "command": [
+        "clang",
+        "-arch",
+        "arm64",
+        "-O2",
+        "-ffp-contract=off",
+        "/Users/zhez/attesor/tests/attesor/aot-prewarm-probe.c",
+        "-o",
+        "/private/tmp/attesor-perf/round2-serial/fixtures/short-arm64"
+      ],
+      "status": "passed"
+    },
+    {
+      "label": "build-short-x86_64",
+      "command": [
+        "clang",
+        "-arch",
+        "x86_64",
+        "-O2",
+        "-ffp-contract=off",
+        "/Users/zhez/attesor/tests/attesor/aot-prewarm-probe.c",
+        "-o",
+        "/private/tmp/attesor-perf/round2-serial/fixtures/short-x86_64"
+      ],
+      "status": "passed"
+    },
+    {
+      "label": "build-mixed-arm64",
+      "command": [
+        "clang",
+        "-arch",
+        "arm64",
+        "-O2",
+        "-ffp-contract=off",
+        "/Users/zhez/attesor/bench/native-ratio/kernels.c",
+        "-o",
+        "/private/tmp/attesor-perf/round2-serial/fixtures/mixed-arm64"
+      ],
+      "status": "passed"
+    },
+    {
+      "label": "build-mixed-x86_64",
+      "command": [
+        "clang",
+        "-arch",
+        "x86_64",
+        "-O2",
+        "-ffp-contract=off",
+        "/Users/zhez/attesor/bench/native-ratio/kernels.c",
+        "-o",
+        "/private/tmp/attesor-perf/round2-serial/fixtures/mixed-x86_64"
+      ],
+      "status": "passed"
+    },
+    {
+      "label": "build-directbranch-arm64",
+      "command": [
+        "clang",
+        "-arch",
+        "arm64",
+        "-O2",
+        "-ffp-contract=off",
+        "/Users/zhez/attesor/tests/attesor/direct-branch.c",
+        "-o",
+        "/private/tmp/attesor-perf/round2-serial/fixtures/directbranch-arm64"
+      ],
+      "status": "passed"
+    },
+    {
+      "label": "build-directbranch-x86_64",
+      "command": [
+        "clang",
+        "-arch",
+        "x86_64",
+        "-O2",
+        "-ffp-contract=off",
+        "/Users/zhez/attesor/tests/attesor/direct-branch.c",
+        "-o",
+        "/private/tmp/attesor-perf/round2-serial/fixtures/directbranch-x86_64"
+      ],
+      "status": "passed"
+    },
+    {
+      "label": "build-tbimask-arm64",
+      "command": [
+        "clang",
+        "-arch",
+        "arm64",
+        "-O2",
+        "-ffp-contract=off",
+        "/Users/zhez/attesor/tests/attesor/tbi-chain.c",
+        "-o",
+        "/private/tmp/attesor-perf/round2-serial/fixtures/tbimask-arm64"
+      ],
+      "status": "passed"
+    },
+    {
+      "label": "build-tbimask-x86_64",
+      "command": [
+        "clang",
+        "-arch",
+        "x86_64",
+        "-O2",
+        "-ffp-contract=off",
+        "/Users/zhez/attesor/tests/attesor/tbi-chain.c",
+        "-o",
+        "/private/tmp/attesor-perf/round2-serial/fixtures/tbimask-x86_64"
+      ],
+      "status": "passed"
+    },
+    {
+      "label": "build-regioncache-arm64",
+      "command": [
+        "clang",
+        "-arch",
+        "arm64",
+        "-O2",
+        "-ffp-contract=off",
+        "/Users/zhez/attesor/tests/attesor/regioncache.c",
+        "-o",
+        "/private/tmp/attesor-perf/round2-serial/fixtures/regioncache-arm64"
+      ],
+      "status": "passed"
+    },
+    {
+      "label": "build-regioncache-x86_64",
+      "command": [
+        "clang",
+        "-arch",
+        "x86_64",
+        "-O2",
+        "-ffp-contract=off",
+        "/Users/zhez/attesor/tests/attesor/regioncache.c",
+        "-o",
+        "/private/tmp/attesor-perf/round2-serial/fixtures/regioncache-x86_64"
+      ],
+      "status": "passed"
+    },
+    {
+      "label": "nextuse-pressure",
+      "command": [
+        "/Library/Developer/CommandLineTools/usr/bin/python3",
+        "/Users/zhez/attesor/bench/compare-cpu.py",
+        "--before",
+        "/private/tmp/attesor-final-target/release/attesor",
+        "--after",
+        "/private/tmp/attesor-final-target/release/attesor",
+        "--guest",
+        "/private/tmp/attesor-perf/round2-serial/fixtures/pressure-arm64",
+        "--reference",
+        "/private/tmp/attesor-perf/round2-serial/fixtures/pressure-x86_64",
+        "--runs",
+        "7",
+        "--output",
+        "/private/tmp/attesor-perf/round2-serial/nextuse-pressure.json",
+        "--before-env=ATTESOR_JIT_OFF=nextuse",
+        "--before-env=ATTESOR_JIT_ON=",
+        "--after-env=ATTESOR_JIT_OFF=",
+        "--after-env=ATTESOR_JIT_ON=",
+        "--guest-arg=200000"
+      ],
+      "status": "passed"
+    },
+    {
+      "label": "nextuse-short",
+      "command": [
+        "/Library/Developer/CommandLineTools/usr/bin/python3",
+        "/Users/zhez/attesor/bench/compare-cpu.py",
+        "--before",
+        "/private/tmp/attesor-final-target/release/attesor",
+        "--after",
+        "/private/tmp/attesor-final-target/release/attesor",
+        "--guest",
+        "/private/tmp/attesor-perf/round2-serial/fixtures/short-arm64",
+        "--reference",
+        "/private/tmp/attesor-perf/round2-serial/fixtures/short-x86_64",
+        "--runs",
+        "7",
+        "--output",
+        "/private/tmp/attesor-perf/round2-serial/nextuse-short.json",
+        "--before-env=ATTESOR_JIT_OFF=nextuse",
+        "--before-env=ATTESOR_JIT_ON=",
+        "--after-env=ATTESOR_JIT_OFF=",
+        "--after-env=ATTESOR_JIT_ON="
+      ],
+      "status": "passed"
+    },
+    {
+      "label": "nextuse-mixed",
+      "command": [
+        "/Library/Developer/CommandLineTools/usr/bin/python3",
+        "/Users/zhez/attesor/bench/compare-cpu.py",
+        "--before",
+        "/private/tmp/attesor-final-target/release/attesor",
+        "--after",
+        "/private/tmp/attesor-final-target/release/attesor",
+        "--guest",
+        "/private/tmp/attesor-perf/round2-serial/fixtures/mixed-arm64",
+        "--reference",
+        "/private/tmp/attesor-perf/round2-serial/fixtures/mixed-x86_64",
+        "--runs",
+        "7",
+        "--output",
+        "/private/tmp/attesor-perf/round2-serial/nextuse-mixed.json",
+        "--before-env=ATTESOR_JIT_OFF=nextuse",
+        "--before-env=ATTESOR_JIT_ON=",
+        "--after-env=ATTESOR_JIT_OFF=",
+        "--after-env=ATTESOR_JIT_ON="
+      ],
+      "status": "passed"
+    },
+    {
+      "label": "directbranch",
+      "command": [
+        "/Library/Developer/CommandLineTools/usr/bin/python3",
+        "/Users/zhez/attesor/bench/compare-cpu.py",
+        "--before",
+        "/private/tmp/attesor-final-target/release/attesor",
+        "--after",
+        "/private/tmp/attesor-final-target/release/attesor",
+        "--guest",
+        "/private/tmp/attesor-perf/round2-serial/fixtures/directbranch-arm64",
+        "--reference",
+        "/private/tmp/attesor-perf/round2-serial/fixtures/directbranch-x86_64",
+        "--runs",
+        "7",
+        "--output",
+        "/private/tmp/attesor-perf/round2-serial/directbranch.json",
+        "--before-env=ATTESOR_JIT_OFF=directbranch",
+        "--before-env=ATTESOR_JIT_ON=",
+        "--after-env=ATTESOR_JIT_OFF=",
+        "--after-env=ATTESOR_JIT_ON=",
+        "--guest-arg=--bench",
+        "--guest-arg=2000000"
+      ],
+      "status": "passed"
+    },
+    {
+      "label": "tbimask",
+      "command": [
+        "/Library/Developer/CommandLineTools/usr/bin/python3",
+        "/Users/zhez/attesor/bench/compare-cpu.py",
+        "--before",
+        "/private/tmp/attesor-final-target/release/attesor",
+        "--after",
+        "/private/tmp/attesor-final-target/release/attesor",
+        "--guest",
+        "/private/tmp/attesor-perf/round2-serial/fixtures/tbimask-arm64",
+        "--reference",
+        "/private/tmp/attesor-perf/round2-serial/fixtures/tbimask-x86_64",
+        "--runs",
+        "7",
+        "--output",
+        "/private/tmp/attesor-perf/round2-serial/tbimask.json",
+        "--before-env=ATTESOR_JIT_OFF=tbimask",
+        "--before-env=ATTESOR_JIT_ON=",
+        "--after-env=ATTESOR_JIT_OFF=",
+        "--after-env=ATTESOR_JIT_ON=",
+        "--guest-arg=10000000"
+      ],
+      "status": "passed"
+    },
+    {
+      "label": "regioncache",
+      "command": [
+        "/Library/Developer/CommandLineTools/usr/bin/python3",
+        "/Users/zhez/attesor/bench/compare-cpu.py",
+        "--before",
+        "/private/tmp/attesor-final-target/release/attesor",
+        "--after",
+        "/private/tmp/attesor-final-target/release/attesor",
+        "--guest",
+        "/private/tmp/attesor-perf/round2-serial/fixtures/regioncache-arm64",
+        "--reference",
+        "/private/tmp/attesor-perf/round2-serial/fixtures/regioncache-x86_64",
+        "--runs",
+        "7",
+        "--output",
+        "/private/tmp/attesor-perf/round2-serial/regioncache.json",
+        "--before-env=ATTESOR_JIT_OFF=",
+        "--before-env=ATTESOR_JIT_ON=",
+        "--after-env=ATTESOR_JIT_OFF=",
+        "--after-env=ATTESOR_JIT_ON=regioncache",
+        "--guest-arg=200000"
+      ],
+      "status": "passed"
+    },
+    {
+      "label": "short-prewarm",
+      "command": [
+        "/Library/Developer/CommandLineTools/usr/bin/python3",
+        "/Users/zhez/attesor/bench/prewarm-startup.py",
+        "--attesor",
+        "/private/tmp/attesor-final-target/release/attesor",
+        "--runs",
+        "7",
+        "--output",
+        "/private/tmp/attesor-perf/round2-serial/short-prewarm.json"
+      ],
+      "status": "passed"
+    }
+  ],
+  "driver_sha256": {
+    "serial-acceptance.py": "827f77f510dff23890bd54adda54ecd0fa9ef7d85917cbc9e3badf3bafbf26d0",
+    "compare-cpu.py": "8be72788d692fe35b962daf73d7a1ee4b85ec5d43d6affdac6d695d636160862",
+    "prewarm-startup.py": "c2ad8e60c878133454a38d5af1a6523caf1fd129967aaa2fa696c12fb64129bf"
+  },
+  "clang_version": "Apple clang version 21.0.0 (clang-2100.1.1.101)\nTarget: x86_64-apple-darwin25.6.0\nThread model: posix\nInstalledDir: /Library/Developer/CommandLineTools/usr/bin\n",
+  "scope": "Serial same-binary toggle comparisons; run without concurrent CPU tests. Short process wall times include dyld/libc startup. No result is a general application performance claim.",
+  "inherited_loader_environment": {}
+}

@@ -1,0 +1,359 @@
+{
+  "host": "zhezdeMacBook-Pro.local",
+  "sha256": {
+    "before": "c19e12ad398809cec1e9cc2bb3a4610c1dff7d34f2686a3629126665a1814550",
+    "after": "c19e12ad398809cec1e9cc2bb3a4610c1dff7d34f2686a3629126665a1814550",
+    "guest": "47fc55bc847597fd4880b69a3f50b198b51760e8e577c32db2e6962fa426722a"
+  },
+  "samples": [
+    {
+      "round": 0,
+      "build": "before",
+      "command": [
+        "/private/tmp/attesor-final-target/release/attesor",
+        "--no-aot",
+        "/private/tmp/attesor-perf/round2-serial/fixtures/directbranch-arm64",
+        "--bench",
+        "2000000"
+      ],
+      "wall_ms": 1383.720556,
+      "environment": {
+        "ATTESOR_JIT_OFF": "directbranch",
+        "ATTESOR_JIT_ON": ""
+      },
+      "cold_aot": false,
+      "metrics": {
+        "cbz-chain": 11.94,
+        "tbz-chain": 26.202
+      },
+      "stdout": "cbz-chain 11.940 ms\ntbz-chain 26.202 ms\nchecksum ed16abd6de7682c0 26a22cf81556a53f\n",
+      "stderr": ""
+    },
+    {
+      "round": 0,
+      "build": "after",
+      "command": [
+        "/private/tmp/attesor-final-target/release/attesor",
+        "--no-aot",
+        "/private/tmp/attesor-perf/round2-serial/fixtures/directbranch-arm64",
+        "--bench",
+        "2000000"
+      ],
+      "wall_ms": 1411.702763,
+      "environment": {
+        "ATTESOR_JIT_OFF": "",
+        "ATTESOR_JIT_ON": ""
+      },
+      "cold_aot": false,
+      "metrics": {
+        "cbz-chain": 13.591,
+        "tbz-chain": 28.1
+      },
+      "stdout": "cbz-chain 13.591 ms\ntbz-chain 28.100 ms\nchecksum ed16abd6de7682c0 26a22cf81556a53f\n",
+      "stderr": ""
+    },
+    {
+      "round": 1,
+      "build": "after",
+      "command": [
+        "/private/tmp/attesor-final-target/release/attesor",
+        "--no-aot",
+        "/private/tmp/attesor-perf/round2-serial/fixtures/directbranch-arm64",
+        "--bench",
+        "2000000"
+      ],
+      "wall_ms": 1294.9651860000001,
+      "environment": {
+        "ATTESOR_JIT_OFF": "",
+        "ATTESOR_JIT_ON": ""
+      },
+      "cold_aot": false,
+      "metrics": {
+        "cbz-chain": 14.177,
+        "tbz-chain": 29.054
+      },
+      "stdout": "cbz-chain 14.177 ms\ntbz-chain 29.054 ms\nchecksum ed16abd6de7682c0 26a22cf81556a53f\n",
+      "stderr": ""
+    },
+    {
+      "round": 1,
+      "build": "before",
+      "command": [
+        "/private/tmp/attesor-final-target/release/attesor",
+        "--no-aot",
+        "/private/tmp/attesor-perf/round2-serial/fixtures/directbranch-arm64",
+        "--bench",
+        "2000000"
+      ],
+      "wall_ms": 1338.125421,
+      "environment": {
+        "ATTESOR_JIT_OFF": "directbranch",
+        "ATTESOR_JIT_ON": ""
+      },
+      "cold_aot": false,
+      "metrics": {
+        "cbz-chain": 15.386,
+        "tbz-chain": 27.186
+      },
+      "stdout": "cbz-chain 15.386 ms\ntbz-chain 27.186 ms\nchecksum ed16abd6de7682c0 26a22cf81556a53f\n",
+      "stderr": ""
+    },
+    {
+      "round": 2,
+      "build": "before",
+      "command": [
+        "/private/tmp/attesor-final-target/release/attesor",
+        "--no-aot",
+        "/private/tmp/attesor-perf/round2-serial/fixtures/directbranch-arm64",
+        "--bench",
+        "2000000"
+      ],
+      "wall_ms": 1377.8650349999994,
+      "environment": {
+        "ATTESOR_JIT_OFF": "directbranch",
+        "ATTESOR_JIT_ON": ""
+      },
+      "cold_aot": false,
+      "metrics": {
+        "cbz-chain": 13.808,
+        "tbz-chain": 24.617
+      },
+      "stdout": "cbz-chain 13.808 ms\ntbz-chain 24.617 ms\nchecksum ed16abd6de7682c0 26a22cf81556a53f\n",
+      "stderr": ""
+    },
+    {
+      "round": 2,
+      "build": "after",
+      "command": [
+        "/private/tmp/attesor-final-target/release/attesor",
+        "--no-aot",
+        "/private/tmp/attesor-perf/round2-serial/fixtures/directbranch-arm64",
+        "--bench",
+        "2000000"
+      ],
+      "wall_ms": 1322.9035319999998,
+      "environment": {
+        "ATTESOR_JIT_OFF": "",
+        "ATTESOR_JIT_ON": ""
+      },
+      "cold_aot": false,
+      "metrics": {
+        "cbz-chain": 16.921,
+        "tbz-chain": 26.04
+      },
+      "stdout": "cbz-chain 16.921 ms\ntbz-chain 26.040 ms\nchecksum ed16abd6de7682c0 26a22cf81556a53f\n",
+      "stderr": ""
+    },
+    {
+      "round": 3,
+      "build": "after",
+      "command": [
+        "/private/tmp/attesor-final-target/release/attesor",
+        "--no-aot",
+        "/private/tmp/attesor-perf/round2-serial/fixtures/directbranch-arm64",
+        "--bench",
+        "2000000"
+      ],
+      "wall_ms": 1333.2612610000006,
+      "environment": {
+        "ATTESOR_JIT_OFF": "",
+        "ATTESOR_JIT_ON": ""
+      },
+      "cold_aot": false,
+      "metrics": {
+        "cbz-chain": 13.372,
+        "tbz-chain": 27.536
+      },
+      "stdout": "cbz-chain 13.372 ms\ntbz-chain 27.536 ms\nchecksum ed16abd6de7682c0 26a22cf81556a53f\n",
+      "stderr": ""
+    },
+    {
+      "round": 3,
+      "build": "before",
+      "command": [
+        "/private/tmp/attesor-final-target/release/attesor",
+        "--no-aot",
+        "/private/tmp/attesor-perf/round2-serial/fixtures/directbranch-arm64",
+        "--bench",
+        "2000000"
+      ],
+      "wall_ms": 1436.2914569999994,
+      "environment": {
+        "ATTESOR_JIT_OFF": "directbranch",
+        "ATTESOR_JIT_ON": ""
+      },
+      "cold_aot": false,
+      "metrics": {
+        "cbz-chain": 16.772,
+        "tbz-chain": 25.992
+      },
+      "stdout": "cbz-chain 16.772 ms\ntbz-chain 25.992 ms\nchecksum ed16abd6de7682c0 26a22cf81556a53f\n",
+      "stderr": ""
+    },
+    {
+      "round": 4,
+      "build": "before",
+      "command": [
+        "/private/tmp/attesor-final-target/release/attesor",
+        "--no-aot",
+        "/private/tmp/attesor-perf/round2-serial/fixtures/directbranch-arm64",
+        "--bench",
+        "2000000"
+      ],
+      "wall_ms": 1338.7269570000005,
+      "environment": {
+        "ATTESOR_JIT_OFF": "directbranch",
+        "ATTESOR_JIT_ON": ""
+      },
+      "cold_aot": false,
+      "metrics": {
+        "cbz-chain": 14.177,
+        "tbz-chain": 26.485
+      },
+      "stdout": "cbz-chain 14.177 ms\ntbz-chain 26.485 ms\nchecksum ed16abd6de7682c0 26a22cf81556a53f\n",
+      "stderr": ""
+    },
+    {
+      "round": 4,
+      "build": "after",
+      "command": [
+        "/private/tmp/attesor-final-target/release/attesor",
+        "--no-aot",
+        "/private/tmp/attesor-perf/round2-serial/fixtures/directbranch-arm64",
+        "--bench",
+        "2000000"
+      ],
+      "wall_ms": 1282.64856,
+      "environment": {
+        "ATTESOR_JIT_OFF": "",
+        "ATTESOR_JIT_ON": ""
+      },
+      "cold_aot": false,
+      "metrics": {
+        "cbz-chain": 13.459,
+        "tbz-chain": 27.14
+      },
+      "stdout": "cbz-chain 13.459 ms\ntbz-chain 27.140 ms\nchecksum ed16abd6de7682c0 26a22cf81556a53f\n",
+      "stderr": ""
+    },
+    {
+      "round": 5,
+      "build": "after",
+      "command": [
+        "/private/tmp/attesor-final-target/release/attesor",
+        "--no-aot",
+        "/private/tmp/attesor-perf/round2-serial/fixtures/directbranch-arm64",
+        "--bench",
+        "2000000"
+      ],
+      "wall_ms": 1329.628874000001,
+      "environment": {
+        "ATTESOR_JIT_OFF": "",
+        "ATTESOR_JIT_ON": ""
+      },
+      "cold_aot": false,
+      "metrics": {
+        "cbz-chain": 11.943,
+        "tbz-chain": 24.258
+      },
+      "stdout": "cbz-chain 11.943 ms\ntbz-chain 24.258 ms\nchecksum ed16abd6de7682c0 26a22cf81556a53f\n",
+      "stderr": ""
+    },
+    {
+      "round": 5,
+      "build": "before",
+      "command": [
+        "/private/tmp/attesor-final-target/release/attesor",
+        "--no-aot",
+        "/private/tmp/attesor-perf/round2-serial/fixtures/directbranch-arm64",
+        "--bench",
+        "2000000"
+      ],
+      "wall_ms": 1351.6237610000007,
+      "environment": {
+        "ATTESOR_JIT_OFF": "directbranch",
+        "ATTESOR_JIT_ON": ""
+      },
+      "cold_aot": false,
+      "metrics": {
+        "cbz-chain": 18.21,
+        "tbz-chain": 32.005
+      },
+      "stdout": "cbz-chain 18.210 ms\ntbz-chain 32.005 ms\nchecksum ed16abd6de7682c0 26a22cf81556a53f\n",
+      "stderr": ""
+    },
+    {
+      "round": 6,
+      "build": "before",
+      "command": [
+        "/private/tmp/attesor-final-target/release/attesor",
+        "--no-aot",
+        "/private/tmp/attesor-perf/round2-serial/fixtures/directbranch-arm64",
+        "--bench",
+        "2000000"
+      ],
+      "wall_ms": 1313.5274329999972,
+      "environment": {
+        "ATTESOR_JIT_OFF": "directbranch",
+        "ATTESOR_JIT_ON": ""
+      },
+      "cold_aot": false,
+      "metrics": {
+        "cbz-chain": 12.081,
+        "tbz-chain": 25.119
+      },
+      "stdout": "cbz-chain 12.081 ms\ntbz-chain 25.119 ms\nchecksum ed16abd6de7682c0 26a22cf81556a53f\n",
+      "stderr": ""
+    },
+    {
+      "round": 6,
+      "build": "after",
+      "command": [
+        "/private/tmp/attesor-final-target/release/attesor",
+        "--no-aot",
+        "/private/tmp/attesor-perf/round2-serial/fixtures/directbranch-arm64",
+        "--bench",
+        "2000000"
+      ],
+      "wall_ms": 1315.746452999999,
+      "environment": {
+        "ATTESOR_JIT_OFF": "",
+        "ATTESOR_JIT_ON": ""
+      },
+      "cold_aot": false,
+      "metrics": {
+        "cbz-chain": 14.588,
+        "tbz-chain": 27.326
+      },
+      "stdout": "cbz-chain 14.588 ms\ntbz-chain 27.326 ms\nchecksum ed16abd6de7682c0 26a22cf81556a53f\n",
+      "stderr": ""
+    }
+  ],
+  "medians": {
+    "cbz-chain": {
+      "before": 14.177,
+      "after": 13.591,
+      "time_reduction_percent": 4.133455597093882
+    },
+    "tbz-chain": {
+      "before": 26.202,
+      "after": 27.326,
+      "time_reduction_percent": -4.289748874131738
+    },
+    "wall_ms": {
+      "before": 1351.6237610000007,
+      "after": 1322.9035319999998,
+      "time_reduction_percent": 2.1248686083139123
+    }
+  },
+  "reference": {
+    "command": [
+      "/private/tmp/attesor-perf/round2-serial/fixtures/directbranch-x86_64",
+      "--bench",
+      "2000000"
+    ],
+    "stdout": "cbz-chain 5.248 ms\ntbz-chain 5.380 ms\nchecksum ed16abd6de7682c0 26a22cf81556a53f\n",
+    "sha256": "98077e4cb3dfe2f95b21feeab3c8b8e952eb042af521423f8e6d4644d953bd3b"
+  },
+  "semantic_output_present": true
+}

@@ -1,0 +1,277 @@
+{
+  "host": "zhezdeMacBook-Pro.local",
+  "sha256": {
+    "before": "c19e12ad398809cec1e9cc2bb3a4610c1dff7d34f2686a3629126665a1814550",
+    "after": "c19e12ad398809cec1e9cc2bb3a4610c1dff7d34f2686a3629126665a1814550",
+    "guest": "e5ccaeeb7fe4223ac377e3b55c6901d9a25993fbfa2d09a9af45934354094b6a"
+  },
+  "samples": [
+    {
+      "round": 0,
+      "build": "before",
+      "command": [
+        "/private/tmp/attesor-final-target/release/attesor",
+        "--no-aot",
+        "/private/tmp/attesor-perf/round2-serial/fixtures/short-arm64"
+      ],
+      "wall_ms": 1347.500971,
+      "environment": {
+        "ATTESOR_JIT_OFF": "nextuse",
+        "ATTESOR_JIT_ON": ""
+      },
+      "cold_aot": false,
+      "metrics": {},
+      "stdout": "prewarm-checksum a54f3aa72ddc56da\n",
+      "stderr": ""
+    },
+    {
+      "round": 0,
+      "build": "after",
+      "command": [
+        "/private/tmp/attesor-final-target/release/attesor",
+        "--no-aot",
+        "/private/tmp/attesor-perf/round2-serial/fixtures/short-arm64"
+      ],
+      "wall_ms": 1297.261476,
+      "environment": {
+        "ATTESOR_JIT_OFF": "",
+        "ATTESOR_JIT_ON": ""
+      },
+      "cold_aot": false,
+      "metrics": {},
+      "stdout": "prewarm-checksum a54f3aa72ddc56da\n",
+      "stderr": ""
+    },
+    {
+      "round": 1,
+      "build": "after",
+      "command": [
+        "/private/tmp/attesor-final-target/release/attesor",
+        "--no-aot",
+        "/private/tmp/attesor-perf/round2-serial/fixtures/short-arm64"
+      ],
+      "wall_ms": 1344.5984159999998,
+      "environment": {
+        "ATTESOR_JIT_OFF": "",
+        "ATTESOR_JIT_ON": ""
+      },
+      "cold_aot": false,
+      "metrics": {},
+      "stdout": "prewarm-checksum a54f3aa72ddc56da\n",
+      "stderr": ""
+    },
+    {
+      "round": 1,
+      "build": "before",
+      "command": [
+        "/private/tmp/attesor-final-target/release/attesor",
+        "--no-aot",
+        "/private/tmp/attesor-perf/round2-serial/fixtures/short-arm64"
+      ],
+      "wall_ms": 1330.8421060000005,
+      "environment": {
+        "ATTESOR_JIT_OFF": "nextuse",
+        "ATTESOR_JIT_ON": ""
+      },
+      "cold_aot": false,
+      "metrics": {},
+      "stdout": "prewarm-checksum a54f3aa72ddc56da\n",
+      "stderr": ""
+    },
+    {
+      "round": 2,
+      "build": "before",
+      "command": [
+        "/private/tmp/attesor-final-target/release/attesor",
+        "--no-aot",
+        "/private/tmp/attesor-perf/round2-serial/fixtures/short-arm64"
+      ],
+      "wall_ms": 1335.399251,
+      "environment": {
+        "ATTESOR_JIT_OFF": "nextuse",
+        "ATTESOR_JIT_ON": ""
+      },
+      "cold_aot": false,
+      "metrics": {},
+      "stdout": "prewarm-checksum a54f3aa72ddc56da\n",
+      "stderr": ""
+    },
+    {
+      "round": 2,
+      "build": "after",
+      "command": [
+        "/private/tmp/attesor-final-target/release/attesor",
+        "--no-aot",
+        "/private/tmp/attesor-perf/round2-serial/fixtures/short-arm64"
+      ],
+      "wall_ms": 1329.5460699999992,
+      "environment": {
+        "ATTESOR_JIT_OFF": "",
+        "ATTESOR_JIT_ON": ""
+      },
+      "cold_aot": false,
+      "metrics": {},
+      "stdout": "prewarm-checksum a54f3aa72ddc56da\n",
+      "stderr": ""
+    },
+    {
+      "round": 3,
+      "build": "after",
+      "command": [
+        "/private/tmp/attesor-final-target/release/attesor",
+        "--no-aot",
+        "/private/tmp/attesor-perf/round2-serial/fixtures/short-arm64"
+      ],
+      "wall_ms": 1319.7535269999996,
+      "environment": {
+        "ATTESOR_JIT_OFF": "",
+        "ATTESOR_JIT_ON": ""
+      },
+      "cold_aot": false,
+      "metrics": {},
+      "stdout": "prewarm-checksum a54f3aa72ddc56da\n",
+      "stderr": ""
+    },
+    {
+      "round": 3,
+      "build": "before",
+      "command": [
+        "/private/tmp/attesor-final-target/release/attesor",
+        "--no-aot",
+        "/private/tmp/attesor-perf/round2-serial/fixtures/short-arm64"
+      ],
+      "wall_ms": 1266.7577849999993,
+      "environment": {
+        "ATTESOR_JIT_OFF": "nextuse",
+        "ATTESOR_JIT_ON": ""
+      },
+      "cold_aot": false,
+      "metrics": {},
+      "stdout": "prewarm-checksum a54f3aa72ddc56da\n",
+      "stderr": ""
+    },
+    {
+      "round": 4,
+      "build": "before",
+      "command": [
+        "/private/tmp/attesor-final-target/release/attesor",
+        "--no-aot",
+        "/private/tmp/attesor-perf/round2-serial/fixtures/short-arm64"
+      ],
+      "wall_ms": 1335.0401489999992,
+      "environment": {
+        "ATTESOR_JIT_OFF": "nextuse",
+        "ATTESOR_JIT_ON": ""
+      },
+      "cold_aot": false,
+      "metrics": {},
+      "stdout": "prewarm-checksum a54f3aa72ddc56da\n",
+      "stderr": ""
+    },
+    {
+      "round": 4,
+      "build": "after",
+      "command": [
+        "/private/tmp/attesor-final-target/release/attesor",
+        "--no-aot",
+        "/private/tmp/attesor-perf/round2-serial/fixtures/short-arm64"
+      ],
+      "wall_ms": 1272.5727740000004,
+      "environment": {
+        "ATTESOR_JIT_OFF": "",
+        "ATTESOR_JIT_ON": ""
+      },
+      "cold_aot": false,
+      "metrics": {},
+      "stdout": "prewarm-checksum a54f3aa72ddc56da\n",
+      "stderr": ""
+    },
+    {
+      "round": 5,
+      "build": "after",
+      "command": [
+        "/private/tmp/attesor-final-target/release/attesor",
+        "--no-aot",
+        "/private/tmp/attesor-perf/round2-serial/fixtures/short-arm64"
+      ],
+      "wall_ms": 1300.1796280000003,
+      "environment": {
+        "ATTESOR_JIT_OFF": "",
+        "ATTESOR_JIT_ON": ""
+      },
+      "cold_aot": false,
+      "metrics": {},
+      "stdout": "prewarm-checksum a54f3aa72ddc56da\n",
+      "stderr": ""
+    },
+    {
+      "round": 5,
+      "build": "before",
+      "command": [
+        "/private/tmp/attesor-final-target/release/attesor",
+        "--no-aot",
+        "/private/tmp/attesor-perf/round2-serial/fixtures/short-arm64"
+      ],
+      "wall_ms": 1317.1860879999997,
+      "environment": {
+        "ATTESOR_JIT_OFF": "nextuse",
+        "ATTESOR_JIT_ON": ""
+      },
+      "cold_aot": false,
+      "metrics": {},
+      "stdout": "prewarm-checksum a54f3aa72ddc56da\n",
+      "stderr": ""
+    },
+    {
+      "round": 6,
+      "build": "before",
+      "command": [
+        "/private/tmp/attesor-final-target/release/attesor",
+        "--no-aot",
+        "/private/tmp/attesor-perf/round2-serial/fixtures/short-arm64"
+      ],
+      "wall_ms": 1306.4726260000016,
+      "environment": {
+        "ATTESOR_JIT_OFF": "nextuse",
+        "ATTESOR_JIT_ON": ""
+      },
+      "cold_aot": false,
+      "metrics": {},
+      "stdout": "prewarm-checksum a54f3aa72ddc56da\n",
+      "stderr": ""
+    },
+    {
+      "round": 6,
+      "build": "after",
+      "command": [
+        "/private/tmp/attesor-final-target/release/attesor",
+        "--no-aot",
+        "/private/tmp/attesor-perf/round2-serial/fixtures/short-arm64"
+      ],
+      "wall_ms": 1329.9802919999984,
+      "environment": {
+        "ATTESOR_JIT_OFF": "",
+        "ATTESOR_JIT_ON": ""
+      },
+      "cold_aot": false,
+      "metrics": {},
+      "stdout": "prewarm-checksum a54f3aa72ddc56da\n",
+      "stderr": ""
+    }
+  ],
+  "medians": {
+    "wall_ms": {
+      "before": 1330.8421060000005,
+      "after": 1319.7535269999996,
+      "time_reduction_percent": 0.8332001933218702
+    }
+  },
+  "reference": {
+    "command": [
+      "/private/tmp/attesor-perf/round2-serial/fixtures/short-x86_64"
+    ],
+    "stdout": "prewarm-checksum a54f3aa72ddc56da\n",
+    "sha256": "1145580f794f53d66e7a0428d0d38c45451fde24b98a1ddf89d10b5dd11246e3"
+  },
+  "semantic_output_present": true
+}

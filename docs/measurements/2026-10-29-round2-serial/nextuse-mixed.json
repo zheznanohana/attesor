@@ -1,0 +1,386 @@
+{
+  "host": "zhezdeMacBook-Pro.local",
+  "sha256": {
+    "before": "c19e12ad398809cec1e9cc2bb3a4610c1dff7d34f2686a3629126665a1814550",
+    "after": "c19e12ad398809cec1e9cc2bb3a4610c1dff7d34f2686a3629126665a1814550",
+    "guest": "c835ddb3ced6d9378a2e74a2e3351d9405b3e33005a2c51d9fa99760cb38c814"
+  },
+  "samples": [
+    {
+      "round": 0,
+      "build": "before",
+      "command": [
+        "/private/tmp/attesor-final-target/release/attesor",
+        "--no-aot",
+        "/private/tmp/attesor-perf/round2-serial/fixtures/mixed-arm64"
+      ],
+      "wall_ms": 5923.803045,
+      "environment": {
+        "ATTESOR_JIT_OFF": "nextuse",
+        "ATTESOR_JIT_ON": ""
+      },
+      "cold_aot": false,
+      "metrics": {
+        "int-hash": 706.9,
+        "qsort": 1590.2,
+        "fp-nbody": 177.9,
+        "memcpy": 55.0,
+        "branchy": 1910.4
+      },
+      "stdout": "int-hash      706.9 ms\nqsort        1590.2 ms\nfp-nbody      177.9 ms\nmemcpy         55.0 ms\nbranchy      1910.4 ms\n",
+      "stderr": ""
+    },
+    {
+      "round": 0,
+      "build": "after",
+      "command": [
+        "/private/tmp/attesor-final-target/release/attesor",
+        "--no-aot",
+        "/private/tmp/attesor-perf/round2-serial/fixtures/mixed-arm64"
+      ],
+      "wall_ms": 6132.889799,
+      "environment": {
+        "ATTESOR_JIT_OFF": "",
+        "ATTESOR_JIT_ON": ""
+      },
+      "cold_aot": false,
+      "metrics": {
+        "int-hash": 727.9,
+        "qsort": 1575.9,
+        "fp-nbody": 184.8,
+        "memcpy": 44.7,
+        "branchy": 1903.4
+      },
+      "stdout": "int-hash      727.9 ms\nqsort        1575.9 ms\nfp-nbody      184.8 ms\nmemcpy         44.7 ms\nbranchy      1903.4 ms\n",
+      "stderr": ""
+    },
+    {
+      "round": 1,
+      "build": "after",
+      "command": [
+        "/private/tmp/attesor-final-target/release/attesor",
+        "--no-aot",
+        "/private/tmp/attesor-perf/round2-serial/fixtures/mixed-arm64"
+      ],
+      "wall_ms": 5849.715987999998,
+      "environment": {
+        "ATTESOR_JIT_OFF": "",
+        "ATTESOR_JIT_ON": ""
+      },
+      "cold_aot": false,
+      "metrics": {
+        "int-hash": 732.7,
+        "qsort": 1531.7,
+        "fp-nbody": 160.3,
+        "memcpy": 46.1,
+        "branchy": 1793.7
+      },
+      "stdout": "int-hash      732.7 ms\nqsort        1531.7 ms\nfp-nbody      160.3 ms\nmemcpy         46.1 ms\nbranchy      1793.7 ms\n",
+      "stderr": ""
+    },
+    {
+      "round": 1,
+      "build": "before",
+      "command": [
+        "/private/tmp/attesor-final-target/release/attesor",
+        "--no-aot",
+        "/private/tmp/attesor-perf/round2-serial/fixtures/mixed-arm64"
+      ],
+      "wall_ms": 5666.717652000003,
+      "environment": {
+        "ATTESOR_JIT_OFF": "nextuse",
+        "ATTESOR_JIT_ON": ""
+      },
+      "cold_aot": false,
+      "metrics": {
+        "int-hash": 721.7,
+        "qsort": 1469.8,
+        "fp-nbody": 171.0,
+        "memcpy": 49.7,
+        "branchy": 1799.5
+      },
+      "stdout": "int-hash      721.7 ms\nqsort        1469.8 ms\nfp-nbody      171.0 ms\nmemcpy         49.7 ms\nbranchy      1799.5 ms\n",
+      "stderr": ""
+    },
+    {
+      "round": 2,
+      "build": "before",
+      "command": [
+        "/private/tmp/attesor-final-target/release/attesor",
+        "--no-aot",
+        "/private/tmp/attesor-perf/round2-serial/fixtures/mixed-arm64"
+      ],
+      "wall_ms": 5707.765737000002,
+      "environment": {
+        "ATTESOR_JIT_OFF": "nextuse",
+        "ATTESOR_JIT_ON": ""
+      },
+      "cold_aot": false,
+      "metrics": {
+        "int-hash": 681.4,
+        "qsort": 1506.9,
+        "fp-nbody": 199.2,
+        "memcpy": 61.5,
+        "branchy": 1779.6
+      },
+      "stdout": "int-hash      681.4 ms\nqsort        1506.9 ms\nfp-nbody      199.2 ms\nmemcpy         61.5 ms\nbranchy      1779.6 ms\n",
+      "stderr": ""
+    },
+    {
+      "round": 2,
+      "build": "after",
+      "command": [
+        "/private/tmp/attesor-final-target/release/attesor",
+        "--no-aot",
+        "/private/tmp/attesor-perf/round2-serial/fixtures/mixed-arm64"
+      ],
+      "wall_ms": 5731.455010999998,
+      "environment": {
+        "ATTESOR_JIT_OFF": "",
+        "ATTESOR_JIT_ON": ""
+      },
+      "cold_aot": false,
+      "metrics": {
+        "int-hash": 682.8,
+        "qsort": 1500.9,
+        "fp-nbody": 191.3,
+        "memcpy": 59.3,
+        "branchy": 1783.3
+      },
+      "stdout": "int-hash      682.8 ms\nqsort        1500.9 ms\nfp-nbody      191.3 ms\nmemcpy         59.3 ms\nbranchy      1783.3 ms\n",
+      "stderr": ""
+    },
+    {
+      "round": 3,
+      "build": "after",
+      "command": [
+        "/private/tmp/attesor-final-target/release/attesor",
+        "--no-aot",
+        "/private/tmp/attesor-perf/round2-serial/fixtures/mixed-arm64"
+      ],
+      "wall_ms": 5956.486826000002,
+      "environment": {
+        "ATTESOR_JIT_OFF": "",
+        "ATTESOR_JIT_ON": ""
+      },
+      "cold_aot": false,
+      "metrics": {
+        "int-hash": 745.9,
+        "qsort": 1553.4,
+        "fp-nbody": 155.2,
+        "memcpy": 82.7,
+        "branchy": 1912.9
+      },
+      "stdout": "int-hash      745.9 ms\nqsort        1553.4 ms\nfp-nbody      155.2 ms\nmemcpy         82.7 ms\nbranchy      1912.9 ms\n",
+      "stderr": ""
+    },
+    {
+      "round": 3,
+      "build": "before",
+      "command": [
+        "/private/tmp/attesor-final-target/release/attesor",
+        "--no-aot",
+        "/private/tmp/attesor-perf/round2-serial/fixtures/mixed-arm64"
+      ],
+      "wall_ms": 5924.534912999995,
+      "environment": {
+        "ATTESOR_JIT_OFF": "nextuse",
+        "ATTESOR_JIT_ON": ""
+      },
+      "cold_aot": false,
+      "metrics": {
+        "int-hash": 723.8,
+        "qsort": 1523.3,
+        "fp-nbody": 170.2,
+        "memcpy": 63.7,
+        "branchy": 1800.2
+      },
+      "stdout": "int-hash      723.8 ms\nqsort        1523.3 ms\nfp-nbody      170.2 ms\nmemcpy         63.7 ms\nbranchy      1800.2 ms\n",
+      "stderr": ""
+    },
+    {
+      "round": 4,
+      "build": "before",
+      "command": [
+        "/private/tmp/attesor-final-target/release/attesor",
+        "--no-aot",
+        "/private/tmp/attesor-perf/round2-serial/fixtures/mixed-arm64"
+      ],
+      "wall_ms": 5730.836343,
+      "environment": {
+        "ATTESOR_JIT_OFF": "nextuse",
+        "ATTESOR_JIT_ON": ""
+      },
+      "cold_aot": false,
+      "metrics": {
+        "int-hash": 674.3,
+        "qsort": 1574.3,
+        "fp-nbody": 173.9,
+        "memcpy": 80.0,
+        "branchy": 1772.2
+      },
+      "stdout": "int-hash      674.3 ms\nqsort        1574.3 ms\nfp-nbody      173.9 ms\nmemcpy         80.0 ms\nbranchy      1772.2 ms\n",
+      "stderr": ""
+    },
+    {
+      "round": 4,
+      "build": "after",
+      "command": [
+        "/private/tmp/attesor-final-target/release/attesor",
+        "--no-aot",
+        "/private/tmp/attesor-perf/round2-serial/fixtures/mixed-arm64"
+      ],
+      "wall_ms": 5666.640758,
+      "environment": {
+        "ATTESOR_JIT_OFF": "",
+        "ATTESOR_JIT_ON": ""
+      },
+      "cold_aot": false,
+      "metrics": {
+        "int-hash": 690.5,
+        "qsort": 1559.9,
+        "fp-nbody": 174.6,
+        "memcpy": 50.0,
+        "branchy": 1683.6
+      },
+      "stdout": "int-hash      690.5 ms\nqsort        1559.9 ms\nfp-nbody      174.6 ms\nmemcpy         50.0 ms\nbranchy      1683.6 ms\n",
+      "stderr": ""
+    },
+    {
+      "round": 5,
+      "build": "after",
+      "command": [
+        "/private/tmp/attesor-final-target/release/attesor",
+        "--no-aot",
+        "/private/tmp/attesor-perf/round2-serial/fixtures/mixed-arm64"
+      ],
+      "wall_ms": 5562.059079000008,
+      "environment": {
+        "ATTESOR_JIT_OFF": "",
+        "ATTESOR_JIT_ON": ""
+      },
+      "cold_aot": false,
+      "metrics": {
+        "int-hash": 674.8,
+        "qsort": 1526.2,
+        "fp-nbody": 171.2,
+        "memcpy": 46.7,
+        "branchy": 1745.5
+      },
+      "stdout": "int-hash      674.8 ms\nqsort        1526.2 ms\nfp-nbody      171.2 ms\nmemcpy         46.7 ms\nbranchy      1745.5 ms\n",
+      "stderr": ""
+    },
+    {
+      "round": 5,
+      "build": "before",
+      "command": [
+        "/private/tmp/attesor-final-target/release/attesor",
+        "--no-aot",
+        "/private/tmp/attesor-perf/round2-serial/fixtures/mixed-arm64"
+      ],
+      "wall_ms": 5650.336108999994,
+      "environment": {
+        "ATTESOR_JIT_OFF": "nextuse",
+        "ATTESOR_JIT_ON": ""
+      },
+      "cold_aot": false,
+      "metrics": {
+        "int-hash": 744.4,
+        "qsort": 1502.2,
+        "fp-nbody": 170.8,
+        "memcpy": 65.3,
+        "branchy": 1738.8
+      },
+      "stdout": "int-hash      744.4 ms\nqsort        1502.2 ms\nfp-nbody      170.8 ms\nmemcpy         65.3 ms\nbranchy      1738.8 ms\n",
+      "stderr": ""
+    },
+    {
+      "round": 6,
+      "build": "before",
+      "command": [
+        "/private/tmp/attesor-final-target/release/attesor",
+        "--no-aot",
+        "/private/tmp/attesor-perf/round2-serial/fixtures/mixed-arm64"
+      ],
+      "wall_ms": 6020.676807000001,
+      "environment": {
+        "ATTESOR_JIT_OFF": "nextuse",
+        "ATTESOR_JIT_ON": ""
+      },
+      "cold_aot": false,
+      "metrics": {
+        "int-hash": 764.5,
+        "qsort": 1555.4,
+        "fp-nbody": 184.1,
+        "memcpy": 77.4,
+        "branchy": 1928.8
+      },
+      "stdout": "int-hash      764.5 ms\nqsort        1555.4 ms\nfp-nbody      184.1 ms\nmemcpy         77.4 ms\nbranchy      1928.8 ms\n",
+      "stderr": ""
+    },
+    {
+      "round": 6,
+      "build": "after",
+      "command": [
+        "/private/tmp/attesor-final-target/release/attesor",
+        "--no-aot",
+        "/private/tmp/attesor-perf/round2-serial/fixtures/mixed-arm64"
+      ],
+      "wall_ms": 5990.119414999996,
+      "environment": {
+        "ATTESOR_JIT_OFF": "",
+        "ATTESOR_JIT_ON": ""
+      },
+      "cold_aot": false,
+      "metrics": {
+        "int-hash": 742.9,
+        "qsort": 1565.9,
+        "fp-nbody": 198.0,
+        "memcpy": 63.1,
+        "branchy": 1771.4
+      },
+      "stdout": "int-hash      742.9 ms\nqsort        1565.9 ms\nfp-nbody      198.0 ms\nmemcpy         63.1 ms\nbranchy      1771.4 ms\n",
+      "stderr": ""
+    }
+  ],
+  "medians": {
+    "int-hash": {
+      "before": 721.7,
+      "after": 727.9,
+      "time_reduction_percent": -0.8590827213523555
+    },
+    "qsort": {
+      "before": 1523.3,
+      "after": 1553.4,
+      "time_reduction_percent": -1.9759732160441246
+    },
+    "fp-nbody": {
+      "before": 173.9,
+      "after": 174.6,
+      "time_reduction_percent": -0.4025301897642164
+    },
+    "memcpy": {
+      "before": 63.7,
+      "after": 50.0,
+      "time_reduction_percent": 21.507064364207228
+    },
+    "branchy": {
+      "before": 1799.5,
+      "after": 1783.3,
+      "time_reduction_percent": 0.9002500694637372
+    },
+    "wall_ms": {
+      "before": 5730.836343,
+      "after": 5849.715987999998,
+      "time_reduction_percent": -2.074385619914021
+    }
+  },
+  "reference": {
+    "command": [
+      "/private/tmp/attesor-perf/round2-serial/fixtures/mixed-x86_64"
+    ],
+    "stdout": "int-hash      329.5 ms\nqsort         714.1 ms\nfp-nbody       30.9 ms\nmemcpy         50.1 ms\nbranchy       492.7 ms\n",
+    "sha256": "80b30555e9470ccf532db0c54ff147efe385215dad6c26578ffddd7760f14c27"
+  },
+  "semantic_output_present": false
+}

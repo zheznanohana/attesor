@@ -1,0 +1,126 @@
+{
+  "binary": "/private/tmp/attesor-final-target/release/attesor",
+  "sha256": "c19e12ad398809cec1e9cc2bb3a4610c1dff7d34f2686a3629126665a1814550",
+  "runs": 7,
+  "prepare_ms": 443.30266300000005,
+  "prewarm_stderr": "attesor: prewarm main: 18 blocks: /private/var/folders/b4/tnjkjcm52s5g4n894r8xrcfh0000gn/T/attesor-prewarm-bench-n9ug43n0/probe-arm64\nattesor: prewarm dyld: 30411 blocks: /usr/lib/dyld\nattesor: prewarm complete: 2 images, 30429 blocks; guest code was not executed\n",
+  "prewarm_files": {
+    "dyld-57f4e7e7a49738bba3d2a459c622460b-450859293118dbe3.aot": "36a3886df268fb7052cb42278cedebac5f8b18ba80d771d0fa759e9fca2b3759",
+    "main-42145be173a53830a623e09703a363ee-ebd7495987483b9f.aot": "afa64272a9e4a6b0a473b37b94554b88372567c877a283d9b04982da9e0aaa38"
+  },
+  "samples": [
+    {
+      "round": 0,
+      "mode": "cold",
+      "wall_ms": 1253.870927,
+      "stdout": "prewarm-checksum a54f3aa72ddc56da\n",
+      "stderr": "[attesor] aot: mmap exec at 0x105348000 not an arm64 mach-o (0x646c7964 0x2031765f)\n[attesor] aot: mmap exec at 0x105348000 not an arm64 mach-o (0x646c7964 0x2031765f)\n[attesor] aot: mmap exec at 0x105348000 not an arm64 mach-o (0x646c7964 0x2031765f)\n[attesor] aot: mmap exec at 0x105348000 not an arm64 mach-o (0x646c7964 0x2031765f)\n[attesor] aot: mmap exec at 0x105348000 not an arm64 mach-o (0x646c7964 0x2031765f)\n[attesor] aot: mmap exec at 0x105348000 not an arm64 mach-o (0x646c7964 0x2031765f)\n[attesor] aot: mmap exec at 0x105348000 not an arm64 mach-o (0x646c7964 0x2031765f)\n[attesor] aot: mmap exec at 0x105348000 not an arm64 mach-o (0x646c7964 0x2031765f)\n[attesor] aot: mmap exec at 0x105348000 not an arm64 mach-o (0x646c7964 0x2031765f)\n[attesor] aot: mmap exec at 0x105348000 not an arm64 mach-o (0x646c7964 0x2031765f)\n[attesor] aot: mmap exec at 0x105348000 not an arm64 mach-o (0x646c7964 0x2031765f)\n[attesor] aot: mmap exec at 0x105348000 not an arm64 mach-o (0x646c7964 0x2031765f)\n[attesor] aot: mmap exec at 0x105348000 not an arm64 mach-o (0x646c7964 0x2031765f)\n[attesor] jit: 2729 blocks, 13123 insns translated (2 via interpreter helper), 99.7 ms translating; 11439 block entries; 65467 blocks interpreted (cold)\n"
+    },
+    {
+      "round": 0,
+      "mode": "prewarmed",
+      "wall_ms": 1261.7729029999998,
+      "stdout": "prewarm-checksum a54f3aa72ddc56da\n",
+      "stderr": "[attesor] aot: loaded 18 blocks for probe-arm64\n[attesor] aot: loaded 30411 blocks for dyld\n[attesor] aot: mmap exec at 0x10929c000 not an arm64 mach-o (0x646c7964 0x2031765f)\n[attesor] aot: mmap exec at 0x10929c000 not an arm64 mach-o (0x646c7964 0x2031765f)\n[attesor] aot: mmap exec at 0x10929c000 not an arm64 mach-o (0x646c7964 0x2031765f)\n[attesor] aot: mmap exec at 0x10929c000 not an arm64 mach-o (0x646c7964 0x2031765f)\n[attesor] aot: mmap exec at 0x10929c000 not an arm64 mach-o (0x646c7964 0x2031765f)\n[attesor] aot: mmap exec at 0x10929c000 not an arm64 mach-o (0x646c7964 0x2031765f)\n[attesor] aot: mmap exec at 0x10929c000 not an arm64 mach-o (0x646c7964 0x2031765f)\n[attesor] aot: mmap exec at 0x10929c000 not an arm64 mach-o (0x646c7964 0x2031765f)\n[attesor] aot: mmap exec at 0x10929c000 not an arm64 mach-o (0x646c7964 0x2031765f)\n[attesor] aot: mmap exec at 0x10929c000 not an arm64 mach-o (0x646c7964 0x2031765f)\n[attesor] aot: mmap exec at 0x10929c000 not an arm64 mach-o (0x646c7964 0x2031765f)\n[attesor] aot: mmap exec at 0x10929c000 not an arm64 mach-o (0x646c7964 0x2031765f)\n[attesor] aot: mmap exec at 0x10929c000 not an arm64 mach-o (0x646c7964 0x2031765f)\n[attesor] jit: 1158 blocks, 5430 insns translated (1 via interpreter helper), 37.9 ms translating; 72052 block entries; 28914 blocks interpreted (cold)\n"
+    },
+    {
+      "round": 1,
+      "mode": "prewarmed",
+      "wall_ms": 1272.592646,
+      "stdout": "prewarm-checksum a54f3aa72ddc56da\n",
+      "stderr": "[attesor] aot: loaded 18 blocks for probe-arm64\n[attesor] aot: loaded 30411 blocks for dyld\n[attesor] aot: mmap exec at 0x10ff3c000 not an arm64 mach-o (0x646c7964 0x2031765f)\n[attesor] aot: mmap exec at 0x10ff3c000 not an arm64 mach-o (0x646c7964 0x2031765f)\n[attesor] aot: mmap exec at 0x10ff3c000 not an arm64 mach-o (0x646c7964 0x2031765f)\n[attesor] aot: mmap exec at 0x10ff3c000 not an arm64 mach-o (0x646c7964 0x2031765f)\n[attesor] aot: mmap exec at 0x10ff3c000 not an arm64 mach-o (0x646c7964 0x2031765f)\n[attesor] aot: mmap exec at 0x10ff3c000 not an arm64 mach-o (0x646c7964 0x2031765f)\n[attesor] aot: mmap exec at 0x10ff3c000 not an arm64 mach-o (0x646c7964 0x2031765f)\n[attesor] aot: mmap exec at 0x10ff3c000 not an arm64 mach-o (0x646c7964 0x2031765f)\n[attesor] aot: mmap exec at 0x10ff3c000 not an arm64 mach-o (0x646c7964 0x2031765f)\n[attesor] aot: mmap exec at 0x10ff3c000 not an arm64 mach-o (0x646c7964 0x2031765f)\n[attesor] aot: mmap exec at 0x10ff3c000 not an arm64 mach-o (0x646c7964 0x2031765f)\n[attesor] aot: mmap exec at 0x10ff3c000 not an arm64 mach-o (0x646c7964 0x2031765f)\n[attesor] aot: mmap exec at 0x10ff3c000 not an arm64 mach-o (0x646c7964 0x2031765f)\n[attesor] jit: 1159 blocks, 5427 insns translated (1 via interpreter helper), 31.8 ms translating; 72026 block entries; 28631 blocks interpreted (cold)\n"
+    },
+    {
+      "round": 1,
+      "mode": "cold",
+      "wall_ms": 1332.0298689999995,
+      "stdout": "prewarm-checksum a54f3aa72ddc56da\n",
+      "stderr": "[attesor] aot: mmap exec at 0x1071a0000 not an arm64 mach-o (0x646c7964 0x2031765f)\n[attesor] aot: mmap exec at 0x1071a0000 not an arm64 mach-o (0x646c7964 0x2031765f)\n[attesor] aot: mmap exec at 0x1071a0000 not an arm64 mach-o (0x646c7964 0x2031765f)\n[attesor] aot: mmap exec at 0x1071a0000 not an arm64 mach-o (0x646c7964 0x2031765f)\n[attesor] aot: mmap exec at 0x1071a0000 not an arm64 mach-o (0x646c7964 0x2031765f)\n[attesor] aot: mmap exec at 0x1071a0000 not an arm64 mach-o (0x646c7964 0x2031765f)\n[attesor] aot: mmap exec at 0x1071a0000 not an arm64 mach-o (0x646c7964 0x2031765f)\n[attesor] aot: mmap exec at 0x1071a0000 not an arm64 mach-o (0x646c7964 0x2031765f)\n[attesor] aot: mmap exec at 0x1071a0000 not an arm64 mach-o (0x646c7964 0x2031765f)\n[attesor] aot: mmap exec at 0x1071a0000 not an arm64 mach-o (0x646c7964 0x2031765f)\n[attesor] aot: mmap exec at 0x1071a0000 not an arm64 mach-o (0x646c7964 0x2031765f)\n[attesor] aot: mmap exec at 0x1071a0000 not an arm64 mach-o (0x646c7964 0x2031765f)\n[attesor] aot: mmap exec at 0x1071a0000 not an arm64 mach-o (0x646c7964 0x2031765f)\n[attesor] jit: 2729 blocks, 13123 insns translated (2 via interpreter helper), 115.4 ms translating; 11426 block entries; 65338 blocks interpreted (cold)\n"
+    },
+    {
+      "round": 2,
+      "mode": "cold",
+      "wall_ms": 1475.2141520000005,
+      "stdout": "prewarm-checksum a54f3aa72ddc56da\n",
+      "stderr": "[attesor] aot: mmap exec at 0x109b94000 not an arm64 mach-o (0x646c7964 0x2031765f)\n[attesor] aot: mmap exec at 0x109b94000 not an arm64 mach-o (0x646c7964 0x2031765f)\n[attesor] aot: mmap exec at 0x109b94000 not an arm64 mach-o (0x646c7964 0x2031765f)\n[attesor] aot: mmap exec at 0x109b94000 not an arm64 mach-o (0x646c7964 0x2031765f)\n[attesor] aot: mmap exec at 0x109b94000 not an arm64 mach-o (0x646c7964 0x2031765f)\n[attesor] aot: mmap exec at 0x109b94000 not an arm64 mach-o (0x646c7964 0x2031765f)\n[attesor] aot: mmap exec at 0x109b94000 not an arm64 mach-o (0x646c7964 0x2031765f)\n[attesor] aot: mmap exec at 0x109b94000 not an arm64 mach-o (0x646c7964 0x2031765f)\n[attesor] aot: mmap exec at 0x109b94000 not an arm64 mach-o (0x646c7964 0x2031765f)\n[attesor] aot: mmap exec at 0x109b94000 not an arm64 mach-o (0x646c7964 0x2031765f)\n[attesor] aot: mmap exec at 0x109b94000 not an arm64 mach-o (0x646c7964 0x2031765f)\n[attesor] aot: mmap exec at 0x109b94000 not an arm64 mach-o (0x646c7964 0x2031765f)\n[attesor] aot: mmap exec at 0x109b94000 not an arm64 mach-o (0x646c7964 0x2031765f)\n[attesor] jit: 2727 blocks, 13134 insns translated (2 via interpreter helper), 113.9 ms translating; 11526 block entries; 66093 blocks interpreted (cold)\n"
+    },
+    {
+      "round": 2,
+      "mode": "prewarmed",
+      "wall_ms": 1292.247531000001,
+      "stdout": "prewarm-checksum a54f3aa72ddc56da\n",
+      "stderr": "[attesor] aot: loaded 18 blocks for probe-arm64\n[attesor] aot: loaded 30411 blocks for dyld\n[attesor] aot: mmap exec at 0x10cc1c000 not an arm64 mach-o (0x646c7964 0x2031765f)\n[attesor] aot: mmap exec at 0x10cc1c000 not an arm64 mach-o (0x646c7964 0x2031765f)\n[attesor] aot: mmap exec at 0x10cc1c000 not an arm64 mach-o (0x646c7964 0x2031765f)\n[attesor] aot: mmap exec at 0x10cc1c000 not an arm64 mach-o (0x646c7964 0x2031765f)\n[attesor] aot: mmap exec at 0x10cc1c000 not an arm64 mach-o (0x646c7964 0x2031765f)\n[attesor] aot: mmap exec at 0x10cc1c000 not an arm64 mach-o (0x646c7964 0x2031765f)\n[attesor] aot: mmap exec at 0x10cc1c000 not an arm64 mach-o (0x646c7964 0x2031765f)\n[attesor] aot: mmap exec at 0x10cc1c000 not an arm64 mach-o (0x646c7964 0x2031765f)\n[attesor] aot: mmap exec at 0x10cc1c000 not an arm64 mach-o (0x646c7964 0x2031765f)\n[attesor] aot: mmap exec at 0x10cc1c000 not an arm64 mach-o (0x646c7964 0x2031765f)\n[attesor] aot: mmap exec at 0x10cc1c000 not an arm64 mach-o (0x646c7964 0x2031765f)\n[attesor] aot: mmap exec at 0x10cc1c000 not an arm64 mach-o (0x646c7964 0x2031765f)\n[attesor] aot: mmap exec at 0x10cc1c000 not an arm64 mach-o (0x646c7964 0x2031765f)\n[attesor] jit: 1159 blocks, 5427 insns translated (1 via interpreter helper), 53.9 ms translating; 72065 block entries; 28878 blocks interpreted (cold)\n"
+    },
+    {
+      "round": 3,
+      "mode": "prewarmed",
+      "wall_ms": 1339.8641970000008,
+      "stdout": "prewarm-checksum a54f3aa72ddc56da\n",
+      "stderr": "[attesor] aot: loaded 18 blocks for probe-arm64\n[attesor] aot: loaded 30411 blocks for dyld\n[attesor] aot: mmap exec at 0x1057bc000 not an arm64 mach-o (0x646c7964 0x2031765f)\n[attesor] aot: mmap exec at 0x1057bc000 not an arm64 mach-o (0x646c7964 0x2031765f)\n[attesor] aot: mmap exec at 0x1057bc000 not an arm64 mach-o (0x646c7964 0x2031765f)\n[attesor] aot: mmap exec at 0x1057bc000 not an arm64 mach-o (0x646c7964 0x2031765f)\n[attesor] aot: mmap exec at 0x1057bc000 not an arm64 mach-o (0x646c7964 0x2031765f)\n[attesor] aot: mmap exec at 0x1057bc000 not an arm64 mach-o (0x646c7964 0x2031765f)\n[attesor] aot: mmap exec at 0x1057bc000 not an arm64 mach-o (0x646c7964 0x2031765f)\n[attesor] aot: mmap exec at 0x1057bc000 not an arm64 mach-o (0x646c7964 0x2031765f)\n[attesor] aot: mmap exec at 0x1057bc000 not an arm64 mach-o (0x646c7964 0x2031765f)\n[attesor] aot: mmap exec at 0x1057bc000 not an arm64 mach-o (0x646c7964 0x2031765f)\n[attesor] aot: mmap exec at 0x1057bc000 not an arm64 mach-o (0x646c7964 0x2031765f)\n[attesor] aot: mmap exec at 0x1057bc000 not an arm64 mach-o (0x646c7964 0x2031765f)\n[attesor] aot: mmap exec at 0x1057bc000 not an arm64 mach-o (0x646c7964 0x2031765f)\n[attesor] jit: 1159 blocks, 5427 insns translated (1 via interpreter helper), 48.5 ms translating; 72066 block entries; 28870 blocks interpreted (cold)\n"
+    },
+    {
+      "round": 3,
+      "mode": "cold",
+      "wall_ms": 1368.9574389999989,
+      "stdout": "prewarm-checksum a54f3aa72ddc56da\n",
+      "stderr": "[attesor] aot: mmap exec at 0x104328000 not an arm64 mach-o (0x646c7964 0x2031765f)\n[attesor] aot: mmap exec at 0x104328000 not an arm64 mach-o (0x646c7964 0x2031765f)\n[attesor] aot: mmap exec at 0x104328000 not an arm64 mach-o (0x646c7964 0x2031765f)\n[attesor] aot: mmap exec at 0x104328000 not an arm64 mach-o (0x646c7964 0x2031765f)\n[attesor] aot: mmap exec at 0x104328000 not an arm64 mach-o (0x646c7964 0x2031765f)\n[attesor] aot: mmap exec at 0x104328000 not an arm64 mach-o (0x646c7964 0x2031765f)\n[attesor] aot: mmap exec at 0x104328000 not an arm64 mach-o (0x646c7964 0x2031765f)\n[attesor] aot: mmap exec at 0x104328000 not an arm64 mach-o (0x646c7964 0x2031765f)\n[attesor] aot: mmap exec at 0x104328000 not an arm64 mach-o (0x646c7964 0x2031765f)\n[attesor] aot: mmap exec at 0x104328000 not an arm64 mach-o (0x646c7964 0x2031765f)\n[attesor] aot: mmap exec at 0x104328000 not an arm64 mach-o (0x646c7964 0x2031765f)\n[attesor] aot: mmap exec at 0x104328000 not an arm64 mach-o (0x646c7964 0x2031765f)\n[attesor] aot: mmap exec at 0x104328000 not an arm64 mach-o (0x646c7964 0x2031765f)\n[attesor] jit: 2724 blocks, 13124 insns translated (2 via interpreter helper), 90.5 ms translating; 11458 block entries; 65718 blocks interpreted (cold)\n"
+    },
+    {
+      "round": 4,
+      "mode": "cold",
+      "wall_ms": 1309.4423769999999,
+      "stdout": "prewarm-checksum a54f3aa72ddc56da\n",
+      "stderr": "[attesor] aot: mmap exec at 0x109954000 not an arm64 mach-o (0x646c7964 0x2031765f)\n[attesor] aot: mmap exec at 0x109954000 not an arm64 mach-o (0x646c7964 0x2031765f)\n[attesor] aot: mmap exec at 0x109954000 not an arm64 mach-o (0x646c7964 0x2031765f)\n[attesor] aot: mmap exec at 0x109954000 not an arm64 mach-o (0x646c7964 0x2031765f)\n[attesor] aot: mmap exec at 0x109954000 not an arm64 mach-o (0x646c7964 0x2031765f)\n[attesor] aot: mmap exec at 0x109954000 not an arm64 mach-o (0x646c7964 0x2031765f)\n[attesor] aot: mmap exec at 0x109954000 not an arm64 mach-o (0x646c7964 0x2031765f)\n[attesor] aot: mmap exec at 0x109954000 not an arm64 mach-o (0x646c7964 0x2031765f)\n[attesor] aot: mmap exec at 0x109954000 not an arm64 mach-o (0x646c7964 0x2031765f)\n[attesor] aot: mmap exec at 0x109954000 not an arm64 mach-o (0x646c7964 0x2031765f)\n[attesor] aot: mmap exec at 0x109954000 not an arm64 mach-o (0x646c7964 0x2031765f)\n[attesor] aot: mmap exec at 0x109954000 not an arm64 mach-o (0x646c7964 0x2031765f)\n[attesor] aot: mmap exec at 0x109954000 not an arm64 mach-o (0x646c7964 0x2031765f)\n[attesor] jit: 2727 blocks, 13128 insns translated (2 via interpreter helper), 92.0 ms translating; 11508 block entries; 65985 blocks interpreted (cold)\n"
+    },
+    {
+      "round": 4,
+      "mode": "prewarmed",
+      "wall_ms": 1198.8411930000016,
+      "stdout": "prewarm-checksum a54f3aa72ddc56da\n",
+      "stderr": "[attesor] aot: loaded 18 blocks for probe-arm64\n[attesor] aot: loaded 30411 blocks for dyld\n[attesor] aot: mmap exec at 0x109288000 not an arm64 mach-o (0x646c7964 0x2031765f)\n[attesor] aot: mmap exec at 0x109288000 not an arm64 mach-o (0x646c7964 0x2031765f)\n[attesor] aot: mmap exec at 0x109288000 not an arm64 mach-o (0x646c7964 0x2031765f)\n[attesor] aot: mmap exec at 0x109288000 not an arm64 mach-o (0x646c7964 0x2031765f)\n[attesor] aot: mmap exec at 0x109288000 not an arm64 mach-o (0x646c7964 0x2031765f)\n[attesor] aot: mmap exec at 0x109288000 not an arm64 mach-o (0x646c7964 0x2031765f)\n[attesor] aot: mmap exec at 0x109288000 not an arm64 mach-o (0x646c7964 0x2031765f)\n[attesor] aot: mmap exec at 0x109288000 not an arm64 mach-o (0x646c7964 0x2031765f)\n[attesor] aot: mmap exec at 0x109288000 not an arm64 mach-o (0x646c7964 0x2031765f)\n[attesor] aot: mmap exec at 0x109288000 not an arm64 mach-o (0x646c7964 0x2031765f)\n[attesor] aot: mmap exec at 0x109288000 not an arm64 mach-o (0x646c7964 0x2031765f)\n[attesor] aot: mmap exec at 0x109288000 not an arm64 mach-o (0x646c7964 0x2031765f)\n[attesor] aot: mmap exec at 0x109288000 not an arm64 mach-o (0x646c7964 0x2031765f)\n[attesor] jit: 1159 blocks, 5427 insns translated (1 via interpreter helper), 42.8 ms translating; 72027 block entries; 28566 blocks interpreted (cold)\n"
+    },
+    {
+      "round": 5,
+      "mode": "prewarmed",
+      "wall_ms": 1225.8964569999994,
+      "stdout": "prewarm-checksum a54f3aa72ddc56da\n",
+      "stderr": "[attesor] aot: loaded 18 blocks for probe-arm64\n[attesor] aot: loaded 30411 blocks for dyld\n[attesor] aot: mmap exec at 0x108f4c000 not an arm64 mach-o (0x646c7964 0x2031765f)\n[attesor] aot: mmap exec at 0x108f4c000 not an arm64 mach-o (0x646c7964 0x2031765f)\n[attesor] aot: mmap exec at 0x108f4c000 not an arm64 mach-o (0x646c7964 0x2031765f)\n[attesor] aot: mmap exec at 0x108f4c000 not an arm64 mach-o (0x646c7964 0x2031765f)\n[attesor] aot: mmap exec at 0x108f4c000 not an arm64 mach-o (0x646c7964 0x2031765f)\n[attesor] aot: mmap exec at 0x108f4c000 not an arm64 mach-o (0x646c7964 0x2031765f)\n[attesor] aot: mmap exec at 0x108f4c000 not an arm64 mach-o (0x646c7964 0x2031765f)\n[attesor] aot: mmap exec at 0x108f4c000 not an arm64 mach-o (0x646c7964 0x2031765f)\n[attesor] aot: mmap exec at 0x108f4c000 not an arm64 mach-o (0x646c7964 0x2031765f)\n[attesor] aot: mmap exec at 0x108f4c000 not an arm64 mach-o (0x646c7964 0x2031765f)\n[attesor] aot: mmap exec at 0x108f4c000 not an arm64 mach-o (0x646c7964 0x2031765f)\n[attesor] aot: mmap exec at 0x108f4c000 not an arm64 mach-o (0x646c7964 0x2031765f)\n[attesor] aot: mmap exec at 0x108f4c000 not an arm64 mach-o (0x646c7964 0x2031765f)\n[attesor] jit: 1155 blocks, 5410 insns translated (1 via interpreter helper), 48.0 ms translating; 72099 block entries; 29088 blocks interpreted (cold)\n"
+    },
+    {
+      "round": 5,
+      "mode": "cold",
+      "wall_ms": 1386.9143310000015,
+      "stdout": "prewarm-checksum a54f3aa72ddc56da\n",
+      "stderr": "[attesor] aot: mmap exec at 0x105140000 not an arm64 mach-o (0x646c7964 0x2031765f)\n[attesor] aot: mmap exec at 0x105140000 not an arm64 mach-o (0x646c7964 0x2031765f)\n[attesor] aot: mmap exec at 0x105140000 not an arm64 mach-o (0x646c7964 0x2031765f)\n[attesor] aot: mmap exec at 0x105140000 not an arm64 mach-o (0x646c7964 0x2031765f)\n[attesor] aot: mmap exec at 0x105140000 not an arm64 mach-o (0x646c7964 0x2031765f)\n[attesor] aot: mmap exec at 0x105140000 not an arm64 mach-o (0x646c7964 0x2031765f)\n[attesor] aot: mmap exec at 0x105140000 not an arm64 mach-o (0x646c7964 0x2031765f)\n[attesor] aot: mmap exec at 0x105140000 not an arm64 mach-o (0x646c7964 0x2031765f)\n[attesor] aot: mmap exec at 0x105140000 not an arm64 mach-o (0x646c7964 0x2031765f)\n[attesor] aot: mmap exec at 0x105140000 not an arm64 mach-o (0x646c7964 0x2031765f)\n[attesor] aot: mmap exec at 0x105140000 not an arm64 mach-o (0x646c7964 0x2031765f)\n[attesor] aot: mmap exec at 0x105140000 not an arm64 mach-o (0x646c7964 0x2031765f)\n[attesor] aot: mmap exec at 0x105140000 not an arm64 mach-o (0x646c7964 0x2031765f)\n[attesor] jit: 2728 blocks, 13130 insns translated (2 via interpreter helper), 100.5 ms translating; 11451 block entries; 65588 blocks interpreted (cold)\n"
+    },
+    {
+      "round": 6,
+      "mode": "cold",
+      "wall_ms": 1319.0656929999989,
+      "stdout": "prewarm-checksum a54f3aa72ddc56da\n",
+      "stderr": "[attesor] aot: mmap exec at 0x1039c4000 not an arm64 mach-o (0x646c7964 0x2031765f)\n[attesor] aot: mmap exec at 0x1039c4000 not an arm64 mach-o (0x646c7964 0x2031765f)\n[attesor] aot: mmap exec at 0x1039c4000 not an arm64 mach-o (0x646c7964 0x2031765f)\n[attesor] aot: mmap exec at 0x1039c4000 not an arm64 mach-o (0x646c7964 0x2031765f)\n[attesor] aot: mmap exec at 0x1039c4000 not an arm64 mach-o (0x646c7964 0x2031765f)\n[attesor] aot: mmap exec at 0x1039c4000 not an arm64 mach-o (0x646c7964 0x2031765f)\n[attesor] aot: mmap exec at 0x1039c4000 not an arm64 mach-o (0x646c7964 0x2031765f)\n[attesor] aot: mmap exec at 0x1039c4000 not an arm64 mach-o (0x646c7964 0x2031765f)\n[attesor] aot: mmap exec at 0x1039c4000 not an arm64 mach-o (0x646c7964 0x2031765f)\n[attesor] aot: mmap exec at 0x1039c4000 not an arm64 mach-o (0x646c7964 0x2031765f)\n[attesor] aot: mmap exec at 0x1039c4000 not an arm64 mach-o (0x646c7964 0x2031765f)\n[attesor] aot: mmap exec at 0x1039c4000 not an arm64 mach-o (0x646c7964 0x2031765f)\n[attesor] aot: mmap exec at 0x1039c4000 not an arm64 mach-o (0x646c7964 0x2031765f)\n[attesor] jit: 2727 blocks, 13123 insns translated (2 via interpreter helper), 112.1 ms translating; 11527 block entries; 66105 blocks interpreted (cold)\n"
+    },
+    {
+      "round": 6,
+      "mode": "prewarmed",
+      "wall_ms": 1207.2695099999996,
+      "stdout": "prewarm-checksum a54f3aa72ddc56da\n",
+      "stderr": "[attesor] aot: loaded 18 blocks for probe-arm64\n[attesor] aot: loaded 30411 blocks for dyld\n[attesor] aot: mmap exec at 0x101bf0000 not an arm64 mach-o (0x646c7964 0x2031765f)\n[attesor] aot: mmap exec at 0x101bf0000 not an arm64 mach-o (0x646c7964 0x2031765f)\n[attesor] aot: mmap exec at 0x101bf0000 not an arm64 mach-o (0x646c7964 0x2031765f)\n[attesor] aot: mmap exec at 0x101bf0000 not an arm64 mach-o (0x646c7964 0x2031765f)\n[attesor] aot: mmap exec at 0x101bf0000 not an arm64 mach-o (0x646c7964 0x2031765f)\n[attesor] aot: mmap exec at 0x101bf0000 not an arm64 mach-o (0x646c7964 0x2031765f)\n[attesor] aot: mmap exec at 0x101bf0000 not an arm64 mach-o (0x646c7964 0x2031765f)\n[attesor] aot: mmap exec at 0x101bf0000 not an arm64 mach-o (0x646c7964 0x2031765f)\n[attesor] aot: mmap exec at 0x101bf0000 not an arm64 mach-o (0x646c7964 0x2031765f)\n[attesor] aot: mmap exec at 0x101bf0000 not an arm64 mach-o (0x646c7964 0x2031765f)\n[attesor] aot: mmap exec at 0x101bf0000 not an arm64 mach-o (0x646c7964 0x2031765f)\n[attesor] aot: mmap exec at 0x101bf0000 not an arm64 mach-o (0x646c7964 0x2031765f)\n[attesor] aot: mmap exec at 0x101bf0000 not an arm64 mach-o (0x646c7964 0x2031765f)\n[attesor] jit: 1162 blocks, 5434 insns translated (1 via interpreter helper), 56.5 ms translating; 72084 block entries; 29007 blocks interpreted (cold)\n"
+    }
+  ],
+  "medians_ms": {
+    "cold": 1332.0298689999995,
+    "prewarmed": 1261.7729029999998
+  },
+  "time_reduction_percent": 5.274428722288638,
+  "break_even_launches": 7,
+  "environment": {
+    "ATTESOR_CACHE": "/var/folders/b4/tnjkjcm52s5g4n894r8xrcfh0000gn/T/attesor-serial-private-gcqjvb0o/cache",
+    "ATTESOR_NO_AOT_BUILD": "1",
+    "ATTESOR_AOT_CHECKPOINT": "0",
+    "ATTESOR_JIT_OFF": "",
+    "ATTESOR_JIT_ON": "",
+    "ATTESOR_STATS": "1"
+  },
+  "scope": "synthetic short CLI process, including dyld/libc startup; not GUI or Electron"
+}

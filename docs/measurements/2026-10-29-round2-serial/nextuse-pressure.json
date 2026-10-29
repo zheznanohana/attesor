@@ -1,0 +1,344 @@
+{
+  "host": "zhezdeMacBook-Pro.local",
+  "sha256": {
+    "before": "c19e12ad398809cec1e9cc2bb3a4610c1dff7d34f2686a3629126665a1814550",
+    "after": "c19e12ad398809cec1e9cc2bb3a4610c1dff7d34f2686a3629126665a1814550",
+    "guest": "0ceabaa72cd41ebbea2129a785b87fb9e785f0664e858e3f321ce4025360b7ee"
+  },
+  "samples": [
+    {
+      "round": 0,
+      "build": "before",
+      "command": [
+        "/private/tmp/attesor-final-target/release/attesor",
+        "--no-aot",
+        "/private/tmp/attesor-perf/round2-serial/fixtures/pressure-arm64",
+        "200000"
+      ],
+      "wall_ms": 1416.84391,
+      "environment": {
+        "ATTESOR_JIT_OFF": "nextuse",
+        "ATTESOR_JIT_ON": ""
+      },
+      "cold_aot": false,
+      "metrics": {
+        "nextuse-fp": 41.322,
+        "nextuse-int": 34.793
+      },
+      "stdout": "nextuse-fp 41.322 ms\nnextuse-int 34.793 ms\nchecksum 19f5768000000000 0d8cb324c86a4700\n",
+      "stderr": ""
+    },
+    {
+      "round": 0,
+      "build": "after",
+      "command": [
+        "/private/tmp/attesor-final-target/release/attesor",
+        "--no-aot",
+        "/private/tmp/attesor-perf/round2-serial/fixtures/pressure-arm64",
+        "200000"
+      ],
+      "wall_ms": 1399.169391,
+      "environment": {
+        "ATTESOR_JIT_OFF": "",
+        "ATTESOR_JIT_ON": ""
+      },
+      "cold_aot": false,
+      "metrics": {
+        "nextuse-fp": 50.342,
+        "nextuse-int": 34.187
+      },
+      "stdout": "nextuse-fp 50.342 ms\nnextuse-int 34.187 ms\nchecksum 19f5768000000000 0d8cb324c86a4700\n",
+      "stderr": ""
+    },
+    {
+      "round": 1,
+      "build": "after",
+      "command": [
+        "/private/tmp/attesor-final-target/release/attesor",
+        "--no-aot",
+        "/private/tmp/attesor-perf/round2-serial/fixtures/pressure-arm64",
+        "200000"
+      ],
+      "wall_ms": 1391.5539319999993,
+      "environment": {
+        "ATTESOR_JIT_OFF": "",
+        "ATTESOR_JIT_ON": ""
+      },
+      "cold_aot": false,
+      "metrics": {
+        "nextuse-fp": 43.377,
+        "nextuse-int": 44.889
+      },
+      "stdout": "nextuse-fp 43.377 ms\nnextuse-int 44.889 ms\nchecksum 19f5768000000000 0d8cb324c86a4700\n",
+      "stderr": ""
+    },
+    {
+      "round": 1,
+      "build": "before",
+      "command": [
+        "/private/tmp/attesor-final-target/release/attesor",
+        "--no-aot",
+        "/private/tmp/attesor-perf/round2-serial/fixtures/pressure-arm64",
+        "200000"
+      ],
+      "wall_ms": 1468.429348,
+      "environment": {
+        "ATTESOR_JIT_OFF": "nextuse",
+        "ATTESOR_JIT_ON": ""
+      },
+      "cold_aot": false,
+      "metrics": {
+        "nextuse-fp": 54.443,
+        "nextuse-int": 33.996
+      },
+      "stdout": "nextuse-fp 54.443 ms\nnextuse-int 33.996 ms\nchecksum 19f5768000000000 0d8cb324c86a4700\n",
+      "stderr": ""
+    },
+    {
+      "round": 2,
+      "build": "before",
+      "command": [
+        "/private/tmp/attesor-final-target/release/attesor",
+        "--no-aot",
+        "/private/tmp/attesor-perf/round2-serial/fixtures/pressure-arm64",
+        "200000"
+      ],
+      "wall_ms": 1447.1037139999999,
+      "environment": {
+        "ATTESOR_JIT_OFF": "nextuse",
+        "ATTESOR_JIT_ON": ""
+      },
+      "cold_aot": false,
+      "metrics": {
+        "nextuse-fp": 45.622,
+        "nextuse-int": 33.238
+      },
+      "stdout": "nextuse-fp 45.622 ms\nnextuse-int 33.238 ms\nchecksum 19f5768000000000 0d8cb324c86a4700\n",
+      "stderr": ""
+    },
+    {
+      "round": 2,
+      "build": "after",
+      "command": [
+        "/private/tmp/attesor-final-target/release/attesor",
+        "--no-aot",
+        "/private/tmp/attesor-perf/round2-serial/fixtures/pressure-arm64",
+        "200000"
+      ],
+      "wall_ms": 1413.6513729999995,
+      "environment": {
+        "ATTESOR_JIT_OFF": "",
+        "ATTESOR_JIT_ON": ""
+      },
+      "cold_aot": false,
+      "metrics": {
+        "nextuse-fp": 52.256,
+        "nextuse-int": 30.037
+      },
+      "stdout": "nextuse-fp 52.256 ms\nnextuse-int 30.037 ms\nchecksum 19f5768000000000 0d8cb324c86a4700\n",
+      "stderr": ""
+    },
+    {
+      "round": 3,
+      "build": "after",
+      "command": [
+        "/private/tmp/attesor-final-target/release/attesor",
+        "--no-aot",
+        "/private/tmp/attesor-perf/round2-serial/fixtures/pressure-arm64",
+        "200000"
+      ],
+      "wall_ms": 1603.517019,
+      "environment": {
+        "ATTESOR_JIT_OFF": "",
+        "ATTESOR_JIT_ON": ""
+      },
+      "cold_aot": false,
+      "metrics": {
+        "nextuse-fp": 60.924,
+        "nextuse-int": 35.008
+      },
+      "stdout": "nextuse-fp 60.924 ms\nnextuse-int 35.008 ms\nchecksum 19f5768000000000 0d8cb324c86a4700\n",
+      "stderr": ""
+    },
+    {
+      "round": 3,
+      "build": "before",
+      "command": [
+        "/private/tmp/attesor-final-target/release/attesor",
+        "--no-aot",
+        "/private/tmp/attesor-perf/round2-serial/fixtures/pressure-arm64",
+        "200000"
+      ],
+      "wall_ms": 1580.7824680000006,
+      "environment": {
+        "ATTESOR_JIT_OFF": "nextuse",
+        "ATTESOR_JIT_ON": ""
+      },
+      "cold_aot": false,
+      "metrics": {
+        "nextuse-fp": 62.097,
+        "nextuse-int": 37.397
+      },
+      "stdout": "nextuse-fp 62.097 ms\nnextuse-int 37.397 ms\nchecksum 19f5768000000000 0d8cb324c86a4700\n",
+      "stderr": ""
+    },
+    {
+      "round": 4,
+      "build": "before",
+      "command": [
+        "/private/tmp/attesor-final-target/release/attesor",
+        "--no-aot",
+        "/private/tmp/attesor-perf/round2-serial/fixtures/pressure-arm64",
+        "200000"
+      ],
+      "wall_ms": 1489.985268,
+      "environment": {
+        "ATTESOR_JIT_OFF": "nextuse",
+        "ATTESOR_JIT_ON": ""
+      },
+      "cold_aot": false,
+      "metrics": {
+        "nextuse-fp": 49.893,
+        "nextuse-int": 39.374
+      },
+      "stdout": "nextuse-fp 49.893 ms\nnextuse-int 39.374 ms\nchecksum 19f5768000000000 0d8cb324c86a4700\n",
+      "stderr": ""
+    },
+    {
+      "round": 4,
+      "build": "after",
+      "command": [
+        "/private/tmp/attesor-final-target/release/attesor",
+        "--no-aot",
+        "/private/tmp/attesor-perf/round2-serial/fixtures/pressure-arm64",
+        "200000"
+      ],
+      "wall_ms": 1366.3279559999992,
+      "environment": {
+        "ATTESOR_JIT_OFF": "",
+        "ATTESOR_JIT_ON": ""
+      },
+      "cold_aot": false,
+      "metrics": {
+        "nextuse-fp": 42.217,
+        "nextuse-int": 29.323
+      },
+      "stdout": "nextuse-fp 42.217 ms\nnextuse-int 29.323 ms\nchecksum 19f5768000000000 0d8cb324c86a4700\n",
+      "stderr": ""
+    },
+    {
+      "round": 5,
+      "build": "after",
+      "command": [
+        "/private/tmp/attesor-final-target/release/attesor",
+        "--no-aot",
+        "/private/tmp/attesor-perf/round2-serial/fixtures/pressure-arm64",
+        "200000"
+      ],
+      "wall_ms": 1526.6887099999983,
+      "environment": {
+        "ATTESOR_JIT_OFF": "",
+        "ATTESOR_JIT_ON": ""
+      },
+      "cold_aot": false,
+      "metrics": {
+        "nextuse-fp": 48.917,
+        "nextuse-int": 51.111
+      },
+      "stdout": "nextuse-fp 48.917 ms\nnextuse-int 51.111 ms\nchecksum 19f5768000000000 0d8cb324c86a4700\n",
+      "stderr": ""
+    },
+    {
+      "round": 5,
+      "build": "before",
+      "command": [
+        "/private/tmp/attesor-final-target/release/attesor",
+        "--no-aot",
+        "/private/tmp/attesor-perf/round2-serial/fixtures/pressure-arm64",
+        "200000"
+      ],
+      "wall_ms": 1544.1284950000024,
+      "environment": {
+        "ATTESOR_JIT_OFF": "nextuse",
+        "ATTESOR_JIT_ON": ""
+      },
+      "cold_aot": false,
+      "metrics": {
+        "nextuse-fp": 48.873,
+        "nextuse-int": 32.883
+      },
+      "stdout": "nextuse-fp 48.873 ms\nnextuse-int 32.883 ms\nchecksum 19f5768000000000 0d8cb324c86a4700\n",
+      "stderr": ""
+    },
+    {
+      "round": 6,
+      "build": "before",
+      "command": [
+        "/private/tmp/attesor-final-target/release/attesor",
+        "--no-aot",
+        "/private/tmp/attesor-perf/round2-serial/fixtures/pressure-arm64",
+        "200000"
+      ],
+      "wall_ms": 1360.4797099999998,
+      "environment": {
+        "ATTESOR_JIT_OFF": "nextuse",
+        "ATTESOR_JIT_ON": ""
+      },
+      "cold_aot": false,
+      "metrics": {
+        "nextuse-fp": 44.887,
+        "nextuse-int": 33.796
+      },
+      "stdout": "nextuse-fp 44.887 ms\nnextuse-int 33.796 ms\nchecksum 19f5768000000000 0d8cb324c86a4700\n",
+      "stderr": ""
+    },
+    {
+      "round": 6,
+      "build": "after",
+      "command": [
+        "/private/tmp/attesor-final-target/release/attesor",
+        "--no-aot",
+        "/private/tmp/attesor-perf/round2-serial/fixtures/pressure-arm64",
+        "200000"
+      ],
+      "wall_ms": 1452.4083839999983,
+      "environment": {
+        "ATTESOR_JIT_OFF": "",
+        "ATTESOR_JIT_ON": ""
+      },
+      "cold_aot": false,
+      "metrics": {
+        "nextuse-fp": 43.608,
+        "nextuse-int": 32.458
+      },
+      "stdout": "nextuse-fp 43.608 ms\nnextuse-int 32.458 ms\nchecksum 19f5768000000000 0d8cb324c86a4700\n",
+      "stderr": ""
+    }
+  ],
+  "medians": {
+    "nextuse-fp": {
+      "before": 48.873,
+      "after": 48.917,
+      "time_reduction_percent": -0.09002925950933882
+    },
+    "nextuse-int": {
+      "before": 33.996,
+      "after": 34.187,
+      "time_reduction_percent": -0.5618308036239528
+    },
+    "wall_ms": {
+      "before": 1468.429348,
+      "after": 1413.6513729999995,
+      "time_reduction_percent": 3.730378657618627
+    }
+  },
+  "reference": {
+    "command": [
+      "/private/tmp/attesor-perf/round2-serial/fixtures/pressure-x86_64",
+      "200000"
+    ],
+    "stdout": "nextuse-fp 10.754 ms\nnextuse-int 8.115 ms\nchecksum 19f5768000000000 0d8cb324c86a4700\n",
+    "sha256": "0f3c5332aa7e7c30652c78e7955e07949af94ce130a6c528612638cb2d13ebf2"
+  },
+  "semantic_output_present": true
+}

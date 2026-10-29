@@ -1,0 +1,22 @@
+{
+  "recorded_at": "2026-10-29T05:33:17.914674+00:00",
+  "concurrent_agent_tests": false,
+  "observations_during_sampling": [
+    {
+      "stage": "directbranch after nextuse-mixed",
+      "process": "VTDecoderXPCService",
+      "cpu_percent": 603.0
+    },
+    {
+      "stage": "directbranch after nextuse-mixed",
+      "process": "WindowServer",
+      "cpu_percent": 64.3
+    },
+    {
+      "stage": "directbranch follow-up",
+      "process": "VTDecoderXPCService",
+      "cpu_percent": 590.4
+    }
+  ],
+  "limitations": "Background system load was observed during sampling, not measured for every sample. Small differences cannot establish a stable regression or improvement; no system services were stopped."
+}
