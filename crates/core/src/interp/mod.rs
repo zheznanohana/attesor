@@ -9,6 +9,8 @@ mod fp16;
 mod ldst;
 pub mod simd;
 mod sys;
+/// See sys::sync_host_fp_mode: host MXCSR follows FPCR (rounding mode, flush-to-zero).
+pub use sys::sync_host_fp_mode as sys_sync_host_fp_mode;
 
 use crate::cpu::Cpu;
 use crate::mem;

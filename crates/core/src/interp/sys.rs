@@ -123,6 +123,25 @@ pub(crate) fn branch_sys(cpu: &mut Cpu, insn: u32) -> R {
 const SR_NZCV: u32 = sr(3, 3, 4, 2, 0);
 const SR_DAIF: u32 = sr(3, 3, 4, 2, 1);
 const SR_FPCR: u32 = sr(3, 3, 4, 4, 0);
+
+/// Keep the host MXCSR in step with FPCR: the JIT's SSE code and the interpreter's host float
+/// operations then round as FPCR.RMode says and flush denormals (inputs and outputs) when FPCR.FZ is
+/// set. ARM RMode 00 RN, 01 RP, 10 RM, 11 RZ; x86 RC 00 nearest, 01 down, 10 up, 11 toward zero.
+/// DN, AHP and FZ16 have no x86 equivalent; the JIT sends blocks to the interpreter for those.
+pub fn sync_host_fp_mode(fpcr: u64) {
+    #[cfg(target_arch = "x86_64")]
+    unsafe {
+        let mut m: u32 = 0;
+        core::arch::asm!("stmxcsr [{}]", in(reg) &mut m as *mut u32);
+        m &= !(0x6000 | 0x8000 | 0x0040); // RC, FTZ, DAZ
+        let rc = match (fpcr >> 22) & 3 { 0 => 0, 1 => 2, 2 => 1, _ => 3 };
+        m |= rc << 13;
+        if fpcr & (1 << 24) != 0 {
+            m |= 0x8000 | 0x0040;
+        }
+        core::arch::asm!("ldmxcsr [{}]", in(reg) &m as *const u32);
+    }
+}
 const SR_FPSR: u32 = sr(3, 3, 4, 4, 1);
 const SR_DIT: u32 = sr(3, 3, 4, 2, 5);
 const SR_SSBS: u32 = sr(3, 3, 4, 2, 6);
@@ -252,7 +271,10 @@ fn system(cpu: &mut Cpu, insn: u32) -> R {
         let v = cpu.xr(rt);
         match key {
             SR_NZCV => cpu.set_nzcv((v >> 28) as u32 & 0xf),
-            SR_FPCR => cpu.fpcr = v & 0x07ff_ff00,
+            SR_FPCR => {
+                cpu.fpcr = v & 0x07ff_ff00;
+                sync_host_fp_mode(cpu.fpcr);
+            }
             SR_FPSR => cpu.fpsr = v & 0xf800_009f,
             SR_TPIDR => cpu.tpidr_el0 = v,
             SR_DAIF | SR_DIT | SR_SSBS | SR_TCO => {}

@@ -663,6 +663,11 @@ pub fn run(cpu: &mut Cpu) {
                     return;
                 }
             }
+            emit::EXIT_INTERP => {
+                if !interp_block(cpu) {
+                    return;
+                }
+            }
             r => panic!("bad exit reason {r}"),
         }
         cpu.exit_reason = EXIT_CONTINUE;

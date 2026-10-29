@@ -373,8 +373,10 @@ pub fn run_selftest(class: &str, count: usize) {
         // Opt-in FPCR rounding coverage for instructions that honor it. Keep
         // the general arithmetic suite at its documented default FPCR.
         if std::env::var_os("ATTESOR_SELFTEST_FPCR").is_some() {
-            init.fpcr = (rng.next() & 3) << 22;
+            // rounding mode and flush-to-zero; the host MXCSR follows FPCR as a guest MSR would set it
+            init.fpcr = ((rng.next() & 3) << 22) | ((rng.next() & 1) << 24);
         }
+        interp::sys_sync_host_fp_mode(init.fpcr);
         init.pc = pc;
         let mem0: Vec<u8> = buf.clone();
         let mut r = Cpu::new();
@@ -406,6 +408,15 @@ pub fn run_selftest(class: &str, count: usize) {
             native += 1;
         }
         unsafe { attesor_jit_enter(&mut *j, host) };
+        if j.exit_reason == super::emit::EXIT_INTERP {
+            // non-default FPCR: the block defers to the interpreter, as the dispatcher would
+            let _ = interp::exec(&mut j, insn);
+            // ...and the svc #0x80 terminator after it exits as the JIT's would
+            j.pc += 4;
+            j.exit_reason = EXIT_SVC;
+            j.exit_data = 0x80;
+            native = native.saturating_sub(1);
+        }
         let pending = PENDING.with(|p| p.take());
         if j.exit_reason == EXIT_PENDING || pending.is_some() {
             skipped += 1;

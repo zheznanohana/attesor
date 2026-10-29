@@ -67,12 +67,25 @@ macro_rules! impl_fp {
             fn to_f64(self) -> f64 { self as f64 }
             #[inline(always)]
             fn round_mode(self, mode: u32) -> Self {
+                // Independent of the host rounding mode, which follows FPCR (std's round_ties_even is
+                // rint, i.e. it rounds the way MXCSR says): round |x| from floor with exact arithmetic
+                // (a - floor(a) is exact for a >= 0) and put the sign back (FRINTN(-0.4) = -0).
+                let nearest = |x: $t, ties_away: bool| -> $t {
+                    if !x.is_finite() {
+                        return x;
+                    }
+                    let a = x.abs();
+                    let r = a.floor();
+                    let d = a - r;
+                    let up = d > 0.5 || (d == 0.5 && (ties_away || (r * 0.5).floor() != r * 0.5));
+                    (if up { r + 1.0 } else { r }).copysign(x)
+                };
                 match mode {
-                    0 => self.round_ties_even(),
+                    0 => nearest(self, false),
                     1 => self.ceil(),
                     2 => self.floor(),
                     3 => self.trunc(),
-                    _ => self.round(), // ties away
+                    _ => nearest(self, true), // ties away
                 }
             }
             #[inline(always)]
@@ -184,7 +197,16 @@ pub fn fmla<T: Fp>(a: T, n: T, m: T) -> T {
 }
 
 #[inline(always)]
+/// FPCR.FZ for comparisons: flush a denormal input to a signed zero (FPUnpack). Max/min do no
+/// arithmetic, so the host DAZ the FPCR sync sets never sees their inputs; a multiply by an opaque 1.0
+/// applies it (and is exact without DAZ). NaNs keep their bits for the NaN rules.
+#[inline(always)]
+fn fz_input<T: Fp>(x: T) -> T {
+    if x.is_nan() { x } else { x * std::hint::black_box(T::from_f64(1.0)) }
+}
+
 pub fn fmax<T: Fp>(a: T, b: T) -> T {
+    let (a, b) = (fz_input(a), fz_input(b));
     if let Some(n) = process_nans(a, b) {
         return n;
     }
@@ -195,6 +217,7 @@ pub fn fmax<T: Fp>(a: T, b: T) -> T {
 }
 #[inline(always)]
 pub fn fmin<T: Fp>(a: T, b: T) -> T {
+    let (a, b) = (fz_input(a), fz_input(b));
     if let Some(n) = process_nans(a, b) {
         return n;
     }
@@ -205,6 +228,7 @@ pub fn fmin<T: Fp>(a: T, b: T) -> T {
 }
 #[inline(always)]
 pub fn fmaxnm<T: Fp>(a: T, b: T) -> T {
+    let (a, b) = (fz_input(a), fz_input(b));
     let (qa, qb) = (a.is_nan() && !a.is_snan(), b.is_nan() && !b.is_snan());
     if qa && !b.is_nan() {
         return b;
@@ -216,6 +240,7 @@ pub fn fmaxnm<T: Fp>(a: T, b: T) -> T {
 }
 #[inline(always)]
 pub fn fminnm<T: Fp>(a: T, b: T) -> T {
+    let (a, b) = (fz_input(a), fz_input(b));
     let (qa, qb) = (a.is_nan() && !a.is_snan(), b.is_nan() && !b.is_snan());
     if qa && !b.is_nan() {
         return b;

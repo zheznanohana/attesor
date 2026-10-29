@@ -21,6 +21,11 @@ pub const HELPER_COMMPAGE: usize = 1;
 pub const EXIT_CONTINUE: u64 = 0;
 pub const EXIT_SVC: u64 = 1;
 pub const EXIT_PENDING: u64 = 2;
+/// The block needs the interpreter (FPCR not in the default mode the native FP code assumes).
+pub const EXIT_INTERP: u64 = 3;
+/// FPCR bits the native FP translations cannot honour: AHP, DN, FZ16. (RMode and FZ are applied to the
+/// host MXCSR whenever FPCR is written, see interp::sys::sync_host_fp_mode.)
+const FPCR_NONDEFAULT: u32 = 0x0608_0000;
 
 pub const MAX_BLOCK_INSNS: usize = 96;
 
@@ -761,6 +766,35 @@ pub fn emit_block(u: &mut Unit, pc: u64, read: &dyn Fn(u64) -> Option<u32>) -> u
     }
     let mut label = *u.labels.get(&pc).expect("block label");
     u.a.set_label(&mut label).unwrap();
+    // Native FP code follows FPCR.RMode/FZ through MXCSR, but not DN/AHP/FZ16: a block with any SIMD&FP
+    // instruction checks those on entry and hands itself to the interpreter when one is set.
+    {
+        let mut p = pc;
+        let mut fp = false;
+        for _ in 0..MAX_BLOCK_INSNS {
+            let Some(w) = read(p) else { break };
+            if (w >> 25) & 7 == 0b111 {
+                fp = true;
+                break;
+            }
+            if is_terminator(w) {
+                break;
+            }
+            p += 4;
+        }
+        if fp {
+            let mut body = u.a.create_label();
+            u.a.test(dword_ptr(r15 + off::FPCR), FPCR_NONDEFAULT as i32).unwrap();
+            u.a.jz(body).unwrap();
+            let mut e = E { u, pc, fuse_in: None };
+            e.mov_imm(rax, pc);
+            a!(e, mov(qword_ptr(r15 + off::PC), rax));
+            a!(e, mov(qword_ptr(r15 + off::EXIT_REASON), EXIT_INTERP as i32));
+            let exit = e.u.exit_label;
+            a!(e, jmp(exit));
+            u.a.set_label(&mut body).unwrap();
+        }
+    }
     // set_label updates the label; keep the updated value for label_ip().
     u.labels.insert(pc, label);
     let mut cur = pc;
@@ -2374,6 +2408,17 @@ impl<'a> E<'a> {
     /// then the quiet ones), quietened. Exact for every input. Uses xmm2-xmm7.
     fn fp_maxmin(&mut self, double: bool, max: bool, nm: bool) {
         let unord = |e: &mut Self, x: AsmRegisterXmm| if double { a!(e, cmppd(x, x, 3)) } else { a!(e, cmpps(x, x, 3)) };
+        // FPCR.FZ flushes denormal inputs to signed zeros before comparing: x*1.0 does that under the host
+        // DAZ the FPCR sync sets (and is exact without it); NaN lanes keep their bits for the sNaN rules.
+        for x in [xmm0, xmm1] {
+            self.vconst(xmm2, if double { 0x3FF0_0000_0000_0000 } else { 0x3F80_0000_3F80_0000 });
+            if double { a!(self, mulpd(xmm2, x)); } else { a!(self, mulps(xmm2, x)); }
+            a!(self, movdqa(xmm3, x));
+            unord(self, xmm3);
+            a!(self, pand(x, xmm3));
+            a!(self, pandn(xmm3, xmm2));
+            a!(self, por(x, xmm3));
+        }
         a!(self, movdqa(xmm6, xmm0)); // a, kept for the signalling-NaN step
         // xmm2 = x86 max/min(a, b)
         a!(self, movdqa(xmm2, xmm0));

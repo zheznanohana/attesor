@@ -60,7 +60,11 @@ Processes that are killed (`kill -9`) do not save profiles; quit gracefully (e.g
   Attesor records each knote's QoS at registration and restores it; only one manager thread at
   a time (libdispatch aborts otherwise).
 - FP: ARM default NaN vs x86 "real indefinite" fixed up in JIT scalar+vector arithmetic. FPCR
-  rounding/DN/FZ modes are ignored by JIT-native FP (assumes defaults). QC (saturation) flag
+  RMode and FZ are honoured: every FPCR write updates the host MXCSR (RC, FTZ+DAZ), which both the
+  JIT's SSE code and the interpreter's host float operations follow; comparisons without arithmetic
+  (max/min) flush their inputs explicitly, and rounding helpers are independent of the host mode.
+  DN, AHP and FZ16 have no x86 equivalent: blocks with SIMD&FP instructions check those bits on entry
+  and run in the interpreter when one is set (EXIT_INTERP). QC (saturation) flag
   not maintained by native saturating ops. sNaN-vs-qNaN operand priority differs (x86 prefers
   qNaN) — 1 in ~15000 random self-test cases (~1 in 8000 for single-precision FMA), not seen in
   practice. FMA translations pick the addend's NaN first as ARM does (x86 picks op1, op2, addend).
