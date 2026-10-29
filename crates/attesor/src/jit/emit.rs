@@ -7037,7 +7037,7 @@ mod fp_cold_tests {
             assert_eq!(c.vq(1), 0x7ff8_0000_0000_1234, "ending={ending}");
             assert_eq!(c.vq(2), 0x7ff0_0000_0000_1234);
             assert_eq!(c.x, [0x1234_5678_9abc_def0; 32]);
-            assert_eq!(c.pc, if ending == 0 { end } else { PC + words.len() as u64 * 4 });
+            assert_eq!(c.pc(), if ending == 0 { end } else { PC + words.len() as u64 * 4 });
         }
     }
 
@@ -7143,7 +7143,7 @@ mod fp_pool_tests {
                     unsafe { crate::jit::attesor_jit_enter(&mut *c, host); }
                     let value = (A ^ B) as u128;
                     assert_eq!(c.vq(0), value | (value << 64));
-                    assert_eq!(c.pc, PC + 4);
+                    assert_eq!(c.pc(), PC + 4);
                     assert_eq!(c.exit_reason, EXIT_CONTINUE);
                 }
             }
