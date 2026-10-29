@@ -465,6 +465,239 @@ fn run_selftest_blocks(count: usize, fp: bool) {
     println!("jit selftest [{}]: ok={ok} mismatch={bad} skipped={skipped} insns={insns} fallback_insns={fallbacks}", if fp { "fpblocks" } else { "blocks" });
 }
 
+/// Keep the loop counter (x28), branch scratch
+/// (x27), and memory bases (x20-x23) out of the data pool. Writeback is bounded
+/// by 14 accesses * 16 bytes * 50 iterations, well inside the private buffer.
+/// x29 supplies a bounded register offset; SIMD uses the fpblocks generator.
+fn loop_insn(rng: &mut Rng, pool: &[u32], wide: bool, i: usize) -> u32 {
+    let pick = |rng: &mut Rng| pool[rng.next() as usize % pool.len()];
+    let d = pick(rng);
+    // Wide bodies read every member of the 12-16 register pool, rather than
+    // merely sampling a large pool and accidentally fitting in the host budget.
+    let n = if wide { pool[i % pool.len()] } else { pick(rng) };
+    let m = if wide { pool[(i + 2) % pool.len()] } else { pick(rng) };
+    let sf = (rng.next() as u32 & 1) << 31;
+    let width = if sf != 0 { 64 } else { 32 };
+    let kind = if wide && rng.next() % 4 != 0 { rng.next() % 5 } else { rng.next() % 14 };
+    match kind {
+        0 => { // ADD(S)/SUB(S), shifted register
+            let op = (rng.next() as u32 & 3) << 29;
+            sf | 0x0b00_0000 | op | ((rng.next() as u32 % 3) << 22)
+                | (m << 16) | ((rng.next() as u32 % width) << 10) | (n << 5) | d
+        }
+        1 => { // AND/ORR/EOR/ANDS and inverted variants
+            sf | 0x0a00_0000 | ((rng.next() as u32 & 3) << 29)
+                | ((rng.next() as u32 & 3) << 22) | ((rng.next() as u32 & 1) << 21)
+                | (m << 16) | ((rng.next() as u32 % width) << 10) | (n << 5) | d
+        }
+        2 => { // CSEL/CSINC/CSINV/CSNEG
+            sf | 0x1a80_0000 | ((rng.next() as u32 & 1) << 30)
+                | ((rng.next() as u32 & 1) << 10) | (m << 16)
+                | ((rng.next() as u32 % 14) << 12) | (n << 5) | d
+        }
+        3 => { // MADD/MSUB
+            sf | 0x1b00_0000 | (m << 16) | ((rng.next() as u32 & 1) << 15)
+                | (pick(rng) << 10) | (n << 5) | d
+        }
+        4 => { // LSLV/LSRV/ASRV/RORV
+            sf | 0x1ac0_2000 | (m << 16) | ((rng.next() as u32 & 3) << 10) | (n << 5) | d
+        }
+        5 => { // ADD(S)/SUB(S), immediate
+            sf | 0x1100_0000 | ((rng.next() as u32 & 3) << 29)
+                | ((rng.next() as u32 & 0xfff) << 10) | (n << 5) | d
+        }
+        6 => { // logical immediate, rotated eight-bit mask
+            sf | 0x1200_1c00 | ((rng.next() as u32 & 3) << 29)
+                | (if sf != 0 { 1 << 22 } else { 0 })
+                | ((rng.next() as u32 % width) << 16) | (n << 5) | d
+        }
+        7 => { // MOVZ/MOVN/MOVK (including destructive cached destinations)
+            let op = [0, 2, 3][rng.next() as usize % 3];
+            sf | 0x1280_0000 | (op << 29)
+                | ((rng.next() as u32 % (width / 16)) << 21)
+                | ((rng.next() as u32 & 0xffff) << 5) | d
+        }
+        10 => { // LDP/STP, signed offset and pre/post-index, W/X and SIMD Q
+            let vector = rng.next() % 4 == 0;
+            let size = if vector { 2 } else { rng.next() as u32 & 1 };
+            let t2 = pool[(pool.iter().position(|&r| r == d).unwrap() + 1) % pool.len()];
+            let mode = [1, 2, 3][rng.next() as usize % 3];
+            let offset = [0u32, 1, 0x7f][rng.next() as usize % 3];
+            (if vector { 0xad00_0000 } else if size == 0 { 0x2900_0000 } else { 0xa900_0000 })
+                & !(3 << 23) | (mode << 23) | ((rng.next() as u32 & 1) << 22)
+                | (offset << 15) | (t2 << 10) | ((20 + rng.next() as u32 % 4) << 5) | d
+        }
+        11 => { // LDR/STR register offset, x29 remains a small private-buffer index
+            let size = rng.next() as u32 % 4;
+            (size << 30) | 0x3820_6800 | ((rng.next() as u32 & 1) << 22)
+                | (29 << 16) | ((rng.next() as u32 & 1) << 12)
+                | ((20 + rng.next() as u32 % 4) << 5) | d
+        }
+        12 => fp_insn(rng),
+        13 => { // SIMD Boolean or SHA256H/H2 (the latter excludes the region)
+            let template = [0x4e20_1c00, 0x6e20_1c00, 0x5e00_4000, 0x5e00_5000][rng.next() as usize % 4];
+            template | (m << 16) | (n << 5) | d
+        }
+        _ => {
+            let size = rng.next() as u32 % 4;
+            let base = 20 + rng.next() as u32 % 4;
+            let load = (rng.next() as u32 & 1) << 22;
+            match rng.next() % 3 {
+                0 => (size << 30) | 0x3900_0000 | load
+                    | ((rng.next() as u32 % 32) << 10) | (base << 5) | d,
+                mode => { // signed pre/post-index; base never aliases the data register
+                    let offset = if rng.next() & 1 == 0 { 1i32 << size } else { -(1i32 << size) };
+                    (size << 30) | 0x3800_0000 | load | (((offset as u32) & 0x1ff) << 12)
+                        | (if mode == 1 { 0x400 } else { 0xc00 }) | (base << 5) | d
+                }
+            }
+        }
+    }
+}
+
+/// Bounded single-block loops, plus side-exit, interpreter-helper and in-body
+/// SVC probes. Side exits/SVC split basic blocks deliberately: those cases must
+/// remain correct even when a loop is ineligible for the region optimization.
+fn run_selftest_loops(count: usize) {
+    let counting = COUNT_LOOP_REGIONS.swap(true, Ordering::Relaxed);
+    let page = unsafe {
+        libc::mmap(std::ptr::null_mut(), 0x1000, libc::PROT_READ | libc::PROT_WRITE,
+            libc::MAP_ANON | libc::MAP_PRIVATE, -1, 0)
+    };
+    assert_ne!(page, libc::MAP_FAILED, "selftest loop code allocation");
+    let page = page as u64;
+    let mut buf = vec![0u8; 32768];
+    let bufp = buf.as_mut_ptr() as u64;
+    let mut rng = Rng(0x100f_5e1f_7e57_cafe);
+    let (mut ok, mut bad, mut skipped, mut native) = (0u64, 0u64, 0u64, 0u64);
+    let regions0 = STATS_LOOP_REGIONS.load(Ordering::Relaxed);
+    for it in 0..count {
+        let wide = (it / 8) % 4 == 0;
+        let pool_len = if wide { 12 + rng.next() as usize % 5 } else { 3 + rng.next() as usize % 4 };
+        let mut pool: Vec<u32> = (0..20).chain(24..27).collect();
+        for i in (1..pool.len()).rev() { pool.swap(i, rng.next() as usize % (i + 1)); }
+        pool.truncate(pool_len);
+        let len = if wide { pool_len - 2 } else { 2 + rng.next() as usize % 13 };
+        let iterations = 1 + rng.next() % 50;
+        let exit_kind = it % 8;
+        let mut prog = Vec::new();
+        let mut side_branch = None;
+        for i in 0..len {
+            prog.push(loop_insn(&mut rng, &pool, wide, i));
+            if i == len / 2 {
+                match exit_kind {
+                    4 | 5 => {
+                        // A delayed taken exit, or a side exit never taken. x28 is
+                        // still positive here, so subtracting zero never takes it.
+                        let at = if exit_kind == 4 { 1 + rng.next() % iterations } else { 0 };
+                        prog.push(0xd100_0000 | ((at as u32) << 10) | (28 << 5) | 27);
+                        side_branch = Some(prog.len());
+                        prog.push(0); // CBZ x27, side_svc (patched below)
+                    }
+                    6 => {
+                        // CRC32B wD,wD,wM: valid in interp, not native in dp2.
+                        // Reuse the written register after the helper to test cache invalidation.
+                        prog.push(0x1ac0_4000 | (pool[1] << 16) | (pool[0] << 5) | pool[0]);
+                        prog.push(0x9100_0400 | (pool[0] << 5) | pool[0]);
+                    }
+                    7 => prog.push(0xd400_1041), // SVC #0x82 inside the body
+                    _ => {}
+                }
+            }
+        }
+        let branch_kind = it % 3;
+        let sf = if rng.next() & 1 == 0 { 0 } else { 1 << 31 };
+        // SUBS + B.NE, SUB + CBNZ, or SUB + NEG + TBNZ of the sign
+        // bit. NEG(counter) has its sign bit set exactly while counter > 0.
+        prog.push(sf | 0x5100_0400 | (if branch_kind == 0 { 1 << 29 } else { 0 }) | (28 << 5) | 28);
+        if branch_kind == 2 { prog.push(sf | 0x4b00_0000 | (28 << 16) | (31 << 5) | 27); }
+        let back = -(prog.len() as i32) as u32;
+        prog.push(match branch_kind {
+            0 => 0x5400_0001 | ((back & 0x7ffff) << 5),
+            1 => sf | 0x3500_0000 | ((back & 0x7ffff) << 5) | 28,
+            _ => sf | 0x3700_0000 | (31 << 19) | ((back & 0x3fff) << 5) | 27,
+        });
+        prog.push(0xd400_1001); // normal exit: SVC #0x80
+        if let Some(at) = side_branch {
+            let offset = (prog.len() - at) as u32;
+            prog[at] = 0xb400_0000 | (offset << 5) | 27;
+        }
+        prog.push(0xd400_1021); // side exit: SVC #0x81
+        unsafe {
+            for (i, &w) in prog.iter().enumerate() { *((page + i as u64 * 4) as *mut u32) = w; }
+        }
+        invalidate_range(page, prog.len() as u64 * 4);
+        for chunk in buf.chunks_exact_mut(8) { chunk.copy_from_slice(&rng.next().to_le_bytes()); }
+        let mem0 = buf.clone();
+        let mut init = Cpu::new();
+        for r in 0..32 {
+            init.x[r] = rng.val();
+            init.v[r] = [fp_val(&mut rng), fp_val(&mut rng)];
+        }
+        init.x[29] = rng.next() % 16;
+        for r in 20..24 { init.x[r] = bufp + 16384 + (r as u64 - 20) * 256; }
+        init.x[28] = iterations;
+        init.tpidr_el0 = rng.val();
+        init.set_nzcv((rng.next() & 15) as u32);
+        init.set_pc(page);
+        let mut reference = clone_cpu(&init);
+        let limit = (prog.len() + 1) * 51;
+        let mut svc = None;
+        for _ in 0..limit {
+            let idx = reference.pc().wrapping_sub(page) / 4;
+            let Some(&w) = prog.get(idx as usize) else { break };
+            match interp::exec(&mut reference, w) {
+                Ok(()) => {}
+                Err(Exit::Svc(imm)) => { svc = Some(imm); break; }
+                Err(_) => break,
+            }
+        }
+        let expected_memory = buf.clone();
+        buf.copy_from_slice(&mem0);
+        let Some(svc) = svc else { skipped += 1; continue };
+        let mut translated = clone_cpu(&init);
+        setup_cpu(&mut translated);
+        let fb0 = STATS_FALLBACK.load(Ordering::Relaxed);
+        let mut pending = None;
+        // Dispatch until SVC, not just one host entry: side exits and fallback
+        // continuations may leave the unit. Bound public entries as well.
+        for _ in 0..limit {
+            if translated.pc() < page || translated.pc() >= page + prog.len() as u64 * 4 { break; }
+            let host = lookup_or_translate(translated.pc());
+            unsafe { attesor_jit_enter(&mut translated, host); }
+            pending = PENDING.with(|p| p.take());
+            if translated.exit_reason != EXIT_CONTINUE || pending.is_some() { break; }
+        }
+        let fallbacks = STATS_FALLBACK.load(Ordering::Relaxed) - fb0;
+        if fallbacks == 0 { native += 1; }
+        // Keep the fallback probe honest if native instruction coverage changes.
+        assert!(exit_kind != 6 || fallbacks != 0, "loop fallback probe became native");
+        let (a, b) = (snapshot(&reference), snapshot(&translated));
+        let mem_diff = buf != expected_memory;
+        if a != b || mem_diff || reference.pc() != translated.pc()
+            || translated.exit_reason != EXIT_SVC || translated.exit_data != svc as u64 || pending.is_some() {
+            bad += 1;
+            if bad <= 15 {
+                println!("MISMATCH loop #{it}: iterations={iterations} pool={pool_len} exit={exit_kind} backedge={branch_kind}");
+                for (i, &w) in prog.iter().enumerate() { println!("    +{:03x} {w:08x} {}", i * 4, disasm(w)); }
+                for i in 0..a.len() {
+                    if a[i] != b[i] { println!("    slot {i}: interp={:#x} jit={:#x}", a[i], b[i]); }
+                }
+                if let Some(i) = buf.iter().zip(&expected_memory).position(|(a, b)| a != b) {
+                    println!("    memory[{i:#x}]: interp={:#x} jit={:#x}", expected_memory[i], buf[i]);
+                }
+                println!("    pc: interp={:#x} jit={:#x}; exit={} data={:#x} expected_svc={svc:#x} pending={pending:?}",
+                    reference.pc(), translated.pc(), translated.exit_reason, translated.exit_data);
+            }
+        } else { ok += 1; }
+    }
+    invalidate_range(page, 0x1000);
+    unsafe { libc::munmap(page as *mut libc::c_void, 0x1000); }
+    COUNT_LOOP_REGIONS.store(counting, Ordering::Relaxed);
+    let loop_regions = STATS_LOOP_REGIONS.load(Ordering::Relaxed) - regions0;
+    println!("jit selftest [loops]: ok={ok} mismatch={bad} skipped={skipped} native={native} loop_regions={loop_regions}");
+}
+
 /// Deterministic NaN boundary matrix, including signalling/quiet priority,
 /// signed canonical NaNs, invalid operations, destructive destinations and
 /// mixed exceptional/ordinary vector lanes. No random sampling is needed to
@@ -650,6 +883,7 @@ fn run_selftest_tbiblocks(count: usize) {
 }
 
 pub fn run_selftest(class: &str, count: usize) {
+    if class == "loops" { return run_selftest_loops(count); }
     if class == "tbiblocks" { return run_selftest_tbiblocks(count); }
     if class == "fpnan" {
         return run_selftest_fpnan(count);

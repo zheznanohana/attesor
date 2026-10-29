@@ -117,6 +117,11 @@ static INDEX: Mutex<Option<JitIndex>> = Mutex::new(None);
 static STATS_BLOCKS: AtomicU64 = AtomicU64::new(0);
 static STATS_INSNS: AtomicU64 = AtomicU64::new(0);
 static STATS_FALLBACK: AtomicU64 = AtomicU64::new(0);
+/// Only the loops self-test requests generated region-entry instrumentation.
+static COUNT_LOOP_REGIONS: AtomicBool = AtomicBool::new(false);
+/// Loopra public region entries actually executed (not compilations or backedges).
+/// Ordinary loops and the write-through regioncache do not count.
+static STATS_LOOP_REGIONS: AtomicU64 = AtomicU64::new(0);
 
 static STATS_TRANSLATE_NS: AtomicU64 = AtomicU64::new(0);
 static STATS_INTERP_BLOCKS: AtomicU64 = AtomicU64::new(0);

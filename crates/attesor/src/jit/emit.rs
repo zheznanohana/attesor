@@ -8,7 +8,7 @@
 //!    position independent, which lets the AOT cache store it on disk.
 //!  * Instructions the translator does not handle natively are executed by
 //!    calling the reference interpreter (`HELPER_INTERP`) for that single
-//!    instruction; all guest state is in memory, so this is always safe.
+//!    instruction; write-back regions synchronize guest state around that call.
 
 use iced_x86::code_asm::*;
 use attesor_core::cpu::off;
@@ -79,6 +79,11 @@ pub struct Unit {
     // Private loop entry, never published in Unit labels or AOT registration.
     loop_cache: Option<LoopCache>,
     regioncache: bool,
+    loopra: bool,
+    region: Option<LoopRa>,
+    region_exits: Vec<LoopRa>,
+    // Final fused loop condition: materialize NZCV only on the exit edge.
+    loop_exit_flags: Option<FuseKind>,
     /// Set once an instruction has created an internal label (conditional code follows): cached
     /// state may then be used but not extended, or paths could disagree about what is cached.
     pub rc_frozen: bool,
@@ -262,6 +267,39 @@ fn next_cache_use(look: &[u32], n: u32, vector: bool) -> Option<usize> {
 #[derive(Clone, Copy)]
 struct LoopCache { pc: u64, fast: CodeLabel, reg: [u8; NCREGS] }
 
+const NLOOPREGS: usize = 10;
+const LOOPREGS: [R64; NLOOPREGS] = [rbx, rbp, r12, r13, r14, rsi, rdi, r8, r9, r10];
+const LOOPREGS32: [R32; NLOOPREGS] = [ebx, ebp, r12d, r13d, r14d, esi, edi, r8d, r9d, r10d];
+
+#[derive(Clone, Copy)]
+struct LoopRa {
+    pc: u64,
+    fast: CodeLabel,
+    exit: CodeLabel,
+    reg: [u8; NLOOPREGS],
+    // Union of guest writes emitted for this loop, including unknown helper
+    // writes. finish emits cold tails only after this mask is complete.
+    dirty: u32,
+}
+
+impl LoopRa {
+    fn slot(self, n: u32) -> Option<usize> {
+        self.reg.iter().position(|&r| r as u32 == n)
+    }
+    fn writeback(self, a: &mut CodeAssembler) {
+        for (s, n) in self.reg.into_iter().enumerate() {
+            if n != 0xff && self.dirty & (1 << n) != 0 {
+                a.mov(qword_ptr(r15 + xoff(n as u32)), LOOPREGS[s]).unwrap();
+            }
+        }
+    }
+    fn reload(self, a: &mut CodeAssembler) {
+        for (s, n) in self.reg.into_iter().enumerate() {
+            if n != 0xff { a.mov(LOOPREGS[s], qword_ptr(r15 + xoff(n as u32))).unwrap(); }
+        }
+    }
+}
+
 #[derive(Clone, Copy, Default)]
 pub struct RegCache {
     /// Guest register held in each slot (0xff = empty).
@@ -329,6 +367,10 @@ impl Unit {
             rc: RegCache::new(),
             loop_cache: None,
             regioncache: regioncache_enabled(),
+            loopra: loopra_enabled() && stub_kind == StubKind::Patchable,
+            region: None,
+            region_exits: Vec::new(),
+            loop_exit_flags: None,
             rc_frozen: false,
             look: Vec::new(),
             cache_uses: [[u8::MAX; 32]; 2],
@@ -360,6 +402,13 @@ impl Unit {
         let a = &mut self.a;
         a.set_label(&mut self.exit_label).unwrap();
         a.jmp(qword_ptr(r15 + off::JIT_EXIT)).unwrap();
+        // Each region owns its dispatcher tail: finish may contain several blocks
+        // with different assignments. Stubs receive canonical state from goto.
+        for mut region in std::mem::take(&mut self.region_exits) {
+            a.set_label(&mut region.exit).unwrap();
+            region.writeback(a);
+            a.jmp(self.exit_label).unwrap();
+        }
         let stubs = std::mem::take(&mut self.stubs);
         for mut s in stubs.into_iter() {
             let a = &mut self.a;
@@ -409,6 +458,11 @@ type R32 = AsmRegister32;
 
 fn r32_of(r: R64) -> R32 {
     match r {
+        x if x == rbx => ebx,
+        x if x == rbp => ebp,
+        x if x == r12 => r12d,
+        x if x == r13 => r13d,
+        x if x == r14 => r14d,
         x if x == rax => eax,
         x if x == rcx => ecx,
         x if x == rdx => edx,
@@ -424,6 +478,11 @@ fn r32_of(r: R64) -> R32 {
 
 fn r8_of(r: R64) -> AsmRegister8 {
     match r {
+        x if x == rbx => bl,
+        x if x == rbp => bpl,
+        x if x == r12 => r12b,
+        x if x == r13 => r13b,
+        x if x == r14 => r14b,
         x if x == rax => al,
         x if x == rcx => cl,
         x if x == rdx => dl,
@@ -439,6 +498,11 @@ fn r8_of(r: R64) -> AsmRegister8 {
 
 fn r16_of(r: R64) -> AsmRegister16 {
     match r {
+        x if x == rbx => bx,
+        x if x == rbp => bp,
+        x if x == r12 => r12w,
+        x if x == r13 => r13w,
+        x if x == r14 => r14w,
         x if x == rax => ax,
         x if x == rcx => cx,
         x if x == rdx => dx,
@@ -536,6 +600,248 @@ struct FpSource {
 }
 
 impl<'a> E<'a> {
+    /// Region operands borrow assigned registers; unassigned values use a caller
+    /// supplied scratch. Width belongs to the operation, not the borrowed value:
+    /// reading Wn must never zero the high half of an assigned Xn.
+    fn src(&mut self, n: u32, allow_sp: bool, sf: bool, scratch: R64) -> R64 {
+        if n != 31 || allow_sp {
+            if let Some(s) = self.region_slot(n) { return LOOPREGS[s]; }
+        }
+        if n == 31 && !allow_sp { a!(self, mov(r32_of(scratch), 0u32)); }
+        else if sf { self.ldx_nf(scratch, n); }
+        else { self.ldw_nf(scratch, n); }
+        scratch
+    }
+    /// stx commits a scratch destination or marks an assigned one dirty.
+    fn dst(&self, n: u32, allow_sp: bool, scratch: R64) -> R64 {
+        if n != 31 || allow_sp {
+            if let Some(s) = self.region_slot(n) { return LOOPREGS[s]; }
+        }
+        scratch
+    }
+    fn copy(&mut self, d: R64, s: R64, sf: bool) {
+        if d != s {
+            if sf { a!(self, mov(d, s)); } else { a!(self, mov(r32_of(d), r32_of(s))); }
+        }
+    }
+    fn init_dst(&mut self, d: u32, n: u32, dsp: bool, nsp: bool, sf: bool, scratch: R64) -> R64 {
+        let n = self.src(n, nsp, sf, scratch);
+        let d = self.dst(d, dsp, scratch);
+        self.copy(d, n, sf);
+        d
+    }
+
+    /// Direct two-address operations. Capture an aliased right operand before
+    /// initializing the destination, and use LEA for independent ADD results.
+    fn region_binary(&mut self, rd: u32, mut n: R64, mut m: R64, sf: bool,
+                     op: u32, flags: bool, allow_sp: bool) {
+        // op: ADD, SUB, AND, OR, XOR, MUL.
+        if flags && rd == 31 {
+            if sf {
+                match op { 1 => a!(self, cmp(n, m)), 2 => a!(self, test(n, m)),
+                    _ => { self.copy(rax, n, sf); a!(self, add(rax, m)); } }
+            } else {
+                match op { 1 => a!(self, cmp(r32_of(n), r32_of(m))), 2 => a!(self, test(r32_of(n), r32_of(m))),
+                    _ => { self.copy(rax, n, sf); a!(self, add(eax, r32_of(m))); } }
+            }
+        } else {
+            let d = self.dst(rd, allow_sp, rax);
+            if !flags && op == 0 && d != n && d != m {
+                if sf { a!(self, lea(d, qword_ptr(n + m))); }
+                else { a!(self, lea(r32_of(d), dword_ptr(n + m))); }
+            } else {
+                if d == m && d != n {
+                    if op != 1 { std::mem::swap(&mut n, &mut m); }
+                    else { self.copy(rcx, m, sf); m = rcx; }
+                }
+                self.copy(d, n, sf);
+                if sf {
+                    match op { 0 => a!(self, add(d, m)), 1 => a!(self, sub(d, m)),
+                        2 => a!(self, and(d, m)), 3 => a!(self, or(d, m)),
+                        4 => a!(self, xor(d, m)), _ => a!(self, imul_2(d, m)) }
+                } else {
+                    let (d, m) = (r32_of(d), r32_of(m));
+                    match op { 0 => a!(self, add(d, m)), 1 => a!(self, sub(d, m)),
+                        2 => a!(self, and(d, m)), 3 => a!(self, or(d, m)),
+                        4 => a!(self, xor(d, m)), _ => a!(self, imul_2(d, m)) }
+                }
+            }
+            self.stx(rd, d, allow_sp);
+        }
+        if flags {
+            match op { 0 => { self.flags_add(); self.u.fuse = Some(FuseKind::Add); },
+                1 => { self.flags_sub(); self.u.fuse = Some(FuseKind::Sub); },
+                _ => { self.flags_logic(); self.u.fuse = Some(FuseKind::Logic); } }
+        }
+    }
+
+    fn region_dp_reg(&mut self, w: u32) -> bool {
+        let sf = bit(w, 31) != 0;
+        let (d,n,m) = (bits(w,4,0),bits(w,9,5),bits(w,20,16));
+        let logical = w & 0x1f00_0000 == 0x0a00_0000;
+        let add = w & 0x1f00_0000 == 0x0b00_0000;
+        if logical || add {
+            let ext = add && bit(w,21) != 0;
+            let ty = bits(w,23,22);
+            let amt = bits(w,15,10);
+            if (!ext && ((!sf && amt >= 32) || (add && ty == 3)))
+                || (ext && (ty != 0 || bits(w,12,10) > 4)) { return false; }
+            let opc = bits(w,30,29);
+            if logical && opc == 1 && n == 31 && amt == 0 && bit(w,21) == 0 {
+                let r = self.init_dst(d,m,false,false,sf,rax);
+                // A 32-bit move to itself still clears Xd[63:32].
+                if !sf { a!(self, mov(r32_of(r), r32_of(r))); }
+                self.stx(d,r,false); return true;
+            }
+            let mut rhs = self.src(m,false,sf,rcx);
+            if ext || amt != 0 || (logical && bit(w,21) != 0) {
+                // Copy unless Rm is also the result and Rn needs no old Rm.
+                if !(logical && d == m && d != n && d != 31) {
+                    self.copy(rcx,rhs,if ext { true } else { sf }); rhs=rcx;
+                }
+                if ext { self.extend(rhs,bits(w,15,13),bits(w,12,10)); }
+                else { self.shift(rhs,ty,amt,sf); }
+                if logical && bit(w,21) != 0 {
+                    if sf { a!(self, not(rhs)); } else { a!(self, not(r32_of(rhs))); }
+                }
+            }
+            let lhs=self.src(n,ext,sf,rax);
+            let flags=if logical { opc==3 } else { bit(w,29)!=0 };
+            let op=if logical { match opc {0|3=>2,1=>3,_=>4} } else {bit(w,30)};
+            self.region_binary(d,lhs,rhs,sf,op,flags,ext && !flags);
+            return true;
+        }
+        if w & 0x3fe0_0800 == 0x1a80_0000 {
+            let (op,o2,cond)=(bit(w,30),bit(w,10),bits(w,15,12));
+            let fused=self.fuse_in.and_then(|k| x86_cc(k,cond^1).map(|cc|(k,cc)));
+            if fused.is_none() { self.cond_to_al(cond); }
+            // Keep rax/al for the non-fused condition until TEST below.
+            let mut rhs=self.src(m,false,sf,rdx);
+            if op != 0 || o2 != 0 {
+                self.copy(rdx,rhs,sf); rhs=rdx;
+                match (op,o2) {
+                    (0,_) => if sf { a!(self, lea(rhs,qword_ptr(rhs+1))); } else { a!(self, lea(edx,dword_ptr(rhs+1))); },
+                    (_,0) => if sf { a!(self, not(rhs)); } else { a!(self, not(edx)); },
+                    _ => { if sf { a!(self, not(rhs)); a!(self, lea(rhs,qword_ptr(rhs+1))); }
+                        else { a!(self, not(edx)); a!(self, lea(edx,dword_ptr(rhs+1))); } }
+                }
+            }
+            let lhs=self.src(n,false,sf,rcx);
+            let dest=self.dst(d,false,rcx);
+            if dest == rhs && dest != lhs { self.copy(rdx,rhs,sf); rhs=rdx; }
+            self.copy(dest,lhs,sf);
+            if let Some((k,cc))=fused { self.cmov(cc,dest,rhs,sf); self.u.fuse=Some(k); }
+            else { a!(self, test(al,al)); self.cmov(Cc::E,dest,rhs,sf); }
+            // Guarantee Wd zero-extension on both select outcomes.
+            if !sf { a!(self, mov(r32_of(dest),r32_of(dest))); }
+            self.stx(d,dest,false); return true;
+        }
+        if w & 0x1fe0_0000 == 0x1b00_0000 && bits(w,30,29)==0 && bits(w,23,21)==0 {
+            let ra=bits(w,14,10);
+            let lhs=self.src(n,false,sf,rax);
+            let rhs=self.src(m,false,sf,rcx);
+            // MADD's addend may alias its destination; capture it first.
+            let addend=if ra!=31 { let r=self.src(ra,false,sf,rdx); self.copy(rdx,r,sf); Some(rdx) } else {None};
+            self.region_binary(d,lhs,rhs,sf,5,false,false);
+            let dest=self.src(d,false,sf,rax);
+            if bit(w,15)==0 {
+                if let Some(a)=addend { if sf { a!(self, add(dest,a)); } else { a!(self, add(r32_of(dest),r32_of(a))); } }
+            } else {
+                if sf { a!(self, neg(dest)); } else { a!(self, neg(r32_of(dest))); }
+                if let Some(a)=addend { if sf { a!(self, add(dest,a)); } else { a!(self, add(r32_of(dest),r32_of(a))); } }
+            }
+            self.stx(d,dest,false); return true;
+        }
+        false
+    }
+    fn region_dp_imm(&mut self, w: u32) -> bool {
+        let sf=bit(w,31)!=0;
+        let (d,n)=(bits(w,4,0),bits(w,9,5));
+        match bits(w,25,23) {
+            2 => {
+                let op=bit(w,30); let flags=bit(w,29)!=0;
+                let imm=(bits(w,21,10) << (if bit(w,22)!=0 {12} else {0})) as i32;
+                if flags && d==31 && op==1 {
+                    let r=self.src(n,true,sf,rax);
+                    if sf { a!(self, cmp(r,imm)); } else { a!(self, cmp(r32_of(r),imm)); }
+                } else if !flags {
+                    let source = self.src(n,true,sf,rax);
+                    let dest = self.dst(d,true,rax);
+                    let offset = if op == 0 { imm } else { -imm };
+                    if sf { a!(self, lea(dest,qword_ptr(source + offset))); }
+                    else { a!(self, lea(r32_of(dest),dword_ptr(source + offset))); }
+                    self.stx(d,dest,true);
+                } else {
+                    let r=self.init_dst(d,n,!flags,true,sf,rax);
+                    if sf { if op==0 { a!(self, add(r,imm)); } else { a!(self, sub(r,imm)); } }
+                    else if op==0 { a!(self, add(r32_of(r),imm)); } else { a!(self, sub(r32_of(r),imm)); }
+                    self.stx(d,r,!flags);
+                }
+                if flags { if op==0 { self.flags_add(); self.u.fuse=Some(FuseKind::Add); }
+                    else { self.flags_sub(); self.u.fuse=Some(FuseKind::Sub); } }
+                true
+            }
+            4 => {
+                let opc=bits(w,30,29); let nb=bit(w,22);
+                if !sf && nb!=0 {return false;}
+                let Some(imm)=decode_logic_imm(nb,bits(w,15,10),bits(w,21,16),sf) else {return false};
+                let test=opc==3 && d==31;
+                let r=if test {self.src(n,false,sf,rax)} else {self.init_dst(d,n,opc!=3,false,sf,rax)};
+                let simm=if sf {imm as i64} else {imm as u32 as i32 as i64};
+                if simm >= i32::MIN as i64 && simm <= i32::MAX as i64 {
+                    let i=simm as i32;
+                    match (sf,opc,test) {
+                        (true,_,true)=>a!(self,test(r,i)), (false,_,true)=>a!(self,test(r32_of(r),i)),
+                        (true,0|3,_)=>a!(self,and(r,i)), (true,1,_)=>a!(self,or(r,i)), (true,_,_)=>a!(self,xor(r,i)),
+                        (false,0|3,_)=>a!(self,and(r32_of(r),i)), (false,1,_)=>a!(self,or(r32_of(r),i)), (false,_,_)=>a!(self,xor(r32_of(r),i)),
+                    }
+                } else {
+                    self.mov_imm(rcx,imm);
+                    match (opc,test) {(_,true)=>a!(self,test(r,rcx)),(0|3,_)=>a!(self,and(r,rcx)),(1,_)=>a!(self,or(r,rcx)),_=>a!(self,xor(r,rcx))}
+                }
+                if !test { self.stx(d,r,opc!=3); }
+                if opc==3 {self.flags_logic();self.u.fuse=Some(FuseKind::Logic);}
+                true
+            }
+            5 if bits(w,30,29)==3 => {
+                let hw=bits(w,22,21); if !sf && hw>1 {return false;}
+                if d==31 {return true;}
+                let imm=(bits(w,20,5) as u64) << (hw*16);
+                let r=self.init_dst(d,d,false,false,sf,rax);
+                self.mov_imm(rcx,!(0xffffu64 << (hw*16)));
+                a!(self,and(r,rcx));
+                if imm!=0 {self.mov_imm(rcx,imm);a!(self,or(r,rcx));}
+                if !sf {a!(self,mov(r32_of(r),r32_of(r)));}
+                self.stx(d,r,false);true
+            }
+            _=>false
+        }
+    }
+    fn region_slot(&self, n: u32) -> Option<usize> { self.u.region.and_then(|r| r.slot(n)) }
+    fn writeback(&mut self) {
+        if let Some(r) = self.u.region { r.writeback(&mut self.u.a); }
+    }
+    fn dirty_region(&mut self, mask: u32) {
+        if let Some(r) = &mut self.u.region {
+            r.dirty |= mask;
+            self.u.region_exits.last_mut().unwrap().dirty = r.dirty;
+        }
+    }
+    fn sync_region(&mut self) {
+        if let Some(mut r) = self.u.region {
+            // An early helper on a later iteration can see native writes that
+            // follow it in the body. Synchronize all slots at in-body barriers;
+            // cache_access is a profitability hint, never a correctness decoder.
+            r.dirty = u32::MAX;
+            r.writeback(&mut self.u.a);
+        }
+    }
+    fn reload_region(&mut self) {
+        if let Some(r) = self.u.region { r.reload(&mut self.u.a); }
+    }
+    fn dispatcher_exit(&self) -> CodeLabel {
+        self.u.region.map_or(self.u.exit_label, |r| r.exit)
+    }
     fn rc_find(&self, n: u32) -> Option<usize> {
         self.u.rc.reg.iter().position(|&r| r as u32 == n)
     }
@@ -661,6 +967,7 @@ impl<'a> E<'a> {
     /// Is the current bank-local value read before a known overwrite in the
     /// lookahead? Unknown encodings are conservative; this affects speed only.
     fn used_soon_bank(&self, n: u32, vector: bool) -> bool {
+        if !vector && self.u.region.is_some() { return false; }
         if !vector {
             if let Some(l) = self.u.loop_cache { return l.reg.contains(&(n as u8)); }
         }
@@ -699,7 +1006,9 @@ impl<'a> E<'a> {
     }
     /// Load Xn without touching the x86 flags (n = 31 must be SP).
     fn ldx_nf(&mut self, r: R64, n: u32) {
-        if let Some(s) = self.rc_find(n) {
+        if let Some(s) = self.region_slot(n) {
+            a!(self, mov(r, LOOPREGS[s]));
+        } else if let Some(s) = self.rc_find(n) {
             self.rc_touch(s);
             a!(self, mov(r, CREGS[s]));
         } else if !self.u.rc_frozen && self.used_soon(n) {
@@ -719,7 +1028,9 @@ impl<'a> E<'a> {
         }
     }
     fn ldw_nf(&mut self, r: R64, n: u32) {
-        if let Some(s) = self.rc_find(n) {
+        if let Some(s) = self.region_slot(n) {
+            a!(self, mov(r32_of(r), LOOPREGS32[s]));
+        } else if let Some(s) = self.rc_find(n) {
             self.rc_touch(s);
             a!(self, mov(r32_of(r), CREGS32[s]));
         } else if !self.u.rc_frozen && self.used_soon(n) {
@@ -742,8 +1053,13 @@ impl<'a> E<'a> {
         if n == 31 && !use_sp {
             return;
         }
-        a!(self, mov(qword_ptr(r15 + xoff(n)), r));
-        self.rc_wrote(n, r);
+        if let Some(s) = self.region_slot(n) {
+            self.dirty_region(1 << n);
+            if LOOPREGS[s] != r { a!(self, mov(LOOPREGS[s], r)); }
+        } else {
+            a!(self, mov(qword_ptr(r15 + xoff(n)), r));
+            self.rc_wrote(n, r);
+        }
     }
     fn mov_imm(&mut self, r: R64, v: u64) {
         if r == r11 { self.u.tbi_mask_live = false; }
@@ -757,6 +1073,12 @@ impl<'a> E<'a> {
     }
     fn st_imm(&mut self, n: u32, v: u64) {
         if n == 31 {
+            return;
+        }
+        if let Some(s) = self.region_slot(n) {
+            self.dirty_region(1 << n);
+            // MOV preserves a preceding flag producer, including immediate zero.
+            a!(self, mov(LOOPREGS[s], v));
             return;
         }
         self.rc_inval(n);
@@ -886,13 +1208,16 @@ impl<'a> E<'a> {
     /// Call the interpreter for one instruction; exit if it reports anything.
     fn fallback(&mut self, insn: u32) {
         self.u.insns_fallback += 1;
+        self.sync_region();
+        self.dirty_region(u32::MAX); // interpreter helpers may change any GPR
         a!(self, mov(rdi, r15));
         a!(self, mov(esi, insn));
         self.mov_imm(rdx, self.pc);
         a!(self, call(qword_ptr(r15 + off::helper(HELPER_INTERP))));
         self.rc_clear();   // the interpreter may have written any guest register
+        self.reload_region(); // MOV only: preserve the helper status in eax
         a!(self, test(eax, eax));
-        let exit = self.u.exit_label;
+        let exit = self.dispatcher_exit();
         a!(self, jnz(exit));
     }
 
@@ -900,7 +1225,7 @@ impl<'a> E<'a> {
     /// to the dispatcher.
     fn fallback_terminator(&mut self, insn: u32) {
         self.fallback(insn);
-        let exit = self.u.exit_label;
+        let exit = self.dispatcher_exit();
         a!(self, mov(qword_ptr(r15 + off::EXIT_REASON), EXIT_CONTINUE as i32));
         a!(self, mov(qword_ptr(r15 + off::EXIT_DATA), 0));
         a!(self, jmp(exit));
@@ -908,6 +1233,23 @@ impl<'a> E<'a> {
 
     /// Jump to a direct successor: inside the unit, or through a stub.
     fn goto(&mut self, target: u64) {
+        if let Some(r) = self.u.region {
+            if target == r.pc && !self.u.no_internal_jumps {
+                // A helper or scratch immediate may have invalidated the mask.
+                // MOV preserves fused condition flags on this edge.
+                if !self.u.commpage_checks && !jit_off("tbimask") && !self.u.tbi_mask_live {
+                    a!(self, mov(r11, 0x00ff_ffff_ffff_ffffu64));
+                }
+                a!(self, jmp(r.fast));
+                return;
+            }
+            if let Some(kind) = self.u.loop_exit_flags {
+                match kind { FuseKind::Add => self.flags_add(), FuseKind::Sub => self.flags_sub(), FuseKind::Logic => self.flags_logic() }
+            }
+            // Before any public entry or patchable slot (including a chained
+            // stub), Cpu must be canonical. MOV stores preserve fused flags.
+            self.writeback();
+        }
         if !self.u.no_internal_jumps {
             if let Some(l) = self.u.loop_cache.filter(|l| l.pc == target) {
                 // Cpu remains authoritative. Reload only absent/mismatched slots; no
@@ -961,12 +1303,17 @@ impl<'a> E<'a> {
         a!(self, shr(rcx, 16));
         a!(self, cmp(ecx, 0xF_FFFF));
         a!(self, jne(skip));
-        a!(self, push(r8));
+        self.sync_region();
+        // rdx holds the original guest writeback/pair address inside regions.
+        // Preserve it across this cold helper, keeping the stack aligned.
+        let saved = if self.u.region.is_some() { rdx } else { r8 };
+        a!(self, push(saved));
         a!(self, push(r9));
         a!(self, mov(rdi, rax));
         a!(self, call(qword_ptr(r15 + off::helper(HELPER_COMMPAGE))));
         a!(self, pop(r9));
-        a!(self, pop(r8));
+        a!(self, pop(saved));
+        self.reload_region();
         self.u.a.set_label(&mut skip).unwrap();
         a!(self, nop());
     }
@@ -1224,6 +1571,12 @@ fn callret_enabled() -> bool {
     *F.get_or_init(|| std::env::var("ATTESOR_JIT_ON").unwrap_or_default().split(',').any(|g| g == "callret"))
 }
 
+/// Experimental ten-register write-back region (JIT only).
+fn loopra_enabled() -> bool {
+    static F: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *F.get_or_init(|| std::env::var("ATTESOR_JIT_ON").unwrap_or_default().split(',').any(|g| g == "loopra"))
+}
+
 /// Experimental write-through natural-loop region; public entries remain canonical.
 fn regioncache_enabled() -> bool {
     static F: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
@@ -1233,12 +1586,17 @@ fn regioncache_enabled() -> bool {
 // Discover only a single-entry basic block ending in a direct natural backedge.
 // Stop at other Unit labels exactly as emit_block does; joins and other edges
 // continue through public entries, never through this private cache contract.
-fn loop_layout(u: &Unit, pc: u64, read: &dyn Fn(u64) -> Option<u32>) -> Option<[u8; NCREGS]> {
+fn loop_layout<const N: usize>(u: &Unit, pc: u64, read: &dyn Fn(u64) -> Option<u32>) -> Option<[u8; N]> {
     let mut counts = [0u32; 32];
     for i in 0..MAX_BLOCK_INSNS {
         let p = pc + i as u64 * 4;
         if i != 0 && u.labels.contains_key(&p) { return None; }
         let w = read(p)?;
+        // CAS/LSE use rsi; software SHA256H/H2 use rsi/rdi/r8. Keep
+        // these templates outside write-back regions, independently of host ISA.
+        if N == NLOOPREGS && (w & 0x3fa0_7c00 == 0x08a0_7c00
+            || w & 0x3f20_0c00 == 0x3820_0000
+            || w & 0xffe0_ec00 == 0x5e00_4000) { return None; }
         let a = cache_access(w);
         // Unknown decodings advertise every read conservatively. They must not
         // dominate the layout; correctness never depends on this ranking.
@@ -1256,8 +1614,8 @@ fn loop_layout(u: &Unit, pc: u64, read: &dyn Fn(u64) -> Option<u32>) -> Option<[
             if target != pc { return None; }
             let mut regs: Vec<usize> = (0..32).filter(|&n| counts[n] != 0).collect();
             regs.sort_by_key(|&n| (std::cmp::Reverse(counts[n]), n));
-            let mut layout = [0xff; NCREGS];
-            for (s, n) in regs.into_iter().take(NCREGS).enumerate() { layout[s] = n as u8; }
+            let mut layout = [0xff; N];
+            for (s, n) in regs.into_iter().take(N).enumerate() { layout[s] = n as u8; }
             return (layout[0] != 0xff).then_some(layout);
         }
     }
@@ -1307,6 +1665,8 @@ pub fn has_f16c() -> bool {
 pub fn emit_block(u: &mut Unit, pc: u64, read: &dyn Fn(u64) -> Option<u32>) -> u64 {
     u.fuse = None;
     u.loop_cache = None;
+    u.region = None;
+    u.loop_exit_flags = None;
     u.tbi_mask_live = false;
     u.rc = RegCache::new();
     u.vc = VCache::new();
@@ -1325,8 +1685,33 @@ pub fn emit_block(u: &mut Unit, pc: u64, read: &dyn Fn(u64) -> Option<u32>) -> u
     }
     let mut label = *u.labels.get(&pc).expect("block label");
     u.a.set_label(&mut label).unwrap();
-    if u.regioncache && !u.no_internal_jumps {
-        if let Some(reg) = loop_layout(u, pc, read) {
+    if u.loopra && !u.no_internal_jumps {
+        if let Some(reg) = loop_layout::<NLOOPREGS>(u, pc, read) {
+            // signals.rs does not deliver guest fault handlers. Register-only
+            // state is therefore visible only in fatal crash dumps; revisit this
+            // feature before implementing resumable guest faults.
+            assert!(GUEST_FAULTS_FATAL);
+            let fast = u.a.create_label();
+            let exit = u.a.create_label();
+            let region = LoopRa { pc, fast, exit, reg, dirty: 0 };
+            // JIT-only instrumentation: absolute host addresses must never enter
+            // an AOT blob. Count executed public entries, not translations.
+            if super::COUNT_LOOP_REGIONS.load(std::sync::atomic::Ordering::Relaxed) {
+                u.a.mov(rax, &super::STATS_LOOP_REGIONS as *const _ as u64).unwrap();
+                u.a.lock().inc(qword_ptr(rax)).unwrap();
+            }
+            region.reload(&mut u.a);
+            if !u.commpage_checks && !jit_off("tbimask") {
+                u.a.mov(r11, 0x00ff_ffff_ffff_ffffu64).unwrap();
+                u.tbi_mask_live = true;
+            }
+            let mut fast_label = fast;
+            u.a.set_label(&mut fast_label).unwrap();
+            u.region = Some(region);
+            u.region_exits.push(region);
+        }
+    } else if u.regioncache && !u.no_internal_jumps {
+        if let Some(reg) = loop_layout::<NCREGS>(u, pc, read) {
             for (s, &n) in reg.iter().enumerate() {
                 if n != 0xff { u.a.mov(CREGS[s], qword_ptr(r15 + xoff(n as u32))).unwrap(); }
             }
@@ -1360,13 +1745,14 @@ pub fn emit_block(u: &mut Unit, pc: u64, read: &dyn Fn(u64) -> Option<u32>) -> u
             e.mov_imm(rax, pc);
             a!(e, mov(qword_ptr(r15 + off::PC), rax));
             a!(e, mov(qword_ptr(r15 + off::EXIT_REASON), EXIT_INTERP as i32));
-            let exit = e.u.exit_label;
+            let exit = e.dispatcher_exit();
             a!(e, jmp(exit));
             u.a.set_label(&mut body).unwrap();
         }
     }
     // set_label updates the label; keep the updated value for label_ip().
     u.labels.insert(pc, label);
+    let loop_body_start = u.a.instructions().len();
     let mut cur = pc;
     let mut count = 0;
     loop {
@@ -1392,6 +1778,17 @@ pub fn emit_block(u: &mut Unit, pc: u64, read: &dyn Fn(u64) -> Option<u32>) -> u
                 {
                     // cmp/adds/ands feeding B.cond: the flags are dead if both successors overwrite them
                     let target = (cur + 4).wrapping_add((sext(((nx >> 5) & 0x7ffff) as u64, 19) << 2) as u64);
+                    // On a self backedge, NZCV can stay in host flags until
+                    // the exit when the next iteration overwrites it before a
+                    // reader. No helper may observe it in between. Faults are
+                    // fatal (GUEST_FAULTS_FATAL), as for flags_dead_at itself.
+                    if u.region.is_some() && target == pc && !u.commpage_checks
+                        && disabled_classes() == 0 && flags_dead_at(pc, read)
+                        && !u.a.instructions()[loop_body_start..].iter().any(|i| i.mnemonic() == iced_x86::Mnemonic::Call)
+                    {
+                        u.dead_flags = true;
+                        u.loop_exit_flags = Some(kind);
+                    }
                     if flags_dead_at(target, read) && flags_dead_at(cur + 8, read) {
                         u.dead_flags = true;
                         DEAD_FLAG_SKIPS.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
@@ -1484,7 +1881,7 @@ impl<'a> E<'a> {
         a!(self, mov(qword_ptr(r15 + off::PC), rax));
         a!(self, mov(qword_ptr(r15 + off::EXIT_REASON), EXIT_CONTINUE as i32));
         a!(self, mov(qword_ptr(r15 + off::EXIT_DATA), 0));
-        let exit = self.u.exit_label;
+        let exit = self.dispatcher_exit();
         a!(self, jmp(exit));
     }
 
@@ -1516,6 +1913,7 @@ impl<'a> E<'a> {
     // ---------------- data processing (immediate) ----------------
 
     fn dp_imm(&mut self, insn: u32) -> bool {
+        if self.u.region.is_some() && self.region_dp_imm(insn) { return true; }
         let sf = bit(insn, 31) != 0;
         let rd = bits(insn, 4, 0);
         let rn = bits(insn, 9, 5);
@@ -1635,6 +2033,21 @@ impl<'a> E<'a> {
                 if !sf && lsb >= 32 {
                     return false;
                 }
+                if self.u.region.is_some() {
+                    let mut high = self.src(rn,false,sf,rax);
+                    let low = self.src(rm,false,sf,rcx);
+                    let dest = self.dst(rd,false,rcx);
+                    if dest == high && dest != low && lsb != 0 {
+                        self.copy(rax,high,sf); high = rax;
+                    }
+                    self.copy(dest,low,sf);
+                    if lsb != 0 {
+                        if sf { a!(self, shrd(dest,high,lsb)); }
+                        else { a!(self, shrd(r32_of(dest),r32_of(high),lsb)); }
+                    } else if !sf { a!(self, mov(r32_of(dest),r32_of(dest))); }
+                    self.stx(rd,dest,false);
+                    return true;
+                }
                 self.ld(rax, rn, false, sf);
                 self.ld(rcx, rm, false, sf);
                 if lsb != 0 {
@@ -1671,32 +2084,27 @@ impl<'a> E<'a> {
             let Some((wmask, tmask)) = attesor_core::interp::decode_bit_masks(n, imms, immr, false, dsz) else {
                 return false;
             };
-            self.ld(rax, rn, false, sf);
-            if immr != 0 {
-                if sf {
-                    a!(self, ror(rax, immr as i32));
-                } else {
-                    a!(self, ror(eax, immr as i32));
-                }
-            }
-            self.ld(rcx, rd, false, sf);
-            self.mov_imm(rdx, wmask);
-            a!(self, and(rax, rdx));
-            self.mov_imm(rdx, !wmask);
-            a!(self, and(rdx, rcx));
-            a!(self, or(rax, rdx));
-            self.mov_imm(rdx, tmask);
-            a!(self, and(rax, rdx));
-            self.mov_imm(rdx, !tmask);
-            a!(self, and(rdx, rcx));
-            a!(self, or(rax, rdx));
-            if !sf {
-                a!(self, mov(eax, eax));
-            }
-            self.stx(rd, rax, false);
+            let source = self.src(rn,false,sf,rax);
+            self.copy(rax,source,sf);
+            if immr != 0 { self.shift(rax,3,immr,sf); }
+            let mask = wmask & tmask;
+            self.mov_imm(rcx,mask);
+            a!(self, and(rax,rcx));
+            let dest = self.init_dst(rd,rd,false,false,sf,rdx);
+            self.mov_imm(rcx,!mask);
+            if sf { a!(self, and(dest,rcx)); a!(self, or(dest,rax)); }
+            else { a!(self, and(r32_of(dest),ecx)); a!(self, or(r32_of(dest),eax)); }
+            self.stx(rd,dest,false);
             return true;
         }
-        self.ld(rax, rn, false, sf);
+        if sf && opc == 0 && immr == 0 && imms == 31 {
+            let src = self.src(rn,false,false,rax);
+            let dest = self.dst(rd,false,rax);
+            a!(self, movsxd(dest,r32_of(src)));
+            self.stx(rd,dest,false); return true;
+        }
+        let r = if self.u.region.is_some() { self.init_dst(rd,rn,false,false,sf,rax) }
+            else { self.ld(rax,rn,false,sf); rax };
         if sf {
             if opc == 2 {
                 // UBFM
@@ -1704,72 +2112,73 @@ impl<'a> E<'a> {
                     // UBFX / LSR
                     let width = imms - immr + 1;
                     if immr != 0 {
-                        a!(self, shr(rax, immr));
+                        a!(self, shr(r, immr));
                     }
                     if width < 64 {
                         if width == 32 {
-                            a!(self, mov(eax, eax));
+                            a!(self, mov(r32_of(r), r32_of(r)));
                         } else {
                             self.mov_imm(rcx, (1u64 << width) - 1);
-                            a!(self, and(rax, rcx));
+                            a!(self, and(r, rcx));
                         }
                     }
                 } else {
                     // UBFIZ / LSL
                     let width = imms + 1;
                     let sh = 64 - immr;
-                    a!(self, shl(rax, 64 - width));
-                    a!(self, shr(rax, 64 - width - sh));
+                    a!(self, shl(r, 64 - width));
+                    a!(self, shr(r, 64 - width - sh));
                 }
             } else {
                 // SBFM
                 if imms >= immr {
                     let l = 63 - imms;
                     if l != 0 {
-                        a!(self, shl(rax, l));
+                        a!(self, shl(r, l));
                     }
-                    let r = l + immr;
-                    if r != 0 {
-                        a!(self, sar(rax, r));
+                    let amount = l + immr;
+                    if amount != 0 {
+                        a!(self, sar(r, amount));
                     }
                 } else {
                     let l = 63 - imms;
-                    a!(self, shl(rax, l));
-                    a!(self, sar(rax, l));
-                    a!(self, shl(rax, 64 - immr));
+                    a!(self, shl(r, l));
+                    a!(self, sar(r, l));
+                    a!(self, shl(r, 64 - immr));
                 }
             }
         } else if opc == 2 {
             if imms >= immr {
                 let width = imms - immr + 1;
                 if immr != 0 {
-                    a!(self, shr(eax, immr));
+                    a!(self, shr(r32_of(r), immr));
                 }
                 if width < 32 {
-                    a!(self, and(eax, ((1u64 << width) - 1) as i32));
+                    a!(self, and(r32_of(r), ((1u64 << width) - 1) as i32));
                 }
             } else {
                 let width = imms + 1;
                 let sh = 32 - immr;
-                a!(self, shl(eax, 32 - width));
-                a!(self, shr(eax, 32 - width - sh));
+                a!(self, shl(r32_of(r), 32 - width));
+                a!(self, shr(r32_of(r), 32 - width - sh));
             }
         } else if imms >= immr {
             let l = 31 - imms;
             if l != 0 {
-                a!(self, shl(eax, l));
+                a!(self, shl(r32_of(r), l));
             }
-            let r = l + immr;
-            if r != 0 {
-                a!(self, sar(eax, r));
+            let amount = l + immr;
+            if amount != 0 {
+                a!(self, sar(r32_of(r), amount));
             }
         } else {
             let l = 31 - imms;
-            a!(self, shl(eax, l));
-            a!(self, sar(eax, l));
-            a!(self, shl(eax, 32 - immr));
+            a!(self, shl(r32_of(r), l));
+            a!(self, sar(r32_of(r), l));
+            a!(self, shl(r32_of(r), 32 - immr));
         }
-        self.stx(rd, rax, false);
+        if !sf && immr == 0 && imms == 31 { a!(self, mov(r32_of(r),r32_of(r))); }
+        self.stx(rd, r, false);
         true
     }
 
@@ -1816,6 +2225,7 @@ impl<'a> E<'a> {
     }
 
     fn dp_reg(&mut self, insn: u32) -> bool {
+        if self.u.region.is_some() && self.region_dp_reg(insn) { return true; }
         let sf = bit(insn, 31) != 0;
         let rd = bits(insn, 4, 0);
         let rn = bits(insn, 9, 5);
@@ -2118,24 +2528,25 @@ impl<'a> E<'a> {
                 true
             }
             0b001000..=0b001011 => {
-                self.ld(rax, rn, false, sf);
                 self.ld(rcx, rm, false, sf);
+                let r = if self.u.region.is_some() {self.init_dst(rd,rn,false,false,sf,rax)}
+                    else {self.ld(rax,rn,false,sf);rax};
                 if sf {
                     match opcode & 3 {
-                        0 => a!(self, shl(rax, cl)),
-                        1 => a!(self, shr(rax, cl)),
-                        2 => a!(self, sar(rax, cl)),
-                        _ => a!(self, ror(rax, cl)),
+                        0 => a!(self, shl(r, cl)),
+                        1 => a!(self, shr(r, cl)),
+                        2 => a!(self, sar(r, cl)),
+                        _ => a!(self, ror(r, cl)),
                     }
                 } else {
                     match opcode & 3 {
-                        0 => a!(self, shl(eax, cl)),
-                        1 => a!(self, shr(eax, cl)),
-                        2 => a!(self, sar(eax, cl)),
-                        _ => a!(self, ror(eax, cl)),
+                        0 => a!(self, shl(r32_of(r), cl)),
+                        1 => a!(self, shr(r32_of(r), cl)),
+                        2 => a!(self, sar(r32_of(r), cl)),
+                        _ => a!(self, ror(r32_of(r), cl)),
                     }
                 }
-                self.stx(rd, rax, false);
+                self.stx(rd, r, false);
                 true
             }
             _ => false,
@@ -2308,10 +2719,15 @@ impl<'a> E<'a> {
             }
             if rt == 31 {
                 a!(self, xor(eax, eax));
+            } else if let Some(s) = self.region_slot(rt) {
+                if sf { a!(self, cmp(LOOPREGS[s], 0)); }
+                else { a!(self, cmp(LOOPREGS32[s], 0)); }
             } else if sf {
-                a!(self, cmp(qword_ptr(r15 + xoff(rt)), 0));
+                self.ldx_nf(rax, rt);
+                a!(self, cmp(rax, 0));
             } else {
-                a!(self, cmp(dword_ptr(r15 + xoff(rt)), 0));
+                self.ldw_nf(rax, rt);
+                a!(self, cmp(eax, 0));
             }
             if !jit_off("directbranch") {
                 // CMP already produced ZF; branch before goto/chaining can clobber it.
@@ -2331,8 +2747,8 @@ impl<'a> E<'a> {
                 self.goto(if nz { next } else { target });
                 return true;
             }
-            self.ldx(rax, rt, false);
-            a!(self, bt(rax, b));
+            let r = self.src(rt,false,true,rax);
+            a!(self, bt(r, b));
             if !jit_off("directbranch") {
                 // BT reports the selected bit in CF. No SETcc/TEST round trip.
                 self.flags_branch(target, next, if nz { Cc::Ae } else { Cc::B });
@@ -2387,7 +2803,7 @@ impl<'a> E<'a> {
             a!(self, mov(qword_ptr(r15 + off::PC), rax));
             a!(self, mov(qword_ptr(r15 + off::EXIT_REASON), EXIT_SVC as i32));
             a!(self, mov(qword_ptr(r15 + off::EXIT_DATA), imm as i32));
-            let exit = self.u.exit_label;
+            let exit = self.dispatcher_exit();
             a!(self, jmp(exit));
             return true;
         }
@@ -2537,6 +2953,7 @@ impl<'a> E<'a> {
     /// Indirect branch to the guest address in rax via the per-thread
     /// indirect-branch table; misses go to the dispatcher.
     fn indirect(&mut self, _is_ret: bool) {
+        self.writeback();
         let mut l_miss = self.new_label();
         a!(self, mov(rcx, rax));
         a!(self, shr(ecx, 2));
@@ -2550,7 +2967,7 @@ impl<'a> E<'a> {
         a!(self, mov(qword_ptr(r15 + off::PC), rax));
         a!(self, mov(qword_ptr(r15 + off::EXIT_REASON), EXIT_CONTINUE as i32));
         a!(self, mov(qword_ptr(r15 + off::EXIT_DATA), 0));
-        let exit = self.u.exit_label;
+        let exit = self.dispatcher_exit();
         a!(self, jmp(exit));
     }
 
@@ -2718,9 +3135,12 @@ impl<'a> E<'a> {
             let opc = bits(insn, 23, 22);
             let scale = if v && opc & 2 != 0 { 4 } else { size };
             let imm = (bits(insn, 21, 10) as u64) << scale;
-            self.ldx(rax, rn, true);
-            if imm != 0 {
-                a!(self, add(rax, imm as i32));
+            if self.u.region.is_some() {
+                let base = self.src(rn,true,true,rax);
+                a!(self, lea(rax,qword_ptr(base + imm as i32)));
+            } else {
+                self.ldx(rax, rn, true);
+                if imm != 0 { a!(self, add(rax, imm as i32)); }
             }
             return self.access_sized(rt, v, size, opc);
         }
@@ -2729,7 +3149,30 @@ impl<'a> E<'a> {
             let opc = bits(insn, 23, 22);
             let imm = sext(bits(insn, 20, 12) as u64, 9);
             let mode = bits(insn, 11, 10);
+            if self.u.region.is_some() && (mode == 0 || mode == 2) {
+                let base = self.src(rn,true,true,rax);
+                a!(self, lea(rax,qword_ptr(base + imm as i32)));
+                return self.access_sized(rt,v,size,opc);
+            }
             self.ldx(rax, rn, true);
+            if self.u.region.is_some() && (mode == 1 || mode == 3) {
+                if mode == 3 { a!(self, add(rax, imm as i32)); }
+                if let Some(slot) = self.region_slot(rn).filter(|_| v || rn != rt) {
+                    let translated = self.access_sized(rt,v,size,opc);
+                    if translated {
+                        let base = LOOPREGS[slot];
+                        a!(self, add(base,imm as i32));
+                        self.stx(rn,base,true);
+                    }
+                    return translated;
+                }
+                a!(self, mov(rdx, rax));
+                let translated = self.access_sized(rt, v, size, opc);
+                a!(self, mov(rax, rdx));
+                if mode == 1 { a!(self, add(rax, imm as i32)); }
+                if translated { self.stx(rn, rax, true); }
+                return translated;
+            }
             match mode {
                 0 | 2 => {
                     if imm != 0 {
@@ -2744,8 +3187,7 @@ impl<'a> E<'a> {
                         return false;
                     }
                     a!(self, add(r8, imm as i32));
-                    a!(self, mov(qword_ptr(r15 + xoff(rn)), r8));
-                    self.rc_wrote(rn, r8);
+                    self.stx(rn, r8, true);
                     true
                 }
                 _ => {
@@ -2754,8 +3196,7 @@ impl<'a> E<'a> {
                     if !self.access_sized(rt, v, size, opc) {
                         return false;
                     }
-                    a!(self, mov(qword_ptr(r15 + xoff(rn)), r8));
-                    self.rc_wrote(rn, r8);
+                    self.stx(rn, r8, true);
                     true
                 }
             }
@@ -2770,6 +3211,15 @@ impl<'a> E<'a> {
                 return false;
             }
             let scale = if v && opc & 2 != 0 { 4 } else { size };
+            if self.u.region.is_some() && (option == 3 || option == 2) {
+                let index = self.src(rm,false,true,rcx);
+                let index = if option == 2 { // UXTW must ignore Xrm[63:32].
+                    a!(self, mov(ecx,r32_of(index))); rcx
+                } else { index };
+                let base = self.src(rn,true,true,rax);
+                a!(self, lea(rax,qword_ptr(base + index * (1i32 << (if s != 0 {scale} else {0})))));
+                return self.access_sized(rt,v,size,opc);
+            }
             self.ldx(rcx, rm, false);
             self.extend(rcx, option, if s != 0 { scale } else { 0 });
             self.ldx(rax, rn, true);
@@ -2867,26 +3317,27 @@ impl<'a> E<'a> {
             return true;
         }
         if load {
+            let dest = self.dst(rt,false,rcx);
             match kind {
-                0 => a!(self, movzx(ecx, byte_ptr(rax))),
-                1 => a!(self, movzx(ecx, word_ptr(rax))),
-                2 => a!(self, mov(ecx, dword_ptr(rax))),
-                3 => a!(self, mov(rcx, qword_ptr(rax))),
-                16 => a!(self, movsx(rcx, byte_ptr(rax))),
-                17 => a!(self, movsx(rcx, word_ptr(rax))),
-                18 => a!(self, movsxd(rcx, dword_ptr(rax))),
-                32 => a!(self, movsx(ecx, byte_ptr(rax))),
-                33 => a!(self, movsx(ecx, word_ptr(rax))),
+                0 => a!(self, movzx(r32_of(dest), byte_ptr(rax))),
+                1 => a!(self, movzx(r32_of(dest), word_ptr(rax))),
+                2 => a!(self, mov(r32_of(dest), dword_ptr(rax))),
+                3 => a!(self, mov(dest, qword_ptr(rax))),
+                16 => a!(self, movsx(dest, byte_ptr(rax))),
+                17 => a!(self, movsx(dest, word_ptr(rax))),
+                18 => a!(self, movsxd(dest, dword_ptr(rax))),
+                32 => a!(self, movsx(r32_of(dest), byte_ptr(rax))),
+                33 => a!(self, movsx(r32_of(dest), word_ptr(rax))),
                 _ => return false,
             }
-            self.stx(rt, rcx, false);
+            self.stx(rt, dest, false);
         } else {
-            self.ldx(rcx, rt, false);
+            let value = self.src(rt,false,true,rcx);
             match kind {
-                0 => a!(self, mov(byte_ptr(rax), cl)),
-                1 => a!(self, mov(word_ptr(rax), cx)),
-                2 => a!(self, mov(dword_ptr(rax), ecx)),
-                3 => a!(self, mov(qword_ptr(rax), rcx)),
+                0 => a!(self, mov(byte_ptr(rax), r8_of(value))),
+                1 => a!(self, mov(word_ptr(rax), r16_of(value))),
+                2 => a!(self, mov(dword_ptr(rax), r32_of(value))),
+                3 => a!(self, mov(qword_ptr(rax), value)),
                 _ => return false,
             }
         }
@@ -2922,6 +3373,20 @@ impl<'a> E<'a> {
                 a!(self, add(rax, off));
             }
         }
+        if self.u.region.is_some() {
+            if l && !v && rt == rt2 { return false; }
+            a!(self, mov(rdx, rax));
+            let first = self.access(rt, v, kind, l as u32, false);
+            a!(self, mov(rax, rdx));
+            a!(self, add(rax, nb));
+            let second = self.access(rt2, v, kind, l as u32, false);
+            a!(self, mov(rax, rdx));
+            if first && second && (idx == 1 || idx == 3) {
+                if idx == 1 { a!(self, add(rax, off)); }
+                self.stx(rn, rax, true);
+            }
+            return first && second;
+        }
         // r8 keeps the writeback value
         if idx == 1 {
             a!(self, lea(r8, qword_ptr(rax + off)));
@@ -2940,8 +3405,7 @@ impl<'a> E<'a> {
             return false;
         }
         if idx == 1 || idx == 3 {
-            a!(self, mov(qword_ptr(r15 + xoff(rn)), r8));
-            self.rc_wrote(rn, r8);
+            self.stx(rn, r8, true);
         }
         true
     }
@@ -6492,6 +6956,7 @@ mod region_cache_tests {
     fn compile(words: &[u32], entries: &[usize], kind: StubKind, enabled: bool) -> (Vec<u64>, bool) {
         let mut u = Unit::new(kind, false);
         u.regioncache = enabled;
+        u.loopra = false; // these tests exercise the independent write-through feature
         for &i in entries { let l = u.a.create_label(); u.labels.insert(PC + i as u64 * 4, l); }
         let read = |p: u64| p.checked_sub(PC).and_then(|o| words.get((o / 4) as usize)).copied();
         let mut loop_found = false;
@@ -7149,6 +7614,266 @@ mod fp_pool_tests {
             }
         }
         assert!(saw_unaligned);
+        }
+    }
+}
+
+#[cfg(test)]
+mod loopra_tests {
+    use super::*;
+    use attesor_core::cpu::Cpu;
+    const PC: u64 = 0x2000_0000;
+
+    fn unit(words: &[u32], entries: &[usize], kind: StubKind, verify: bool, commpage: bool) -> Unit {
+        let mut u = Unit::new(kind, commpage);
+        u.loopra = kind == StubKind::Patchable;
+        u.regioncache = false;
+        u.no_internal_jumps = verify;
+        for &i in entries { let l = u.a.create_label(); u.labels.insert(PC + i as u64 * 4, l); }
+        for &i in entries {
+            emit_block(&mut u, PC + i as u64 * 4, &|p| p.checked_sub(PC).and_then(|o| words.get((o / 4) as usize)).copied());
+        }
+        u
+    }
+
+    fn assemble(mut u: Unit, entry: usize) -> (u64, Vec<u64>) {
+        let label = u.labels[&(PC + entry as u64 * 4)];
+        u.finish();
+        let host = crate::jit::code_cache().alloc(65536);
+        let res = u.a.assemble_options(host, iced_x86::BlockEncoderOptions::RETURN_NEW_INSTRUCTION_OFFSETS).unwrap();
+        assert!(res.inner.code_buffer.len() <= 65536);
+        unsafe { std::ptr::copy_nonoverlapping(res.inner.code_buffer.as_ptr(), host as *mut u8, res.inner.code_buffer.len()); }
+        let mut slots = Vec::new();
+        for s in &u.finished_stubs {
+            let slot = res.label_ip(&s.slot).unwrap();
+            unsafe { (slot as *mut u64).write_unaligned(res.label_ip(&s.cont).unwrap()); }
+            slots.push(slot);
+        }
+        (res.label_ip(&label).unwrap(), slots)
+    }
+
+    fn cpu() -> Box<Cpu> {
+        let mut c = Cpu::new(); crate::jit::setup_cpu(&mut c); c.set_pc(PC); c
+    }
+
+    extern "C" fn mutate(c: *mut Cpu, _: u32, _: u64) -> u64 {
+        let c = unsafe { &mut *c };
+        for i in 0..10 {
+            assert_eq!(c.x[i], i as u64 + c.x[30] * (i as u64 + 2) + 1);
+            c.x[i] += i as u64 + 1;
+        }
+        c.x[30] += 1;
+        if c.x[29] == 2 { c.fpcr = 1 << 25; }
+        if c.x[29] == 1 { c.exit_reason = EXIT_SVC; c.exit_data = 0x82; return 1; }
+        0
+    }
+
+    #[test]
+    fn ten_registers_helpers_pending_and_cold_fpcr_exit() {
+        for mode in 0..3 {
+            let mut words: Vec<u32> = (0..10).map(|n| 0x9100_0400 | (n << 5) | n).collect();
+            words.extend([0x1e61_2800, 0, 0xf100_079c, 0x54ff_fe61, 0xd400_1001]);
+            // subs x28,x28,#1; b.ne -13 insns (back to word zero)
+            let u = unit(&words, &[0, 14], StubKind::Patchable, false, false);
+            assert_eq!(u.region_exits.len(), 1);
+            assert_eq!(u.region_exits[0].reg, [0,1,2,3,4,5,6,7,8,9]);
+            let (host, _) = assemble(u, 0);
+            let mut c = cpu();
+            for i in 0..10 { c.x[i] = i as u64; }
+            c.x[28] = 3; c.x[29] = mode;
+            c.v[0][0] = 2f64.to_bits(); c.v[1][0] = 3f64.to_bits();
+            c.helpers[HELPER_INTERP] = mutate as *const () as u64;
+            unsafe { crate::jit::attesor_jit_enter(&mut *c, host); }
+            let passes = if mode == 0 { 3 } else { 1 };
+            for i in 0..10 { assert_eq!(c.x[i], i as u64 + passes * (i as u64 + 2)); }
+            assert_eq!(c.x[30], passes);
+            assert_eq!(c.v[0][0], (2.0 + 3.0 * passes as f64).to_bits());
+            assert_eq!(c.exit_reason, if mode == 2 { EXIT_INTERP } else { EXIT_SVC });
+            if mode == 2 { assert_eq!(c.pc(), PC); }
+        }
+    }
+
+    #[test]
+    fn region_exit_stub_and_patched_successor_see_dirty_values() {
+        let words = [0x9100_0400, 0xf100_0631, 0x54ff_ffc1, 0xd400_1001];
+        // Use x17 as counter and x0 as accumulator. The exit is outside the unit.
+        let u = unit(&words, &[0], StubKind::Patchable, false, false);
+        assert!(u.region.is_some());
+        let (host, slots) = assemble(u, 0);
+        assert_eq!(slots.len(), 1);
+        let mut c = cpu(); c.x[17] = 7;
+        unsafe { crate::jit::attesor_jit_enter(&mut *c, host); }
+        assert_eq!(c.x[0], 7); assert_eq!(c.x[17], 0); assert_eq!(c.pc(), PC + 12);
+        assert_eq!(c.exit_reason, EXIT_CONTINUE);
+        let (successor, _) = assemble(unit(&words, &[3], StubKind::Patchable, false, false), 3);
+        unsafe { (slots[0] as *mut u64).write_unaligned(successor); }
+        c.x[0] = 0; c.x[17] = 9;
+        unsafe { crate::jit::attesor_jit_enter(&mut *c, host); }
+        assert_eq!(c.x[0], 9); assert_eq!(c.x[17], 0); assert_eq!(c.exit_reason, EXIT_SVC);
+    }
+
+    #[test]
+    fn commpage_helper_preserves_ten_registers_and_pair_addresses() {
+        // A custom redirection helper maps the synthetic commpage address into
+        // a private mapping. It also stresses calls from pre/post and pair accesses.
+        extern "C" fn map(_: u64) -> u64 {
+            unsafe { std::arch::asm!("xor rdx,rdx", "xor rsi,rsi", "xor rdi,rdi", "xor r8,r8", "xor r9,r9", "xor r10,r10",
+                out("rdx") _, out("rsi") _, out("rdi") _, out("r8") _, out("r9") _, out("r10") _); }
+            BUFFER.load(std::sync::atomic::Ordering::Relaxed)
+        }
+        static BUFFER: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+        let mut memory = [11u64, 13, 17, 19];
+        BUFFER.store(memory.as_mut_ptr() as u64, std::sync::atomic::Ordering::Relaxed);
+        let mut words: Vec<u32> = (0..10).map(|n| 0x9100_0400 | (n << 5) | n).collect();
+        // ldp x24,x25,[x20],#16; ldr x26,[x20,#8]!; subs x28,x28,#1; b.ne loop; svc
+        words.extend([0xa8c1_6698, 0xf840_8e9a, 0xf100_079c, 0x54ff_fe61, 0xd400_1001]);
+        let u = unit(&words, &[0,14], StubKind::Patchable, false, true);
+        assert_eq!(u.region_exits[0].reg, [0,1,2,3,4,5,6,7,8,9]);
+        let (host, _) = assemble(u, 0);
+        let mut c = cpu(); c.x[20] = 0x0000_000f_ffff_0000; c.x[28] = 5;
+        c.helpers[HELPER_COMMPAGE] = map as *const () as u64;
+        unsafe { crate::jit::attesor_jit_enter(&mut *c, host); }
+        for i in 0..10 { assert_eq!(c.x[i], 5); }
+        assert_eq!(c.x[20], 0x0000_000f_ffff_0000 + 5 * 24);
+        assert_eq!((c.x[24], c.x[25], c.x[26]), (11,11,11));
+        assert_eq!(c.exit_reason, EXIT_SVC);
+    }
+
+    #[test]
+    fn sp_zero_immediates_high_registers_and_spills_match_interpreter() {
+        let regs: Vec<u32> = (0..7).chain(16..20).chain(24..27).collect();
+        let mut words = vec![0xd280_001a]; // movz x26,#0 (assigned immediate write)
+        for &n in &regs { words.push(0x9100_0000 | ((n + 1) << 10) | (n << 5) | n); }
+        words.extend([0x9100_43ff, 0x9100_03f8, 0x8b1a_03f9, 0xf100_079c]);
+        let back = -(words.len() as i32) as u32;
+        words.push(0xb500_001c | ((back & 0x7ffff) << 5));
+        let svc = words.len(); words.push(0xd400_1001);
+        let u = unit(&words, &[0, svc], StubKind::Patchable, false, false);
+        let r = u.region_exits[0];
+        assert!(r.reg.contains(&31) && r.reg.contains(&26));
+        assert!(regs.iter().any(|&n| !r.reg.contains(&(n as u8))));
+        let (host, _) = assemble(u, 0);
+        for count in [1,2,17] {
+            let mut c = cpu();
+            c.x = std::array::from_fn(|n| u64::MAX - n as u64 * 12345);
+            c.x[28] = count; c.set_nzcv(11);
+            let mut reference = cpu(); reference.x = c.x; reference.set_nzcv(c.nzcv());
+            for _ in 0..1000 {
+                let w = words[((reference.pc() - PC) / 4) as usize];
+                match attesor_core::interp::exec(&mut reference, w) {
+                    Ok(()) => {},
+                    Err(attesor_core::interp::Exit::Svc(_)) => break,
+                    Err(e) => panic!("reference: {e:?}"),
+                }
+            }
+            unsafe { crate::jit::attesor_jit_enter(&mut *c, host); }
+            assert_eq!(c.x, reference.x); assert_eq!(c.nzcv(), reference.nzcv());
+            assert_eq!(c.pc(), reference.pc()); assert_eq!(c.exit_reason, EXIT_SVC);
+        }
+    }
+
+    #[test]
+    fn direct_operands_aliases_widths_and_fused_selects_match_interpreter() {
+        let mut cases = Vec::new();
+        for sf in [0, 1u32 << 31] {
+            for d in [0, 1, 31] { for n in [0, 1, 31] { for m in [0, 1, 31] {
+                for op in 0..4 {
+                    cases.push(sf | 0x0a00_0000 | (op << 29) | (m << 16) | (n << 5) | d);
+                    cases.push(sf | 0x0b00_0000 | (op << 29) | (m << 16) | (n << 5) | d);
+                    cases.push(sf | 0x0b20_0000 | (op << 29) | (m << 16) | (6 << 13) | (2 << 10) | (n << 5) | d);
+                    cases.push(sf | 0x1a80_0000 | ((op >> 1) << 30) | ((op & 1) << 10) | (m << 16) | (n << 5) | d);
+                }
+                for opcode in 8..=11 {
+                    cases.push(sf | 0x1ac0_0000 | (m << 16) | (opcode << 10) | (n << 5) | d);
+                }
+                for lsb in [0,7] {
+                    cases.push(sf | 0x1380_0000 | ((sf >> 31) << 22) | (m << 16) | (lsb << 10) | (n << 5) | d);
+                }
+                if m == 0 {
+                    for op in 0..4 {
+                        cases.push(sf | 0x1100_0400 | (op << 29) | (n << 5) | d);
+                        cases.push(sf | 0x1200_1c00 | ((sf >> 31) << 22) | (op << 29) | (n << 5) | d);
+                    }
+                    for op in [0,2,3] { cases.push(sf | 0x1280_2460 | (op << 29) | d); }
+                }
+                // Shift/invert with Rd=Rm, and a multiply-add whose addend aliases Rd.
+                cases.push(sf | 0x4a40_2000 | (m << 16) | (n << 5) | d);
+                cases.push(sf | 0x0a20_0c00 | (m << 16) | (n << 5) | d);
+                cases.push(sf | 0x1b00_0000 | (m << 16) | (d << 10) | (n << 5) | d);
+                for opc in 0..3 {
+                    for (r,s) in [(0,31),(8,15),(17,3)] {
+                        cases.push(sf | 0x1300_0000 | (opc << 29) | ((sf >> 31) << 22) | (r << 16) | (s << 10) | (n << 5) | d);
+                    }
+                }
+            } } }
+        }
+        for (i,w) in cases.into_iter().enumerate() {
+            // CMP -> candidate exercises both native flags and fused selects.
+            // SUB without S + CBNZ preserves the candidate's final NZCV.
+            let words = [0xeb12_023f,w,0xd100_079c,0xb5ff_ffbc,0xd400_1001];
+            let u = unit(&words,&[0,4],StubKind::Patchable,false,false);
+            assert_eq!(u.region_exits.len(),1,"case {i}: {w:08x}");
+            let (host,_) = assemble(u,0);
+            for nzcv in [0,15] {
+                let mut c = cpu();
+                c.x = std::array::from_fn(|n| 0xabcd_ef01_9876_5432u64.wrapping_mul(n as u64 + 1));
+                c.x[28] = 3; c.x[17] = if nzcv == 0 {7} else {15}; c.x[18] = 7;
+                c.set_nzcv(nzcv as u32);
+                let mut reference = cpu(); reference.x = c.x; reference.set_nzcv(c.nzcv());
+                loop {
+                    let w = words[((reference.pc() - PC) / 4) as usize];
+                    match attesor_core::interp::exec(&mut reference,w) {
+                        Ok(()) => {}, Err(attesor_core::interp::Exit::Svc(_)) => break,
+                        Err(e) => panic!("case {i}: {w:08x}: {e:?}"),
+                    }
+                }
+                unsafe { crate::jit::attesor_jit_enter(&mut *c,host); }
+                assert_eq!(c.x,reference.x,"case {i}: {w:08x}");
+                assert_eq!(c.nzcv(),reference.nzcv(),"NZCV case {i}: {w:08x}");
+                assert_eq!(c.exit_reason,EXIT_SVC);
+            }
+        }
+    }
+
+    #[test]
+    fn mask_survives_helper_backedge_and_normal_code_has_no_locked_counter() {
+        extern "C" fn clobber(_: *mut Cpu, _: u32, _: u64) -> u64 {
+            unsafe { std::arch::asm!("xor r11,r11",out("r11") _); }
+            0
+        }
+        // LDRB; helper; SUBS; B.NE. The helper poisons the mask after the last
+        // memory access, so the backedge must restore it before the next load.
+        let words = [0x3940_0280,0,0xf100_079c,0x54ff_ffa1,0xd400_1001];
+        let u = unit(&words,&[0,4],StubKind::Patchable,false,false);
+        assert!(!u.a.instructions().iter().any(|i| i.has_lock_prefix()));
+        let (host,_) = assemble(u,0);
+        let byte = 0xabu8;
+        let mut c = cpu(); c.x[20] = (&byte as *const u8 as u64) | 0xab00_0000_0000_0000; c.x[28] = 7;
+        c.helpers[HELPER_INTERP] = clobber as *const () as u64;
+        unsafe { crate::jit::attesor_jit_enter(&mut *c,host); }
+        assert_eq!(c.x[0],0xab); assert_eq!(c.x[28],0); assert_eq!(c.exit_reason,EXIT_SVC);
+
+        let crc = [0x3869_6a6a,0x4a08_014a,0x9240_1d4a,0xb86a_7aea,0x4a48_2148,0x9100_0529,0xf160_013f,0x54ff_ff21];
+        let u = unit(&crc,&[0],StubKind::Patchable,false,false);
+        assert_eq!(u.a.instructions().iter().filter(|i| i.mnemonic()==iced_x86::Mnemonic::Mov && i.op0_register()==iced_x86::Register::R11).count(),1);
+        // Pair/pre/post addressing uses registers, including with commpage checks.
+        for commpage in [false,true] {
+            let words = [0xa8c1_6698,0xf840_8e9a,0xf100_079c,0x54ff_ffa1];
+            let u = unit(&words,&[0],StubKind::Patchable,false,commpage);
+            if !commpage {
+                assert!(!u.a.instructions().iter().any(|i| matches!(i.mnemonic(),iced_x86::Mnemonic::Push|iced_x86::Mnemonic::Pop)));
+            }
+        }
+    }
+
+    #[test]
+    fn verification_aot_and_scratch_templates_do_not_enter_regions() {
+        let words = [0x9100_0400, 0xf100_0631, 0x54ff_ffc1, 0xd400_1001];
+        assert!(unit(&words, &[0], StubKind::Plain, false, false).region.is_none());
+        assert!(unit(&words, &[0], StubKind::Patchable, true, false).region.is_none());
+        for scratch in [0xc8a0_7c22, 0xf820_0022, 0x5e00_4000, 0x5e00_5000] {
+            let words = [0x9100_0400, scratch, 0xf100_0631, 0x54ff_ffa1];
+            assert!(unit(&words, &[0], StubKind::Patchable, false, false).region.is_none());
         }
     }
 }
