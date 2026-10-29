@@ -2367,6 +2367,86 @@ impl<'a> E<'a> {
         a!(self, movdqa(xmm0, xmm7));
     }
 
+    /// ARM FMAX/FMIN/FMAXNM/FMINNM on every lane: xmm0 = op(xmm0, xmm1), using xmm2-xmm5.
+    /// x86 MAX/MIN return the second operand for NaNs and equal values; ARM wants max(+0,-0) = +0,
+    /// min = -0 (AND/OR of equal values), NM forms pick the number over a quiet NaN, the others
+    /// propagate the first NaN, quietened; a signalling NaN always wins (FPProcessNaNs: sNaN a, sNaN b,
+    /// then the quiet ones), quietened. Exact for every input. Uses xmm2-xmm7.
+    fn fp_maxmin(&mut self, double: bool, max: bool, nm: bool) {
+        let unord = |e: &mut Self, x: AsmRegisterXmm| if double { a!(e, cmppd(x, x, 3)) } else { a!(e, cmpps(x, x, 3)) };
+        a!(self, movdqa(xmm6, xmm0)); // a, kept for the signalling-NaN step
+        // xmm2 = x86 max/min(a, b)
+        a!(self, movdqa(xmm2, xmm0));
+        match (double, max) {
+            (false, true) => a!(self, maxps(xmm2, xmm1)),
+            (false, false) => a!(self, minps(xmm2, xmm1)),
+            (true, true) => a!(self, maxpd(xmm2, xmm1)),
+            (true, false) => a!(self, minpd(xmm2, xmm1)),
+        }
+        // equal (incl. +0 == -0): a & b for max, a | b for min
+        a!(self, movdqa(xmm3, xmm0));
+        if double { a!(self, cmppd(xmm3, xmm1, 0)); } else { a!(self, cmpps(xmm3, xmm1, 0)); }
+        a!(self, movdqa(xmm4, xmm0));
+        if max { a!(self, pand(xmm4, xmm1)); } else { a!(self, por(xmm4, xmm1)); }
+        a!(self, pand(xmm4, xmm3));
+        a!(self, pandn(xmm3, xmm2));
+        a!(self, por(xmm3, xmm4));               // xmm3 = result for ordered inputs (and NM's a-NaN case)
+        let quiet = if double { 0x0008_0000_0000_0000 } else { 0x0040_0000_0040_0000 };
+        if nm {
+            // b NaN: take a (a number, or a NaN when both are)
+            a!(self, movdqa(xmm4, xmm1));
+            unord(self, xmm4);
+            a!(self, movdqa(xmm5, xmm0));
+            a!(self, pand(xmm5, xmm4));
+            a!(self, pandn(xmm4, xmm3));
+            a!(self, por(xmm4, xmm5));
+            a!(self, movdqa(xmm0, xmm4));
+            // a NaN result (both NaN): quieten it
+            a!(self, movdqa(xmm4, xmm0));
+            unord(self, xmm4);
+            self.vconst(xmm5, quiet);
+            a!(self, pand(xmm5, xmm4));
+            a!(self, por(xmm0, xmm5));
+        } else {
+            // NaN propagates: a if a is NaN, else b if b is NaN, quietened
+            a!(self, movdqa(xmm4, xmm1));
+            unord(self, xmm4);                   // b NaN
+            a!(self, movdqa(xmm5, xmm1));
+            a!(self, pand(xmm5, xmm4));
+            a!(self, pandn(xmm4, xmm3));
+            a!(self, por(xmm4, xmm5));           // b-NaN lanes take b
+            a!(self, movdqa(xmm3, xmm0));
+            unord(self, xmm3);                   // a NaN
+            a!(self, movdqa(xmm5, xmm0));
+            a!(self, pand(xmm5, xmm3));
+            a!(self, pandn(xmm3, xmm4));
+            a!(self, por(xmm3, xmm5));           // a-NaN lanes take a
+            a!(self, movdqa(xmm0, xmm3));
+            a!(self, movdqa(xmm4, xmm0));
+            unord(self, xmm4);
+            self.vconst(xmm5, quiet);
+            a!(self, pand(xmm5, xmm4));
+            a!(self, por(xmm0, xmm5));
+        }
+        // signalling NaNs: b's, then a's (higher priority), each quietened
+        for src in [xmm1, xmm6] {
+            a!(self, movdqa(xmm4, src));
+            unord(self, xmm4);                   // NaN lanes
+            self.vconst(xmm5, quiet);
+            a!(self, movdqa(xmm3, src));
+            a!(self, pand(xmm3, xmm5));          // quiet bit of each lane
+            a!(self, pxor(xmm2, xmm2));
+            if double { a!(self, pcmpeqq(xmm3, xmm2)); } else { a!(self, pcmpeqd(xmm3, xmm2)); }
+            a!(self, pand(xmm4, xmm3));          // sNaN lanes
+            a!(self, movdqa(xmm7, src));
+            a!(self, por(xmm7, xmm5));           // quietened
+            a!(self, pand(xmm7, xmm4));
+            a!(self, pandn(xmm4, xmm0));
+            a!(self, por(xmm4, xmm7));
+            a!(self, movdqa(xmm0, xmm4));
+        }
+    }
+
     /// Flip the sign of every lane of `x` (FPNeg, NaNs included) using `tmp`.
     fn vneg(&mut self, x: AsmRegisterXmm, tmp: AsmRegisterXmm, double: bool) {
         self.vconst(tmp, if double { 0x8000_0000_0000_0000 } else { 0x8000_0000_8000_0000 });
@@ -3172,6 +3252,21 @@ impl<'a> E<'a> {
     }
 
     /// Load a 64-bit constant into all lanes of `x`.
+    /// xmm0 = xmm0 * xmm1 per byte (low 8 bits of each product): SSE has no byte multiply, so multiply
+    /// even and odd bytes as 16-bit lanes. Uses xmm2-xmm3.
+    fn pmul_bytes(&mut self) {
+        a!(self, movdqa(xmm2, xmm0));
+        a!(self, movdqa(xmm3, xmm1));
+        a!(self, pmullw(xmm0, xmm1));          // even bytes in the low halves of the words
+        a!(self, psrlw(xmm2, 8));
+        a!(self, psrlw(xmm3, 8));
+        a!(self, pmullw(xmm2, xmm3));          // odd bytes
+        a!(self, psllw(xmm2, 8));
+        a!(self, psllw(xmm0, 8));
+        a!(self, psrlw(xmm0, 8));
+        a!(self, por(xmm0, xmm2));
+    }
+
     /// 128-bit constant (low and high halves).
     fn vconst128(&mut self, x: AsmRegisterXmm, lo: u64, hi: u64) {
         self.mov_imm(rax, lo);
@@ -3346,6 +3441,202 @@ impl<'a> E<'a> {
         let q = bit(insn, 30) != 0;
         let u = bit(insn, 29) != 0;
         let size = bits(insn, 23, 22);
+
+        // ---- across lanes: ADDV, [SU]MAXV, [SU]MINV, [SU]ADDLV (b/h/s) ----
+        // Fold the upper half onto the lower one until one element is left.
+        if insn & 0x9F3E_0C00 == 0x0E30_0800 && size < 3 && !(size == 2 && !q) && !jit_off("acrosslanes") {
+            let opcode = bits(insn, 16, 12);
+            let (op, long) = match opcode {
+                0b11011 if !u => (0, false), // ADDV
+                0b00011 => (0, true),        // [SU]ADDLV
+                0b01010 => (1, false),       // [SU]MAXV
+                0b11010 => (2, false),       // [SU]MINV
+                _ => (9, false),
+            };
+            if op != 9 {
+                let bytes = if q { 16 } else { 8 };
+                if q { self.vld(xmm0, rn, true); } else { a!(self, movq(xmm0, qword_ptr(r15 + voff(rn)))); }
+                let mut wide = size; // element size of the accumulation
+                if long || op == 0 {
+                    if size == 0 && (op == 0 || u) {
+                        // bytes: PSADBW sums eight unsigned bytes per qword (signed: bias by 0x80)
+                        if long && !u { self.vconst(xmm1, 0x8080_8080_8080_8080); a!(self, pxor(xmm0, xmm1)); }
+                        a!(self, pxor(xmm1, xmm1));
+                        a!(self, psadbw(xmm0, xmm1));
+                        if q { a!(self, pshufd(xmm1, xmm0, 0x0E)); a!(self, paddq(xmm0, xmm1)); }
+                        a!(self, movq(rax, xmm0));
+                        if long && !u { a!(self, sub(rax, 128 * bytes as i32)); }
+                        let mask: u64 = if long { 0xFFFF } else { 0xFF };
+                        self.mov_imm(rcx, mask);
+                        a!(self, and(rax, rcx));
+                        self.vst_rax(rd, false);
+                        return true;
+                    }
+                    if size == 0 {
+                        return false; // SADDLV/... on bytes handled above; nothing else left
+                    }
+                    if long {
+                        // widen to 2*esize lanes, then add
+                        a!(self, movdqa(xmm1, xmm0));
+                        if q { a!(self, psrldq(xmm1, 8)); }
+                        match (u, size) {
+                            (true, 1) => { a!(self, pmovzxwd(xmm0, xmm0)); a!(self, pmovzxwd(xmm1, xmm1)); }
+                            (false, 1) => { a!(self, pmovsxwd(xmm0, xmm0)); a!(self, pmovsxwd(xmm1, xmm1)); }
+                            (true, _) => { a!(self, pmovzxdq(xmm0, xmm0)); a!(self, pmovzxdq(xmm1, xmm1)); }
+                            (false, _) => { a!(self, pmovsxdq(xmm0, xmm0)); a!(self, pmovsxdq(xmm1, xmm1)); }
+                        }
+                        if q { self.padd_elem(xmm0, xmm1, size + 1); }
+                        wide = size + 1;
+                    }
+                }
+                // fold: lanes of `wide` bits, `n` of them live
+                // widening keeps all elements of a 64-bit source; a 128-bit one was widened in halves and added
+                let lanes = if long && q { (bytes >> size) / 2 } else { bytes >> size };
+                let mut n = lanes;
+                while n > 1 {
+                    let half_bytes = (n / 2) << wide;
+                    a!(self, movdqa(xmm1, xmm0));
+                    a!(self, psrldq(xmm1, half_bytes as u32));
+                    match (op, u, wide) {
+                        (0, _, w) => self.padd_elem(xmm0, xmm1, w),
+                        (1, true, 0) => a!(self, pmaxub(xmm0, xmm1)),
+                        (1, true, 1) => a!(self, pmaxuw(xmm0, xmm1)),
+                        (1, true, _) => a!(self, pmaxud(xmm0, xmm1)),
+                        (1, false, 0) => a!(self, pmaxsb(xmm0, xmm1)),
+                        (1, false, 1) => a!(self, pmaxsw(xmm0, xmm1)),
+                        (1, false, _) => a!(self, pmaxsd(xmm0, xmm1)),
+                        (_, true, 0) => a!(self, pminub(xmm0, xmm1)),
+                        (_, true, 1) => a!(self, pminuw(xmm0, xmm1)),
+                        (_, true, _) => a!(self, pminud(xmm0, xmm1)),
+                        (_, false, 0) => a!(self, pminsb(xmm0, xmm1)),
+                        (_, false, 1) => a!(self, pminsw(xmm0, xmm1)),
+                        (_, false, _) => a!(self, pminsd(xmm0, xmm1)),
+                    }
+                    n /= 2;
+                }
+                a!(self, movq(rax, xmm0));
+                let mask: u64 = match wide { 0 => 0xFF, 1 => 0xFFFF, 2 => 0xFFFF_FFFF, _ => u64::MAX };
+                self.mov_imm(rcx, mask);
+                a!(self, and(rax, rcx));
+                self.vst_rax(rd, false);
+                return true;
+            }
+        }
+
+        // ---- compare with zero: CMGT/CMEQ/CMLT #0 (U=0), CMGE/CMLE #0 (U=1), b/h/s ----
+        if insn & 0x9F3F_CC00 == 0x0E20_8800 && size < 3 && !jit_off("cmzero") {
+            let opc = bits(insn, 13, 12); // 00 GT/GE, 01 EQ/LE, 10 LT (U=0 only)
+            if !(u && opc == 2) && opc != 3 {
+                self.vld(xmm0, rn, q);
+                a!(self, pxor(xmm1, xmm1));
+                let gt = |e: &mut Self, a: AsmRegisterXmm, b: AsmRegisterXmm| match size {
+                    0 => a!(e, pcmpgtb(a, b)),
+                    1 => a!(e, pcmpgtw(a, b)),
+                    _ => a!(e, pcmpgtd(a, b)),
+                };
+                let eq = |e: &mut Self, a: AsmRegisterXmm, b: AsmRegisterXmm| match size {
+                    0 => a!(e, pcmpeqb(a, b)),
+                    1 => a!(e, pcmpeqw(a, b)),
+                    _ => a!(e, pcmpeqd(a, b)),
+                };
+                match (u, opc) {
+                    (false, 0) => gt(self, xmm0, xmm1),                     // x > 0
+                    (false, 1) => eq(self, xmm0, xmm1),                     // x == 0
+                    (false, _) => { gt(self, xmm1, xmm0); a!(self, movdqa(xmm0, xmm1)); } // 0 > x
+                    (true, 0) => {                                          // x >= 0 = !(0 > x)
+                        gt(self, xmm1, xmm0);
+                        a!(self, pcmpeqd(xmm0, xmm0));
+                        a!(self, pxor(xmm0, xmm1));
+                    }
+                    (true, _) => {                                          // x <= 0 = !(x > 0)
+                        gt(self, xmm0, xmm1);
+                        a!(self, pcmpeqd(xmm1, xmm1));
+                        a!(self, pxor(xmm0, xmm1));
+                    }
+                }
+                self.vfin(rd, q);
+                return true;
+            }
+        }
+
+        // ---- MUL / MLA / MLS by element (16- and 32-bit lanes) ----
+        if insn & 0x9F00_0400 == 0x0F00_0000 && (size == 1 || size == 2) && !jit_off("mulelem") {
+            let opcode = bits(insn, 15, 12);
+            let kind = match (u, opcode) {
+                (false, 0b1000) => Some(0), // MUL
+                (true, 0b0000) => Some(1),  // MLA
+                (true, 0b0100) => Some(2),  // MLS
+                _ => None,
+            };
+            if let Some(kind) = kind {
+                let h = bit(insn, 11);
+                let l = bit(insn, 21);
+                let m = bit(insn, 20);
+                let (reg, idx) = if size == 1 { (bits(insn, 19, 16), (h << 2) | (l << 1) | m) } else { (rm, (h << 1) | l) };
+                self.vld(xmm1, reg, true);
+                if size == 1 {
+                    let b0 = (idx * 2) as u64;
+                    let pair = b0 | ((b0 + 1) << 8);
+                    let w = pair | (pair << 16) | (pair << 32) | (pair << 48);
+                    self.vconst(xmm2, w);
+                    a!(self, pshufb(xmm1, xmm2));
+                } else {
+                    a!(self, pshufd(xmm1, xmm1, idx * 0x55));
+                }
+                self.vld(xmm0, rn, q);
+                if size == 1 { a!(self, pmullw(xmm0, xmm1)); } else { a!(self, pmulld(xmm0, xmm1)); }
+                if kind != 0 {
+                    self.vld(xmm2, rd, q);
+                    match (kind, size) {
+                        (1, 1) => a!(self, paddw(xmm2, xmm0)),
+                        (1, _) => a!(self, paddd(xmm2, xmm0)),
+                        (_, 1) => a!(self, psubw(xmm2, xmm0)),
+                        _ => a!(self, psubd(xmm2, xmm0)),
+                    }
+                    a!(self, movdqa(xmm0, xmm2));
+                }
+                self.vfin(rd, q);
+                return true;
+            }
+        }
+
+        // ---- FMAX/FMIN/FMAXNM/FMINNM: scalar (single/double) and vector three-same ----
+        if !jit_off("fmaxmin") {
+            let scalar = insn & 0xFF20_CC00 == 0x1E20_4800 && bits(insn, 23, 22) <= 1; // opcode 01xx10
+            let vector = insn & 0x9F20_0400 == 0x0E20_0400 && !u && matches!(bits(insn, 15, 11), 0b11000 | 0b11110);
+            if scalar || vector {
+                let double = bit(insn, 22) == 1;
+                let (max, nm) = if scalar {
+                    let o = bits(insn, 13, 12); // 00 FMAX, 01 FMIN, 10 FMAXNM, 11 FMINNM
+                    (o & 1 == 0, o & 2 != 0)
+                } else {
+                    (bit(insn, 23) == 0, bits(insn, 15, 11) == 0b11000)
+                };
+                if !(vector && double && !q) {
+                    if scalar {
+                        if double {
+                            a!(self, movsd_2(xmm0, qword_ptr(r15 + voff(rn))));
+                            a!(self, movsd_2(xmm1, qword_ptr(r15 + voff(rm))));
+                        } else {
+                            a!(self, movss(xmm0, dword_ptr(r15 + voff(rn))));
+                            a!(self, movss(xmm1, dword_ptr(r15 + voff(rm))));
+                        }
+                    } else {
+                        self.vld(xmm0, rn, q);
+                        self.vld(xmm1, rm, q);
+                    }
+                    self.fp_maxmin(double, max, nm);
+                    if scalar {
+                        // upper lanes were zero in both operands; clear whatever the quiet-NaN step set
+                        if double { a!(self, movq(xmm0, xmm0)); } else { a!(self, insertps(xmm0, xmm0, 0x0E)); }
+                        a!(self, movdqu(xmmword_ptr(r15 + voff(rd)), xmm0));
+                    } else {
+                        self.vfin(rd, q);
+                    }
+                    return true;
+                }
+            }
+        }
 
         // ---- FCVTL/FCVTL2 (half->single needs F16C; single->double), FCVTN/FCVTN2 ----
         if (insn & 0xBFBF_FC00 == 0x0E21_7800 || insn & 0xBFBF_FC00 == 0x0E21_6800) && (bit(insn, 22) == 1 || has_f16c()) && !jit_off("fcvt") {
@@ -3825,27 +4116,28 @@ impl<'a> E<'a> {
                     self.vfin(rd, q);
                     return true;
                 }
-                0b10010 | 0b10011 if size == 1 || size == 2 => {
-                    // MLA/MLS (opcode 10010), MUL (10011, U=0)
+                0b10010 | 0b10011 if size <= 2 => {
+                    // MLA/MLS (opcode 10010), MUL (10011, U=0; U=1 is PMUL)
                     if opcode == 0b10011 && u {
                         return false;
                     }
                     self.vld(xmm0, rn, q);
                     self.vld(xmm1, rm, q);
-                    if size == 1 {
-                        a!(self, pmullw(xmm0, xmm1));
-                    } else {
-                        a!(self, pmulld(xmm0, xmm1));
+                    match size {
+                        0 => self.pmul_bytes(),
+                        1 => a!(self, pmullw(xmm0, xmm1)),
+                        _ => a!(self, pmulld(xmm0, xmm1)),
                     }
                     if opcode == 0b10010 {
                         self.vld(xmm2, rd, q);
-                        if u {
+                        match (u, size) {
                             // MLS: d - n*m
-                            if size == 1 { a!(self, psubw(xmm2, xmm0)); } else { a!(self, psubd(xmm2, xmm0)); }
-                        } else if size == 1 {
-                            a!(self, paddw(xmm2, xmm0));
-                        } else {
-                            a!(self, paddd(xmm2, xmm0));
+                            (true, 0) => a!(self, psubb(xmm2, xmm0)),
+                            (true, 1) => a!(self, psubw(xmm2, xmm0)),
+                            (true, _) => a!(self, psubd(xmm2, xmm0)),
+                            (false, 0) => a!(self, paddb(xmm2, xmm0)),
+                            (false, 1) => a!(self, paddw(xmm2, xmm0)),
+                            (false, _) => a!(self, paddd(xmm2, xmm0)),
                         }
                         a!(self, movdqa(xmm0, xmm2));
                     }
@@ -4214,6 +4506,61 @@ impl<'a> E<'a> {
             }
             a!(self, movdqu(xmmword_ptr(r15 + voff(rd)), xmm0));
             return true;
+        }
+
+        // ---- SQXTN / SQXTUN (+2), and SQSHRN / UQSHRN / SQSHRUN (+2, non-rounding) ----
+        // Narrow h->b and s->h with saturation: PACKSS* saturate signed, PACKUS* saturate signed input to
+        // unsigned (exactly SQXTUN); unsigned input is clamped with PMINU* first.
+        {
+            let sqxtn = insn & 0xBF3F_FC00 == 0x0E21_4800;
+            let sqxtun = insn & 0xBF3F_FC00 == 0x2E21_2800;
+            // bit 11 set = the rounding forms (SQRSHRN/UQRSHRN/SQRSHRUN): not handled here
+            let shift_narrow = insn & 0x9F80_FC00 == 0x0F00_9400 || insn & 0xBF80_FC00 == 0x2F00_8400;
+            if (sqxtn || sqxtun) && size < 2 || shift_narrow && !jit_off("qnarrow") {
+                // dsize: 0 = results are bytes (source halves), 1 = halves (source words)
+                let (dsize, shift, kind) = if shift_narrow {
+                    let immh = bits(insn, 22, 19);
+                    let immb = bits(insn, 18, 16);
+                    if immh == 0 || immh >= 4 {
+                        return false; // d -> s has no pack instruction
+                    }
+                    let dsize = if immh & 2 != 0 { 1 } else { 0 };
+                    let esize = 8u32 << dsize;
+                    let n = 2 * esize - ((immh << 3) | immb);
+                    // 10010: SQSHRN (U=0) / UQSHRN (U=1); 10000 with U=1: SQSHRUN
+                    let kind = if bits(insn, 15, 11) == 0b10000 { 2 } else if u { 1 } else { 0 };
+                    (dsize, n, kind)
+                } else {
+                    (size, 0, if sqxtun { 2 } else { 0 })
+                };
+                if !jit_off("qnarrow") {
+                    self.vld(xmm0, rn, true);
+                    if shift != 0 {
+                        match (kind, dsize) {
+                            (1, 0) => a!(self, psrlw(xmm0, shift)),
+                            (1, _) => a!(self, psrld(xmm0, shift)),
+                            (_, 0) => a!(self, psraw(xmm0, shift)),
+                            _ => a!(self, psrad(xmm0, shift)),
+                        }
+                    }
+                    match (kind, dsize) {
+                        (0, 0) => a!(self, packsswb(xmm0, xmm0)),
+                        (0, _) => a!(self, packssdw(xmm0, xmm0)),
+                        (1, 0) => { self.vconst(xmm1, 0x00ff_00ff_00ff_00ff); a!(self, pminuw(xmm0, xmm1)); a!(self, packuswb(xmm0, xmm0)); }
+                        (1, _) => { self.vconst(xmm1, 0x0000_ffff_0000_ffff); a!(self, pminud(xmm0, xmm1)); a!(self, packusdw(xmm0, xmm0)); }
+                        (_, 0) => a!(self, packuswb(xmm0, xmm0)),
+                        _ => a!(self, packusdw(xmm0, xmm0)),
+                    }
+                    a!(self, movq(xmm0, xmm0));
+                    if q {
+                        a!(self, pslldq(xmm0, 8));
+                        a!(self, movq(xmm1, qword_ptr(r15 + voff(rd))));
+                        a!(self, por(xmm0, xmm1));
+                    }
+                    a!(self, movdqu(xmmword_ptr(r15 + voff(rd)), xmm0));
+                    return true;
+                }
+            }
         }
 
         // ---- XTN / UQXTN (+2) ----
