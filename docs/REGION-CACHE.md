@@ -62,3 +62,41 @@ It deliberately does not time performance. Public-entry
 preloads and selecting only five fixed registers can cost more than they save;
 serial representative measurements must decide whether the experiment should
 be enabled or expanded.
+
+## Ten-register write-back variant (Step 2)
+
+`ATTESOR_JIT_ON=loopra` uses the same single-block discovery and read ranking,
+with rbx/rbp/r12/r13/r14/rsi/rdi/r8/r9/r10 as fixed slots. Public entries load
+from Cpu; self-backedges skip those loads and retain the FPCR guard. Assigned
+GPR writes update only the slot. Other GPRs continue through Cpu. This is the
+write-back policy only; templates still copy operands through their scratch
+registers. Verification mode and Plain/AOT units cannot enable it.
+
+The emitter records the union of native destination writes for each region.
+Unknown interpreter writes dirty all slots. Region-specific dispatcher tails
+are emitted by `Unit::finish` after that union is complete, including early
+FPCR and helper-status exits. Direct non-self edges synchronize before either
+an internal public entry or a patchable slot, so a chained stub also receives
+canonical state. In-body helpers synchronize all assigned slots: on a later
+iteration, an early helper can observe a native write following it in the body.
+Interpreter calls reload every slot afterward; commpage calls also restore the
+caller-saved slots. All synchronization uses flag-neutral MOVs.
+
+Scratch-register audit: pair and scalar pre/post-index accesses use aligned
+stack temporaries inside regions instead of r8/r9, allowing even their operands
+to occupy those slots. CAS/LSE (rsi) and SHA256H/H2 (rsi/rdi/r8 in the software
+path) exclude a loop from regions, regardless of host instruction support. The
+remaining scalar FP and SIMD templates use only the reserved GPR scratches
+rax/rcx/rdx/r11 and XMM registers. r10 has no other emitter use. Direct guest GPR
+loads/stores go through the region-aware load/store helpers; entry loads and
+synchronization are the deliberate exceptions.
+
+This relies on `GUEST_FAULTS_FATAL`: signals.rs does not deliver resumable guest
+fault handlers. A fatal crash dump can show stale Cpu GPRs. Region entry asserts
+this invariant. The runtime entry counter embeds a JIT-only host address, so it
+is also excluded from AOT. Translator version is 43.
+
+The extended `loops` differential generator includes pair offset/pre/post forms,
+register-offset memory, scalar/vector FP, SIMD/SHA, and x16-x19/x24-x26. Directed
+unit tests exercise all ten slots across interpreter and commpage calls, helper
+status exits, a cold FPCR exit after a backedge, and unpatched/patched exit stubs.

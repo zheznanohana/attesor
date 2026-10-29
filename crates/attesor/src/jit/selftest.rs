@@ -465,9 +465,10 @@ fn run_selftest_blocks(count: usize, fp: bool) {
     println!("jit selftest [{}]: ok={ok} mismatch={bad} skipped={skipped} insns={insns} fallback_insns={fallbacks}", if fp { "fpblocks" } else { "blocks" });
 }
 
-/// Valid integer instructions only: keep the loop counter (x28), branch scratch
+/// Keep the loop counter (x28), branch scratch
 /// (x27), and memory bases (x20-x23) out of the data pool. Writeback is bounded
-/// by 14 accesses * 8 bytes * 50 iterations, well inside the private buffer.
+/// by 14 accesses * 16 bytes * 50 iterations, well inside the private buffer.
+/// x29 supplies a bounded register offset; SIMD uses the fpblocks generator.
 fn loop_insn(rng: &mut Rng, pool: &[u32], wide: bool, i: usize) -> u32 {
     let pick = |rng: &mut Rng| pool[rng.next() as usize % pool.len()];
     let d = pick(rng);
@@ -477,7 +478,7 @@ fn loop_insn(rng: &mut Rng, pool: &[u32], wide: bool, i: usize) -> u32 {
     let m = if wide { pool[(i + 2) % pool.len()] } else { pick(rng) };
     let sf = (rng.next() as u32 & 1) << 31;
     let width = if sf != 0 { 64 } else { 32 };
-    let kind = rng.next() % if wide { 5 } else { 10 };
+    let kind = if wide && rng.next() % 4 != 0 { rng.next() % 5 } else { rng.next() % 14 };
     match kind {
         0 => { // ADD(S)/SUB(S), shifted register
             let op = (rng.next() as u32 & 3) << 29;
@@ -516,6 +517,27 @@ fn loop_insn(rng: &mut Rng, pool: &[u32], wide: bool, i: usize) -> u32 {
                 | ((rng.next() as u32 % (width / 16)) << 21)
                 | ((rng.next() as u32 & 0xffff) << 5) | d
         }
+        10 => { // LDP/STP, signed offset and pre/post-index, W/X and SIMD Q
+            let vector = rng.next() % 4 == 0;
+            let size = if vector { 2 } else { rng.next() as u32 & 1 };
+            let t2 = pool[(pool.iter().position(|&r| r == d).unwrap() + 1) % pool.len()];
+            let mode = [1, 2, 3][rng.next() as usize % 3];
+            let offset = [0u32, 1, 0x7f][rng.next() as usize % 3];
+            (if vector { 0xad00_0000 } else if size == 0 { 0x2900_0000 } else { 0xa900_0000 })
+                & !(3 << 23) | (mode << 23) | ((rng.next() as u32 & 1) << 22)
+                | (offset << 15) | (t2 << 10) | ((20 + rng.next() as u32 % 4) << 5) | d
+        }
+        11 => { // LDR/STR register offset, x29 remains a small private-buffer index
+            let size = rng.next() as u32 % 4;
+            (size << 30) | 0x3820_6800 | ((rng.next() as u32 & 1) << 22)
+                | (29 << 16) | ((rng.next() as u32 & 1) << 12)
+                | ((20 + rng.next() as u32 % 4) << 5) | d
+        }
+        12 => fp_insn(rng),
+        13 => { // SIMD Boolean or SHA256H/H2 (the latter excludes the region)
+            let template = [0x4e20_1c00, 0x6e20_1c00, 0x5e00_4000, 0x5e00_5000][rng.next() as usize % 4];
+            template | (m << 16) | (n << 5) | d
+        }
         _ => {
             let size = rng.next() as u32 % 4;
             let base = 20 + rng.next() as u32 % 4;
@@ -551,8 +573,9 @@ fn run_selftest_loops(count: usize) {
     for it in 0..count {
         let wide = (it / 8) % 4 == 0;
         let pool_len = if wide { 12 + rng.next() as usize % 5 } else { 3 + rng.next() as usize % 4 };
-        let mut pool: Vec<u32> = (0..pool_len as u32).collect();
+        let mut pool: Vec<u32> = (0..20).chain(24..27).collect();
         for i in (1..pool.len()).rev() { pool.swap(i, rng.next() as usize % (i + 1)); }
+        pool.truncate(pool_len);
         let len = if wide { pool_len - 2 } else { 2 + rng.next() as usize % 13 };
         let iterations = 1 + rng.next() % 50;
         let exit_kind = it % 8;
@@ -608,8 +631,9 @@ fn run_selftest_loops(count: usize) {
         let mut init = Cpu::new();
         for r in 0..32 {
             init.x[r] = rng.val();
-            init.v[r] = [rng.val(), rng.val()];
+            init.v[r] = [fp_val(&mut rng), fp_val(&mut rng)];
         }
+        init.x[29] = rng.next() % 16;
         for r in 20..24 { init.x[r] = bufp + 16384 + (r as u64 - 20) * 256; }
         init.x[28] = iterations;
         init.tpidr_el0 = rng.val();
