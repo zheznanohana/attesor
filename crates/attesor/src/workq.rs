@@ -134,9 +134,9 @@ fn host_kqueue() -> i32 {
     let fd = r.rax as i32;
     // Move it out of the guest's usual descriptor range.
     unsafe {
-        let high = libc::fcntl(fd, libc::F_DUPFD_CLOEXEC, 900);
+        let high = crate::profile::host_call(|| libc::fcntl(fd, libc::F_DUPFD_CLOEXEC, 900));
         if high >= 0 {
-            libc::close(fd);
+            crate::profile::host_call(|| libc::close(fd));
             return high;
         }
     }
@@ -169,11 +169,11 @@ impl Worker {
         let pthsize = pthsize.max(0x1000);
         let total = GUARD + STACK_SIZE + PTHREAD_T_OFFSET + ((pthsize + 0x3fff) & !0x3fff);
         let base = unsafe {
-            let p = libc::mmap(std::ptr::null_mut(), total as usize, libc::PROT_READ | libc::PROT_WRITE, libc::MAP_ANON | libc::MAP_PRIVATE, -1, 0);
+            let p = crate::profile::host_call(|| libc::mmap(std::ptr::null_mut(), total as usize, libc::PROT_READ | libc::PROT_WRITE, libc::MAP_ANON | libc::MAP_PRIVATE, -1, 0));
             if p == libc::MAP_FAILED {
                 return None;
             }
-            libc::mprotect(p, GUARD as usize, libc::PROT_NONE);
+            crate::profile::host_call(|| libc::mprotect(p, GUARD as usize, libc::PROT_NONE));
             p as u64
         };
         let stack_low = base + GUARD;

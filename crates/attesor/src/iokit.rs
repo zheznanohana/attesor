@@ -39,11 +39,11 @@ extern "C" {
 fn new_fake_port(kind: Kind) -> Option<u32> {
     unsafe {
         let mut name = 0u32;
-        if mach_port_allocate(mach_task_self_, 1 /* RECEIVE */, &mut name) != 0 {
+        if crate::profile::host_call(|| mach_port_allocate(mach_task_self_, 1 /* RECEIVE */, &mut name)) != 0 {
             return None;
         }
         // Also hold a send right under the same name so the guest can "send" to it.
-        if mach_port_insert_right(mach_task_self_, name, name, 20 /* MAKE_SEND */) != 0 {
+        if crate::profile::host_call(|| mach_port_insert_right(mach_task_self_, name, name, 20 /* MAKE_SEND */)) != 0 {
             return None;
         }
         FAKE_PORTS.lock().unwrap().get_or_insert_with(HashMap::new).insert(name, kind);

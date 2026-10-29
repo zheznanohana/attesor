@@ -9,11 +9,11 @@ extern "C" {
 
 pub fn read(addr: u64, buf: &mut [u8]) -> bool {
     let mut out = 0u64;
-    unsafe { mach_vm_read_overwrite(mach_task_self(), addr, buf.len() as u64, buf.as_mut_ptr() as u64, &mut out) == 0 }
+    unsafe { crate::profile::host_call(|| mach_vm_read_overwrite(mach_task_self(), addr, buf.len() as u64, buf.as_mut_ptr() as u64, &mut out)) == 0 }
 }
 
 pub fn write(addr: u64, data: &[u8]) -> bool {
-    unsafe { mach_vm_write(mach_task_self(), addr, data.as_ptr() as u64, data.len() as u32) == 0 }
+    unsafe { crate::profile::host_call(|| mach_vm_write(mach_task_self(), addr, data.as_ptr() as u64, data.len() as u32)) == 0 }
 }
 
 pub fn read_u64(addr: u64) -> Option<u64> {

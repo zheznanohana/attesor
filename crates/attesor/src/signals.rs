@@ -52,9 +52,9 @@ pub fn sigaction(sig: i32, nsa: u64, osa: u64) -> Result<(), i32> {
         unsafe {
             if keep_dump {
             } else if a.handler == SIG_IGN {
-                libc::signal(sig, libc::SIG_IGN);
+                crate::profile::host_call(|| libc::signal(sig, libc::SIG_IGN));
             } else if a.handler == 0 {
-                libc::signal(sig, libc::SIG_DFL);
+                crate::profile::host_call(|| libc::signal(sig, libc::SIG_DFL));
             }
         }
     }

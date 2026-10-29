@@ -137,7 +137,7 @@ pub fn bsdthread_terminate(_cpu: &mut Cpu, a: &[u64; 8]) {
     let (stackaddr, freesize, _port, sem) = (a[0], a[1], a[2], a[3]);
     unsafe {
         if freesize != 0 {
-            libc::munmap(stackaddr as *mut _, freesize as usize);
+            crate::profile::host_call(|| libc::munmap(stackaddr as *mut _, freesize as usize));
         }
         if sem != 0 {
             // semaphore_signal_internal_trap

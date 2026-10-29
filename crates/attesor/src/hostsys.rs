@@ -62,7 +62,10 @@ extern "C" {
 #[inline]
 pub fn raw(nr: u64, args: &[u64; 8]) -> SysResult {
     let mut out = [0u64; 3];
-    unsafe { attesor_host_syscall(nr, args.as_ptr(), out.as_mut_ptr()) };
+    {
+        let _host = crate::profile::host();
+        unsafe { attesor_host_syscall(nr, args.as_ptr(), out.as_mut_ptr()) };
+    }
     SysResult { rax: out[0], rdx: out[1], carry: out[2] != 0 }
 }
 

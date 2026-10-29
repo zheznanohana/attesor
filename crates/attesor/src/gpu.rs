@@ -15,6 +15,8 @@ use std::time::{Duration, Instant};
 
 pub const SYS_MCL_HOSTCALL: u64 = 0x4D43;
 
+type ProfileInstall = unsafe extern "C" fn(extern "C" fn(u32, *const libc::c_char));
+
 type CallFn = unsafe extern "C" fn(op: u64, input: *const u8, len: u64, outlen: *mut u64) -> *mut u8;
 
 const SHIM_NAME: &str = "libmclmetal.dylib";
@@ -105,9 +107,9 @@ pub fn inject(envp: &mut Vec<String>) -> bool {
     true
 }
 
-static BRIDGE: OnceLock<Option<(CallFn, Option<extern "C" fn()>)>> = OnceLock::new();
+static BRIDGE: OnceLock<Option<(CallFn, Option<extern "C" fn()>, Option<ProfileInstall>)>> = OnceLock::new();
 
-fn bridge() -> Option<(CallFn, Option<extern "C" fn()>)> {
+fn bridge() -> Option<(CallFn, Option<extern "C" fn()>, Option<ProfileInstall>)> {
     *BRIDGE.get_or_init(|| {
         let path = std::env::var("ATTESOR_GPU_BRIDGE").ok().or_else(|| find(BRIDGE_NAME).map(|p| p.to_string_lossy().into_owned()))?;
         let c = CString::new(path.clone()).ok()?;
@@ -124,9 +126,11 @@ fn bridge() -> Option<(CallFn, Option<extern "C" fn()>)> {
                 eprintln!("attesor: GPU bridge {path} has no mcl_call");
                 return None;
             }
+            let hook = libc::dlsym(h, b"mcl_profile_set_callback\0".as_ptr() as *const libc::c_char);
+            let hook = if hook.is_null() { None } else { Some(std::mem::transmute::<*mut libc::c_void, ProfileInstall>(hook)) };
             let w = libc::dlsym(h, b"mcl_warmup\0".as_ptr() as *const libc::c_char);
             let warm = if w.is_null() { None } else { Some(std::mem::transmute::<*mut libc::c_void, extern "C" fn()>(w)) };
-            Some((std::mem::transmute::<*mut libc::c_void, CallFn>(f), warm))
+            Some((std::mem::transmute::<*mut libc::c_void, CallFn>(f), warm, hook))
         }
     })
 }
@@ -140,6 +144,7 @@ struct Shared {
     op: AtomicU64,
     input: AtomicU64,
     len: AtomicU64,
+    profile_word: AtomicU64,
     out_p: AtomicU64,
     out_n: AtomicU64,
     bridge_parked: AtomicBool,
@@ -201,6 +206,7 @@ impl BridgeThread {
             op: AtomicU64::new(0),
             input: AtomicU64::new(0),
             len: AtomicU64::new(0),
+            profile_word: AtomicU64::new(0),
             out_p: AtomicU64::new(0),
             out_n: AtomicU64::new(0),
             bridge_parked: AtomicBool::new(false),
@@ -218,10 +224,13 @@ impl BridgeThread {
                     if sh2.state.load(Ordering::Acquire) == 3 {
                         return;
                     }
+                    let profiling = crate::profile::ENABLED.load(Ordering::Relaxed);
+                    if profiling { crate::profile::bridge_register(sh2.profile_word.load(Ordering::Relaxed)); }
                     let mut outlen = 0u64;
                     let p = unsafe {
                         f(sh2.op.load(Ordering::Relaxed), sh2.input.load(Ordering::Relaxed) as *const u8, sh2.len.load(Ordering::Relaxed), &mut outlen)
                     };
+                    if profiling { crate::profile::unregister(); }
                     sh2.out_p.store(p as u64, Ordering::Relaxed);
                     sh2.out_n.store(outlen, Ordering::Relaxed);
                     sh2.state.store(2, Ordering::SeqCst);
@@ -236,6 +245,9 @@ impl BridgeThread {
 
     fn call(&self, op: u64, input: u64, len: u64) -> (u64, u64) {
         let sh = &self.sh;
+        if crate::profile::ENABLED.load(Ordering::Relaxed) {
+            sh.profile_word.store(crate::profile::current_word(), Ordering::Relaxed);
+        }
         sh.op.store(op, Ordering::Relaxed);
         sh.input.store(input, Ordering::Relaxed);
         sh.len.store(len, Ordering::Relaxed);
@@ -272,7 +284,7 @@ fn call_on_bridge_thread(f: CallFn, op: u64, input: u64, len: u64) -> Option<(u6
 
 /// Load the host bridge and warm the GPU up before the guest starts (see `mcl_warmup`).
 pub fn preload() {
-    if let Some((_, Some(warm))) = bridge() {
+    if let Some((_, Some(warm), _)) = bridge() {
         // Run on a scratch thread so the main thread's per-thread kernel state stays untouched.
         let _ = std::thread::Builder::new().stack_size(8 << 20).spawn(move || warm()).map(|h| h.join());
     }
@@ -280,11 +292,18 @@ pub fn preload() {
 
 /// Handle the guest's host-call trap.
 pub fn hostcall(cpu: &mut Cpu) {
-    let Some((f, _)) = bridge() else {
+    let Some((f, _, hook)) = bridge() else {
         cpu.x[0] = libc::ENOSYS as u64;
         cpu.cf = 1;
         return;
     };
+    if crate::profile::ENABLED.load(Ordering::Relaxed) {
+        static HOOK: OnceLock<()> = OnceLock::new();
+        HOOK.get_or_init(|| {
+            crate::profile::bridge_coverage(hook.is_some());
+            if let Some(install) = hook { unsafe { install(crate::profile::bridge_selector); } }
+        });
+    }
     match call_on_bridge_thread(f, cpu.x[0], cpu.x[1], cpu.x[2]) {
         Some((p, n)) => {
             cpu.x[0] = p;
