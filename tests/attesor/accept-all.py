@@ -32,6 +32,7 @@ def main():
         ('aot-persistence', ['python3', 'tests/attesor/aot-checkpoint.py', '--attesor', str(binary)]),
         ('neon-saturation', ['python3', 'tests/attesor/neon-qdmulh-check.py', str(binary)]),
         ('fp16-conversion', ['python3', 'tests/attesor/fp16-convert-check.py', str(binary)]),
+        ('fpcr-mode-transitions', ['python3', 'tests/attesor/fpcr-mode-check.py', '--attesor', str(binary)]),
         ('debugger-protocol', ['python3', 'tests/attesor/gdb-protocol.py', str(binary)]),
         ('debugger-lldb', ['python3', 'tests/attesor/gdb-lldb-fd.py', str(binary)]),
         ('native-zlib', ['env', 'ATTESOR=' + str(binary), 'tests/attesor/native-zlib-check.sh']),

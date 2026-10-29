@@ -32,7 +32,15 @@ instruction. Source/destination aliases and upper-lane clearing are covered.
 ```
 cargo test -p attesor-core
 cargo test -p attesor
+python3 tests/attesor/fpcr-mode-check.py --attesor target/debug/attesor
 ```
+
+The standalone gate compiles the real guest MSR FPCR/FSQRT fixture and checks
+the original 20 cases in interpreter, JIT, region JIT and region AOT modes. Its
+expected checksum is fixed independently of the interpreter. It clears inherited
+`ATTESOR_*` settings, uses a private temporary cache with background builders
+disabled, explicitly prewarms the executable and requires nonzero main-image
+loaded diagnostics for the final AOT process.
 
 ## FPCR scope audit
 
