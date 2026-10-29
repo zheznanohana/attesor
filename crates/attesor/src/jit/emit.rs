@@ -107,6 +107,9 @@ pub struct Unit {
     pub tbi_mask_live: bool,
     /// Rare FP fixups, emitted after the current block's unconditional transfer.
     cold_paths: Vec<Box<dyn FnOnce(&mut Unit)>>,
+    /// Broadcast constants live in this unit's code buffer, including in AOT blobs.
+    constants: HashMap<u64, CodeLabel>,
+    constant_pool: Vec<(CodeLabel, u64)>,
 }
 
 pub const NCREGS: usize = 5;
@@ -334,6 +337,8 @@ impl Unit {
             vc_dest: [0xff; 2],
             tbi_mask_live: false,
             cold_paths: Vec::new(),
+            constants: HashMap::new(),
+            constant_pool: Vec::new(),
         }
     }
 
@@ -377,6 +382,33 @@ impl Unit {
                 }
                 a.dq(&[0]).unwrap();
             }
+        }
+        self.finish_constants();
+    }
+
+    fn finish_constants(&mut self) {
+        if self.constant_pool.is_empty() { return; }
+        // Iced has no alignment directive. Reserve one DeclareByte instruction
+        // (1..16 bytes), then size it using the assembled pool offset. Changing
+        // its length keeps every CodeLabel's instruction index intact. All code
+        // and chaining slots precede this padding, so branch relaxation cannot
+        // change when the padding shrinks; only fixed-size RIP operands cross it.
+        let padding = self.a.instructions().len();
+        self.a.db(&[0xcc; 16]).unwrap();
+        for (label, value) in &mut self.constant_pool {
+            self.a.set_label(label).unwrap();
+            self.a.dq(&[*value, *value]).unwrap();
+        }
+        // JIT allocations and AOT chunk bases are both 16-byte aligned. The
+        // pool stays aligned after AOT load_file copies the entire code buffer.
+        let res = self.a.assemble_options(0, iced_x86::BlockEncoderOptions::RETURN_NEW_INSTRUCTION_OFFSETS).unwrap();
+        let at = res.label_ip(&self.constant_pool[0].0).unwrap();
+        let len = 16 - (at as usize & 15);
+        if len != 16 {
+            let mut instructions = self.a.take_instructions();
+            instructions[padding].set_declare_data_len(len);
+            // finish() is terminal: no new labels are created after rebuilding.
+            for instruction in instructions { self.a.add_instruction(instruction).unwrap(); }
         }
     }
 }
@@ -2995,20 +3027,13 @@ impl<'a> E<'a> {
     /// Vector form of `fix_default_nan` on xmm0 (uses xmm2-xmm5).
     fn vfix_default_nan(&mut self, double: bool) {
         // x86's "real indefinite" NaN has the sign bit set; ARM's default NaN does not.
-        if double {
-            self.vconst(xmm2, 0xFFF8_0000_0000_0000);
-            a!(self, movdqa(xmm3, xmm0));
-            a!(self, pcmpeqq(xmm3, xmm2));
-            self.vconst(xmm4, 0x7FF8_0000_0000_0000);
-        } else {
-            self.vconst(xmm2, 0xFFC0_0000_FFC0_0000);
-            a!(self, movdqa(xmm3, xmm0));
-            a!(self, pcmpeqd(xmm3, xmm2));
-            self.vconst(xmm4, 0x7FC0_0000_7FC0_0000);
-        }
+        let indefinite = self.vconstant(if double { 0xFFF8_0000_0000_0000 } else { 0xFFC0_0000_FFC0_0000 });
+        let default = self.vconstant(if double { 0x7FF8_0000_0000_0000 } else { 0x7FC0_0000_7FC0_0000 });
+        a!(self, movdqa(xmm3, xmm0));
+        if double { a!(self, pcmpeqq(xmm3, indefinite)); } else { a!(self, pcmpeqd(xmm3, indefinite)); }
         a!(self, movdqa(xmm5, xmm3));
         a!(self, pandn(xmm5, xmm0));
-        a!(self, pand(xmm3, xmm4));
+        a!(self, pand(xmm3, default));
         a!(self, por(xmm5, xmm3));
         a!(self, movdqa(xmm0, xmm5));
     }
@@ -3018,17 +3043,16 @@ impl<'a> E<'a> {
     fn select_nan(&mut self, double: bool, src: AsmRegisterXmm, signalling: bool) {
         a!(self, movdqa(xmm3, src));
         if double { a!(self, cmppd(xmm3, xmm3, 3)); } else { a!(self, cmpps(xmm3, xmm3, 3)); }
-        self.vconst(xmm5, if double { 0x0008_0000_0000_0000 } else { 0x0040_0000_0040_0000 });
+        let quiet = self.vconstant(if double { 0x0008_0000_0000_0000 } else { 0x0040_0000_0040_0000 });
         if signalling {
             a!(self, movdqa(xmm4, src));
-            a!(self, pand(xmm4, xmm5));
+            a!(self, pand(xmm4, quiet));
             a!(self, pxor(xmm5, xmm5));
             if double { a!(self, pcmpeqq(xmm4, xmm5)); } else { a!(self, pcmpeqd(xmm4, xmm5)); }
             a!(self, pand(xmm3, xmm4));
-            self.vconst(xmm5, if double { 0x0008_0000_0000_0000 } else { 0x0040_0000_0040_0000 });
         }
         a!(self, movdqa(xmm4, src));
-        a!(self, por(xmm4, xmm5));
+        a!(self, por(xmm4, quiet));
         a!(self, pand(xmm4, xmm3));
         a!(self, pandn(xmm3, xmm0));
         a!(self, por(xmm3, xmm4));
@@ -3165,10 +3189,10 @@ impl<'a> E<'a> {
         // ARM's special default-NaN case requires a quiet NaN addend.
         a!(self, movdqa(xmm3, xmm6));
         if double { a!(self, cmppd(xmm3, xmm3, 3)); } else { a!(self, cmpps(xmm3, xmm3, 3)); }
-        self.vconst(xmm5, if double { 0x0008_0000_0000_0000 } else { 0x0040_0000_0040_0000 });
+        let quiet = self.vconstant(if double { 0x0008_0000_0000_0000 } else { 0x0040_0000_0040_0000 });
         a!(self, movdqa(xmm4, xmm6));
-        a!(self, pand(xmm4, xmm5));
-        if double { a!(self, pcmpeqq(xmm4, xmm5)); } else { a!(self, pcmpeqd(xmm4, xmm5)); }
+        a!(self, pand(xmm4, quiet));
+        if double { a!(self, pcmpeqq(xmm4, quiet)); } else { a!(self, pcmpeqd(xmm4, quiet)); }
         a!(self, pand(xmm2, xmm3));
         a!(self, pand(xmm2, xmm4));
         // FPProcessNaNs3: all signalling operands precede all quiet ones;
@@ -3178,8 +3202,9 @@ impl<'a> E<'a> {
                 self.select_nan(double, src, signalling);
             }
         }
-        self.vconst(xmm3, if double { 0x7FF8_0000_0000_0000 } else { 0x7FC0_0000_7FC0_0000 });
-        a!(self, pand(xmm3, xmm2));
+        let default = self.vconstant(if double { 0x7FF8_0000_0000_0000 } else { 0x7FC0_0000_7FC0_0000 });
+        a!(self, movdqa(xmm3, xmm2));
+        a!(self, pand(xmm3, default));
         a!(self, pandn(xmm2, xmm0));
         a!(self, por(xmm2, xmm3));
         a!(self, movdqa(xmm0, xmm2));
@@ -3249,7 +3274,7 @@ impl<'a> E<'a> {
         a!(self, pand(xmm4, xmm3));
         a!(self, pandn(xmm3, xmm2));
         a!(self, por(xmm3, xmm4));               // xmm3 = result for ordered inputs (and NM's a-NaN case)
-        let quiet = if double { 0x0008_0000_0000_0000 } else { 0x0040_0000_0040_0000 };
+        let quiet = self.vconstant(if double { 0x0008_0000_0000_0000 } else { 0x0040_0000_0040_0000 });
         if nm {
             // b NaN: take a (a number, or a NaN when both are)
             a!(self, movdqa(xmm4, xmm1));
@@ -3262,8 +3287,8 @@ impl<'a> E<'a> {
             // a NaN result (both NaN): quieten it
             a!(self, movdqa(xmm4, xmm0));
             unord(self, xmm4);
-            self.vconst(xmm5, quiet);
-            a!(self, pand(xmm5, xmm4));
+            a!(self, movdqa(xmm5, xmm4));
+            a!(self, pand(xmm5, quiet));
             a!(self, por(xmm0, xmm5));
         } else {
             // NaN propagates: a if a is NaN, else b if b is NaN, quietened
@@ -3282,22 +3307,21 @@ impl<'a> E<'a> {
             a!(self, movdqa(xmm0, xmm3));
             a!(self, movdqa(xmm4, xmm0));
             unord(self, xmm4);
-            self.vconst(xmm5, quiet);
-            a!(self, pand(xmm5, xmm4));
+            a!(self, movdqa(xmm5, xmm4));
+            a!(self, pand(xmm5, quiet));
             a!(self, por(xmm0, xmm5));
         }
         // signalling NaNs: b's, then a's (higher priority), each quietened
         for src in [xmm1, xmm6] {
             a!(self, movdqa(xmm4, src));
             unord(self, xmm4);                   // NaN lanes
-            self.vconst(xmm5, quiet);
             a!(self, movdqa(xmm3, src));
-            a!(self, pand(xmm3, xmm5));          // quiet bit of each lane
+            a!(self, pand(xmm3, quiet));          // quiet bit of each lane
             a!(self, pxor(xmm2, xmm2));
             if double { a!(self, pcmpeqq(xmm3, xmm2)); } else { a!(self, pcmpeqd(xmm3, xmm2)); }
             a!(self, pand(xmm4, xmm3));          // sNaN lanes
             a!(self, movdqa(xmm7, src));
-            a!(self, por(xmm7, xmm5));           // quietened
+            a!(self, por(xmm7, quiet));           // quietened
             a!(self, pand(xmm7, xmm4));
             a!(self, pandn(xmm4, xmm0));
             a!(self, por(xmm4, xmm7));
@@ -3305,10 +3329,10 @@ impl<'a> E<'a> {
         }
     }
 
-    /// Flip the sign of every lane of `x` (FPNeg, NaNs included) using `tmp`.
-    fn vneg(&mut self, x: AsmRegisterXmm, tmp: AsmRegisterXmm, double: bool) {
-        self.vconst(tmp, if double { 0x8000_0000_0000_0000 } else { 0x8000_0000_8000_0000 });
-        a!(self, pxor(x, tmp));
+    /// Flip the sign of every lane of `x` (FPNeg, NaNs included).
+    fn vneg(&mut self, x: AsmRegisterXmm, double: bool) {
+        let sign = self.vconstant(if double { 0x8000_0000_0000_0000 } else { 0x8000_0000_8000_0000 });
+        a!(self, pxor(x, sign));
     }
 
     /// Replace the x86 "real indefinite" NaN produced by invalid operations with the ARM default NaN.
@@ -3323,23 +3347,7 @@ impl<'a> E<'a> {
     }
 
     fn scalar_nan(&mut self, double: bool, nsrc: FpSource, msrc: Option<FpSource>) {
-        let mut select = self.new_label();
-        if double {
-            a!(self, movq(rax, xmm0));
-            self.mov_imm(rcx, 0xFFF8_0000_0000_0000);
-            a!(self, cmp(rax, rcx));
-            a!(self, jne(select));
-            self.mov_imm(rax, 0x7FF8_0000_0000_0000);
-            a!(self, movq(xmm0, rax));
-        } else {
-            a!(self, movd(eax, xmm0));
-            a!(self, cmp(eax, 0xFFC0_0000u32 as i32));
-            a!(self, jne(select));
-            a!(self, mov(eax, 0x7FC0_0000));
-            a!(self, movd(xmm0, eax));
-        }
-        self.u.a.set_label(&mut select).unwrap();
-        a!(self, nop());
+        self.vfix_default_nan(double);
         self.fld_source(xmm6, nsrc, double);
         if let Some(src) = msrc { self.fld_source(xmm1, src, double); }
         for signalling in [false, true] {
@@ -4202,9 +4210,18 @@ impl<'a> E<'a> {
     }
 
     fn vconst(&mut self, x: AsmRegisterXmm, v: u64) {
-        self.mov_imm(rax, v);
-        a!(self, movq(x, rax));
-        a!(self, punpcklqdq(x, x));
+        let mem = self.vconstant(v);
+        a!(self, movdqa(x, mem));
+    }
+
+    fn vconstant(&mut self, v: u64) -> AsmMemoryOperand {
+        let label = if let Some(&label) = self.u.constants.get(&v) { label } else {
+            let label = self.u.a.create_label();
+            self.u.constants.insert(v, label);
+            self.u.constant_pool.push((label, v));
+            label
+        };
+        xmmword_ptr(label)
     }
 
     /// FCVTZU: saturating truncation of XMM0 into unsigned RAX.
@@ -4672,7 +4689,7 @@ impl<'a> E<'a> {
                     if double { a!(self, mulpd(xmm0, xmm1)); } else { a!(self, mulps(xmm0, xmm1)); }
                 } else {
                     if opcode == 0b0101 {
-                        self.vneg(xmm0, xmm2, double);
+                        self.vneg(xmm0, double);
                     }
                     self.vld(xmm2, rd, q);
                     self.fma_arm(double);
@@ -4692,7 +4709,7 @@ impl<'a> E<'a> {
             self.vld(xmm0, rn, q);
             self.vld(xmm1, rm, q);
             if bit(insn, 23) != 0 {
-                self.vneg(xmm0, xmm2, double); // FMLS
+                self.vneg(xmm0, double); // FMLS
             }
             self.vld(xmm2, rd, q);
             self.fma_arm(double);
@@ -4711,10 +4728,10 @@ impl<'a> E<'a> {
             self.fld_scalar(xmm1, rm, double);
             self.fld_scalar(xmm2, ra, double);
             if o1 != o0 {
-                self.vneg(xmm0, xmm3, double); // FMSUB, FNMADD: -n
+                self.vneg(xmm0, double); // FMSUB, FNMADD: -n
             }
             if o1 {
-                self.vneg(xmm2, xmm3, double); // FNMADD, FNMSUB: -a
+                self.vneg(xmm2, double); // FNMADD, FNMSUB: -a
             }
             // packed on purpose: the upper lanes are zero (movss/movsd loads) and are cleared again below
             self.fma_arm(double);
@@ -6907,5 +6924,63 @@ mod fp_cold_tests {
             }
         }
         interp::sys_sync_host_fp_mode(0);
+    }
+}
+
+#[cfg(test)]
+mod fp_pool_tests {
+    use super::*;
+    use attesor_core::cpu::Cpu;
+
+    #[test]
+    fn aligned_deduplicated_pool_executes_after_whole_buffer_relocation() {
+        const PC: u64 = 0x6000_0000;
+        const A: u64 = 0x7ff8_0000_0000_1234;
+        const B: u64 = 0x8000_0000_0000_0000;
+        for kind in [StubKind::Plain, StubKind::Patchable] {
+            for padding in 0..16 {
+                let mut u = Unit::new(kind, false);
+                {
+                    let mut e = E { u: &mut u, pc: PC, fuse_in: None, scalar_inputs: None };
+                    for _ in 0..padding { a!(e, nop()); }
+                    e.vconst(xmm0, A);
+                    e.vconst(xmm1, A); // one shared pool entry
+                    let sign = e.vconstant(B);
+                    a!(e, pxor(xmm0, sign));
+                    a!(e, movdqu(xmmword_ptr(r15 + voff(0)), xmm0));
+                    e.goto(PC + 4);
+                }
+                u.finish();
+                assert_eq!(u.constant_pool.len(), 2);
+                // AOT assembles at an offset and stores the entire code_buffer.
+                let res = u.a.assemble_options(0, iced_x86::BlockEncoderOptions::RETURN_NEW_INSTRUCTION_OFFSETS).unwrap();
+                let bytes = &res.inner.code_buffer;
+                for &(label, value) in &u.constant_pool {
+                    let at = res.label_ip(&label).unwrap() as usize;
+                    assert_eq!(at % 16, 0, "padding={padding}");
+                    assert_eq!(&bytes[at..at + 8], &value.to_le_bytes());
+                    assert_eq!(&bytes[at + 8..at + 16], &value.to_le_bytes());
+                }
+                for _ in 0..2 {
+                    let host = crate::jit::code_cache().alloc(bytes.len() as u64);
+                    // Encoding at a different base must produce identical bytes.
+                    assert_eq!(u.a.assemble(host).unwrap(), *bytes);
+                    unsafe { std::ptr::copy_nonoverlapping(bytes.as_ptr(), host as *mut u8, bytes.len()); }
+                    for s in &u.finished_stubs {
+                        if kind == StubKind::Patchable {
+                            let slot = host + res.label_ip(&s.slot).unwrap();
+                            let cont = host + res.label_ip(&s.cont).unwrap();
+                            unsafe { std::ptr::write_unaligned(slot as *mut u64, cont); }
+                        }
+                    }
+                    let mut c = Cpu::new(); crate::jit::setup_cpu(&mut c);
+                    unsafe { crate::jit::attesor_jit_enter(&mut *c, host); }
+                    let value = (A ^ B) as u128;
+                    assert_eq!(c.vq(0), value | (value << 64));
+                    assert_eq!(c.pc, PC + 4);
+                    assert_eq!(c.exit_reason, EXIT_CONTINUE);
+                }
+            }
+        }
     }
 }
