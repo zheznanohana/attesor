@@ -4,7 +4,7 @@
 //! addresses fields directly relative to a pinned host register.
 
 use std::mem::offset_of;
-use std::sync::atomic::{AtomicU64, AtomicU8, Ordering};
+use std::sync::atomic::{AtomicU64, Ordering};
 
 /// Number of host helper slots reachable from generated code (`call [r15+..]`).
 pub const HELPER_SLOTS: usize = 32;
@@ -58,7 +58,7 @@ pub struct Cpu {
     /// Host function pointers called by generated code.
     pub helpers: [u64; HELPER_SLOTS],
     /// Sampling state, written only at Rust transitions. Appended to preserve all JIT offsets.
-    pub profile_state: AtomicU8,
+    pub profile_state: AtomicU64,
     /// Stats-only public entries into write-back regions from disk-loaded AOT code.
     /// Generated code uses r15-relative addressing so cache blobs stay relocatable.
     pub aot_loop_regions: u64,

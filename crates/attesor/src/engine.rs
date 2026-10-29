@@ -96,7 +96,7 @@ pub fn run_thread(cpu: &mut Cpu) {
 }
 
 /// Keep CPU lifetime protected while taking only atomic reads of published snapshots.
-pub fn profile_samples() -> Vec<(u64, u8)> {
+pub fn profile_samples() -> Vec<(u64, u64)> {
     CPUS.lock().unwrap().iter().map(|&cpu| {
         // Registry guard keeps the CPU alive; never create a shared reference to
         // the concurrently mutated Cpu. Only its UnsafeCell-backed atomics are read.

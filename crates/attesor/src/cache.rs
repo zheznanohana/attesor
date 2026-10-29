@@ -83,16 +83,16 @@ pub fn map_and_slide_2(files_count: u32, files: u64, mappings_count: u32, mappin
             unsafe {
                 let p = if f.fd < 0 {
                     // Dynamic config data lives in the caller's memory.
-                    let p = libc::mmap(addr as *mut _, size, libc::PROT_READ | libc::PROT_WRITE, libc::MAP_ANON | libc::MAP_PRIVATE | libc::MAP_FIXED, -1, 0);
+                    let p = crate::profile::host_call(|| libc::mmap(addr as *mut _, size, libc::PROT_READ | libc::PROT_WRITE, libc::MAP_ANON | libc::MAP_PRIVATE | libc::MAP_FIXED, -1, 0));
                     if p != libc::MAP_FAILED {
                         std::ptr::copy_nonoverlapping(m.file_offset as *const u8, p as *mut u8, size);
                     }
                     p
                 } else if m.max_prot & VM_PROT_ZF != 0 {
-                    libc::mmap(addr as *mut _, size, libc::PROT_READ | libc::PROT_WRITE, libc::MAP_ANON | libc::MAP_PRIVATE | libc::MAP_FIXED, -1, 0)
+                    crate::profile::host_call(|| libc::mmap(addr as *mut _, size, libc::PROT_READ | libc::PROT_WRITE, libc::MAP_ANON | libc::MAP_PRIVATE | libc::MAP_FIXED, -1, 0))
                 } else {
                     let wprot = if m.slide_size != 0 { libc::PROT_READ | libc::PROT_WRITE } else { prot.max(libc::PROT_READ) };
-                    libc::mmap(addr as *mut _, size, wprot, libc::MAP_PRIVATE | libc::MAP_FIXED, f.fd, m.file_offset as i64)
+                    crate::profile::host_call(|| libc::mmap(addr as *mut _, size, wprot, libc::MAP_PRIVATE | libc::MAP_FIXED, f.fd, m.file_offset as i64))
                 };
                 if p == libc::MAP_FAILED || p as u64 != addr {
                     eprintln!("attesor: failed to map shared cache region {:#x}+{:#x}: {}", addr, size, std::io::Error::last_os_error());
@@ -100,7 +100,7 @@ pub fn map_and_slide_2(files_count: u32, files: u64, mappings_count: u32, mappin
                 }
                 if m.slide_size == 0 {
                     let final_prot = if prot == 0 { libc::PROT_NONE } else { prot };
-                    libc::mprotect(addr as *mut _, size, final_prot);
+                    crate::profile::host_call(|| libc::mprotect(addr as *mut _, size, final_prot));
                 }
             }
             ranges.push((addr, m.size));
@@ -119,7 +119,7 @@ pub fn map_and_slide_2(files_count: u32, files: u64, mappings_count: u32, mappin
             return libc::EINVAL as i64;
         }
         let prot = (m.init_prot & 3) as i32;
-        unsafe { libc::mprotect(addr as *mut _, m.size as usize, if prot == 0 { libc::PROT_NONE } else { prot }) };
+        unsafe { crate::profile::host_call(|| libc::mprotect(addr as *mut _, m.size as usize, if prot == 0 { libc::PROT_NONE } else { prot })) };
     }
     if std::env::var_os("ATTESOR_TRACE").is_some() {
         eprintln!("[attesor] mapped arm64 shared cache at {:#x} (slide {:#x}), {} regions", CACHE_BASE, slide, ranges.len());

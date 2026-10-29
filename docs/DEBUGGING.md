@@ -96,3 +96,72 @@ Symbol lookup uses Mach-O symbols and shared-cache exports; stripped/internal ro
 appear as a nearest exported symbol or image offset. `idle` classifies waiting syscall
 entries, including their setup and return time; it is sampled thread time, not CPU usage.
 Force-killed processes retain the last 10-second snapshot (shorter runs need a normal exit).
+
+
+The v2 profiler also reports every observed BSD syscall, Mach trap, and machdep
+selector by class/number/name. Indirect BSD syscall #0 is charged to the resolved
+number; machdep uses the platform selector in x3. Names extend the trace table
+from the repository's XNU syscall reference; unknown entries retain their numbers.
+The syscall sample percentage uses **all syscall samples, including idle**, rather
+than just busy time. The idle audit lists observed names with both idle calls and
+idle samples, so even zero-sample nonblocking polls are visible. Idle classification
+is unchanged: waiting-capable entries are classified at entry, including setup and
+return overhead; a zero-timeout kevent is still listed as idle.
+
+Direct call counts and elapsed times use the host's cheap `mach_absolute_time`
+clock, enabled only by `ATTESOR_PROFILE`. Host time scopes the raw host syscall
+boundary (including multiple forwarded calls on behalf of one guest call), plus
+explicit kernel wrappers for memory mappings, guest-memory copies, IOKit port
+creation, workqueue file descriptors, signal dispositions, and fork.
+Emulation is the remaining elapsed time in `handle_svc`, including path/argument
+mapping, conversion, runtime work, bookkeeping, and waits implemented by Rust.
+The split measures boundaries around calls, including wrapper/clock overhead;
+it does not trace incidental kernel entries inside Rust's allocator or threading
+runtime. These are wall times, not CPU times: blocked host calls include their
+sleep. `mach_absolute_time` itself is answered by a host user-space clock, so its
+host-kernel time is zero. Counts include failed and unfinished calls. Snapshots
+include the elapsed part of active calls and host waits without counting it twice
+at completion. Successful exec and process exit can only retain time up to their
+last snapshot before leaving the process; their final kernel interval cannot be
+measured after return. A fork child starts new direct totals at the fork return.
+Same-executable exec resumes v2 direct totals as well as samples; the merger
+continues to accept v1 snapshots.
+
+GPU operations (RPC/free/event/batch/define-selector) report caller wall time.
+A rebuilt host bridge additionally exposes an optional local
+`mcl_profile_set_callback` hook for selector execution, including RPC commands and
+each batch record. It changes no request/reply bytes. Selector counts include
+attempts that fail early or hit the memo cache. Samples publish the active
+selector on the waiting caller's CPU, and also credit its parent operation.
+Selector tables therefore overlap operation tables; do not add their times or
+samples together. Selector names, rather than process-local ids, merge across
+processes. GPU kernel/emulation splits are unavailable and displayed as `n/a`.
+Older bridges still report operation totals and explicitly mark selector coverage
+unavailable. This hook measures runtime bridge execution; guest-side shim encoding
+remains in JIT/interpreter time.
+
+Timing storage has a separate lock from sampling/symbol lookup to avoid runtime
+lock inversions. Both locks participate in the existing fork gate. Profiling adds
+no generated instructions and preserves the Cpu's existing JIT offsets. Disabled
+Rust paths only check the enable flag, without clock reads, TLS lookups, allocations,
+or timing locks (the existing fork gate remains active independently).
+
+Checks (all output and generated libraries stay in the selected worktree directory):
+
+```bash
+cargo build --release --workspace
+cargo test --workspace
+TMPDIR="$PWD/target" python3 tests/attesor/profile-report-check.py
+python3 tests/attesor/profile-syscalls-check.py --output target/profile-syscalls
+OUT="$PWD/target/profile-gpu" bash gpu/build.sh
+python3 tests/attesor/profile-bridge-check.py --bridge target/profile-gpu/libmclbridge.dylib --output target/profile-bridge
+python3 tests/attesor/profile-check.py --output target/profile-check
+```
+
+The syscall probe performs 20,000 stat/open/read/close, getpid (including indirect
+SVC), gettimeofday, mach_absolute_time, and zero-timeout kevent iterations plus a
+sleeping thread, and repeats with profiling disabled. The bridge probe uses the
+real protocol on two concurrent guest/bridge thread pairs, tests timed missing
+handles and RPCs without opening a Metal device, and checks an older hookless
+library. The lifecycle check validates direct totals through fork, successful and
+failed exec, and a periodic snapshot killed while a host wait remains active.

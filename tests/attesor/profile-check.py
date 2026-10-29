@@ -48,6 +48,10 @@ def run(label, extra=(), flags=()):
     return [report.read_profile(path)[1] for path in files]
 
 
+def calls(r, category, number):
+    return [sum(v[i] for (c, n, _), v in r.calls.items() if c == category and n == number) for i in range(6)]
+
+
 r, = run('workload')
 assert r.states['jit'] > 0 and r.states['interp'] > 0 and r.states['idle'] > 100
 assert r.blocks > 0
@@ -63,13 +67,19 @@ print('profile-check: PASS --interp has no JIT samples', flush=True)
 forked = run('fork', ['--fork'])
 assert len(forked) == 2 and all(r.states['idle'] > 100 for r in forked)
 assert min(sum(r.states.values()) for r in forked) < max(sum(r.states.values()) for r in forked)
-print('profile-check: PASS multithreaded fork has independent child and parent snapshots', flush=True)
+# The parent's sleeping worker must not survive in the child's direct totals.
+assert sorted(calls(r, 'bsd', 334)[2] for r in forked) == [1, 2]
+assert all(calls(r, 'bsd', 2)[2] == 1 for r in forked)
+print('profile-check: PASS multithreaded fork has independent samples/calls/times in child and parent', flush=True)
 r, = run('exec', ['--exec'])
 assert r.states['idle'] > 350 and r.states['jit'] > 0
-print('profile-check: PASS same-pid exec preserves pre-exec samples and inherited setting', flush=True)
+assert calls(r, 'bsd', 366)[2] == 2 and calls(r, 'bsd', 59)[2] == 1
+assert calls(r, 'bsd', 334)[2] == 2
+print('profile-check: PASS same-pid exec preserves pre-exec samples/calls/times and inherited setting', flush=True)
 r, = run('exec-fail', ['--exec-fail'])
 assert r.states['idle'] > 100
-print('profile-check: PASS failed exec keeps sampling', flush=True)
+assert calls(r, 'bsd', 59)[2] == 1 and calls(r, 'bsd', 59)[5] > 0
+print('profile-check: PASS failed exec records the returned host interval once', flush=True)
 directory = args.output / 'killed'
 with (args.output / 'killed.log').open('w') as log:
     process = subprocess.Popen(command + [str(guest), '--wait'],
@@ -84,6 +94,8 @@ with (args.output / 'killed.log').open('w') as log:
         path, = directory.glob('*.txt')
         r = report.read_profile(path)[1]
         assert r.states['idle'] > 1000
+        # Include the unfinished tenth sleep in both total and host time.
+        assert calls(r, 'bsd', 334)[5] > 8_000_000_000
         before = path.read_bytes()
         process.kill()
         process.wait(timeout=5)
@@ -92,4 +104,4 @@ with (args.output / 'killed.log').open('w') as log:
         if process.poll() is None:
             process.kill()
         process.wait(timeout=5)
-print('profile-check: PASS 10s atomic snapshot survives SIGKILL', flush=True)
+print('profile-check: PASS 10s atomic snapshot includes an active host wait and survives SIGKILL', flush=True)

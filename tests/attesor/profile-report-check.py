@@ -34,3 +34,34 @@ with tempfile.TemporaryDirectory(prefix='profile-report-') as td:
     assert 'hidden-from-top-60' in out.getvalue()
     assert module.process_type('worker', ['--type', 'renderer']) == 'worker --type=renderer'
 print('profile-report: PASS lossless merge, weighted shares, zero samples, process roles')
+
+with tempfile.TemporaryDirectory(prefix='profile-report-v2-') as td:
+    path = Path(td) / 'worker-1.txt'
+    header = 'Attesor guest profile v2\nprocess\tworker\t--type=gpu-process\nstate\tidle\t5\nstate\tgpu\t10\n'
+    records = ('call\tbsd\t363\tkevent\t0\t0\t200\t200\t900\t600\n'
+               'call\tmach\t3\tmach_absolute_time\t1\t0\t200\t0\t700\t0\n'
+               'call\tgpu-op\t4\tbatch\t10\t0\t3\t0\t5000\t0\n'
+               'call\tgpu-selector\t7\tcommandBuffer\t8\t0\t20\t0\t4000\t0\n'
+               'bridge-selectors\ttrue\n')
+    path.write_text(header + records)
+    name, a = module.read_profile(path)
+    path.write_text(header + records.replace('gpu-selector\t7', 'gpu-selector\t91'))
+    _, b = module.read_profile(path)
+    a.add(b)
+    assert a.calls['gpu-selector', 0, 'commandBuffer'] == [16, 0, 40, 0, 8000, 0]
+    assert a.calls['bsd', 363, 'kevent'] == [0, 0, 400, 400, 1800, 1200]
+    assert a.bridge_selectors['true'] == 2
+    out = io.StringIO()
+    with contextlib.redirect_stdout(out):
+        module.render(name, a)
+    assert 'kevent' in out.getvalue() and 'Classified idle' in out.getvalue()
+    assert 'commandBuffer' in out.getvalue() and 'n/a' in out.getvalue()
+    for bad in ('-1\t0\t1\t0\t9\t6', '0\t0\t1\t0\t9\t10', '0\t0\t1\t2\t9\t0'):
+        path.write_text(header + 'call\tbsd\t20\tgetpid\t' + bad + '\n')
+        try:
+            module.read_profile(path)
+        except ValueError:
+            pass
+        else:
+            raise AssertionError('accepted invalid counters: ' + bad)
+print('profile-report: PASS v1/v2, syscall time splits, zero-sample idle calls, selector names across processes, invalid counters')

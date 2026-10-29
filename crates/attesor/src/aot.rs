@@ -547,8 +547,11 @@ fn fork_safely() -> libc::pid_t {
             }
         }
         let _files = FILE_LOCKS.write().unwrap();
+        profile.host_begin();
         let pid = unsafe { libc::fork() };
-        (pid, if pid < 0 { unsafe { *libc::__error() } } else { 0 })
+        let error = if pid < 0 { unsafe { *libc::__error() } } else { 0 };
+        profile.host_end();
+        (pid, error)
     };
     if pid == 0 { profile.child(); }
     cpus(pid == 0);

@@ -463,6 +463,12 @@ static NSDictionary *handleReq(NSDictionary *req) {
     return @{@"x": @"bad request"};
 }
 
+// Optional in-process profiler hook. The RPC/batch wire format is unchanged.
+// Installed before bridge workers start; NULL leaves only a predictable branch.
+typedef void (*MclProfileCallback)(uint32_t event, const char *name);
+static MclProfileCallback gProfileCallback;
+MCL_EXPORT void mcl_profile_set_callback(MclProfileCallback callback) { gProfileCallback = callback; }
+
 // ---- fast path: binary command batches (see mclproto.h) ---------------------------------------------------
 #define MAXSEL 8192
 static SEL gSelTab[MAXSEL];
@@ -853,7 +859,15 @@ static void *doBatch(const uint8_t *in, uint64_t len, uint64_t *outlen) {
         if (rlen < 32 || p + rlen > end) break;
         @autoreleasepool {
             if (kind == MCL_R_DROP) dropHandle(th, 1);
-            else reply = execCall(p, rlen, kind, nargs, (uint32_t)w1, th, rh, outlen) ?: reply;
+            else {
+                if (gProfileCallback) {
+                    uint32_t sid = (uint32_t)w1;
+                    SEL sel = sid < MAXSEL ? __atomic_load_n(&gSelTab[sid], __ATOMIC_ACQUIRE) : NULL;
+                    gProfileCallback(0, sel ? gSelNames[sid] : "unknown batch selector");
+                }
+                @try { reply = execCall(p, rlen, kind, nargs, (uint32_t)w1, th, rh, outlen) ?: reply; }
+                @finally { if (gProfileCallback) gProfileCallback(1, NULL); }
+            }
         }
         p += rlen;
     }
@@ -937,7 +951,9 @@ MCL_EXPORT void *mcl_call(uint64_t op, const void *in, uint64_t inlen, uint64_t 
             else {
                 uint64_t t0 = gStats ? mach_absolute_time() : 0;
                 TRACE("%s %s h=%s", [req[@"c"] UTF8String], [(req[@"sel"] ?: @"") UTF8String], [[req[@"h"] description] UTF8String]);
-                reply = handleReq(req);
+                if (gProfileCallback) gProfileCallback(0, [(req[@"sel"] ?: req[@"c"] ?: @"unknown RPC") UTF8String]);
+                @try { reply = handleReq(req); }
+                @finally { if (gProfileCallback) gProfileCallback(1, NULL); }
                 if (gStats) {
                     mach_timebase_info_data_t tb;
                     mach_timebase_info(&tb);
