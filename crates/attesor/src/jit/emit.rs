@@ -1572,9 +1572,11 @@ fn callret_enabled() -> bool {
 }
 
 /// Experimental ten-register write-back region (JIT only).
+/// On by default (ATTESOR_JIT_OFF=loopra turns it off): single-block loops keep their working set in
+/// ten host registers. Measured int-hash +34%, branchy +54%, memops +45%, crc32 +19%.
 fn loopra_enabled() -> bool {
     static F: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
-    *F.get_or_init(|| std::env::var("ATTESOR_JIT_ON").unwrap_or_default().split(',').any(|g| g == "loopra"))
+    *F.get_or_init(|| !jit_off("loopra"))
 }
 
 /// Experimental write-through natural-loop region; public entries remain canonical.
