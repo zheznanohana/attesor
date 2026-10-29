@@ -2643,6 +2643,45 @@ impl<'a> E<'a> {
         a!(self, nop());
     }
 
+    /// Overlay a quieted NaN source onto xmm0, using xmm3-xmm5 only. Sources
+    /// are visited in reverse priority; a second pass selects signalling NaNs.
+    fn select_nan(&mut self, double: bool, src: AsmRegisterXmm, signalling: bool) {
+        a!(self, movdqa(xmm3, src));
+        if double { a!(self, cmppd(xmm3, xmm3, 3)); } else { a!(self, cmpps(xmm3, xmm3, 3)); }
+        self.vconst(xmm5, if double { 0x0008_0000_0000_0000 } else { 0x0040_0000_0040_0000 });
+        if signalling {
+            a!(self, movdqa(xmm4, src));
+            a!(self, pand(xmm4, xmm5));
+            a!(self, pxor(xmm5, xmm5));
+            if double { a!(self, pcmpeqq(xmm4, xmm5)); } else { a!(self, pcmpeqd(xmm4, xmm5)); }
+            a!(self, pand(xmm3, xmm4));
+            self.vconst(xmm5, if double { 0x0008_0000_0000_0000 } else { 0x0040_0000_0040_0000 });
+        }
+        a!(self, movdqa(xmm4, src));
+        a!(self, por(xmm4, xmm5));
+        a!(self, pand(xmm4, xmm3));
+        a!(self, pandn(xmm3, xmm0));
+        a!(self, por(xmm3, xmm4));
+        a!(self, movdqa(xmm0, xmm3));
+    }
+
+    /// Binary vector arithmetic, with the second source still in xmm1. Reload
+    /// the first source only on the rare NaN path, before the destination store.
+    fn vfix_binary_nan(&mut self, double: bool, rn: u32, q: bool) {
+        let mut ordered = self.new_label();
+        a!(self, movdqa(xmm3, xmm0));
+        if double { a!(self, cmppd(xmm3, xmm3, 3)); } else { a!(self, cmpps(xmm3, xmm3, 3)); }
+        a!(self, ptest(xmm3, xmm3));
+        a!(self, jz(ordered));
+        self.vfix_default_nan(double);
+        self.vld(xmm6, rn, q);
+        for signalling in [false, true] {
+            for src in [xmm1, xmm6] { self.select_nan(double, src, signalling); }
+        }
+        self.u.a.set_label(&mut ordered).unwrap();
+        a!(self, nop());
+    }
+
     /// Fused multiply-add with ARM NaN selection: xmm0 = op1 (already negated for FMLS-like forms),
     /// xmm1 = op2, xmm2 = addend (negated as needed); result in xmm0, including the default-NaN fixup.
     /// x86 picks a NaN operand in the order op1, op2, addend; ARM (FPProcessNaNs3) takes the addend
@@ -2650,46 +2689,55 @@ impl<'a> E<'a> {
     fn fma_arm(&mut self, double: bool) {
         a!(self, movdqa(xmm6, xmm2)); // addend
         a!(self, movdqa(xmm7, xmm0)); // op1
-        if double { a!(self, vfmadd231pd(xmm2, xmm0, xmm1)); } else { a!(self, vfmadd231ps(xmm2, xmm0, xmm1)); }
+        // 213 writes the final result register directly. An ordered result can
+        // skip the slow path with one branch, without a result copy or a second jump.
+        if double { a!(self, vfmadd213pd(xmm0, xmm1, xmm2)); } else { a!(self, vfmadd213ps(xmm0, xmm1, xmm2)); }
         // no NaN lane in the result: no NaN went in and nothing was invalid, x86 and ARM agree exactly
-        let mut l_slow = self.new_label();
         let mut l_end = self.new_label();
-        a!(self, movdqa(xmm3, xmm2));
+        a!(self, movdqa(xmm3, xmm0));
         if double { a!(self, cmppd(xmm3, xmm3, 3)); } else { a!(self, cmpps(xmm3, xmm3, 3)); }
         a!(self, ptest(xmm3, xmm3));
-        a!(self, jnz(l_slow));
-        a!(self, movdqa(xmm0, xmm2));
-        a!(self, jmp(l_end));
-        self.u.a.set_label(&mut l_slow).unwrap();
-        // inf*0 marker: the unfused product is the x86 real indefinite exactly then
-        if double {
-            a!(self, mulpd(xmm7, xmm1));
-            self.vconst(xmm3, 0xFFF8_0000_0000_0000);
-            a!(self, pcmpeqq(xmm7, xmm3));
-        } else {
-            a!(self, mulps(xmm7, xmm1));
-            self.vconst(xmm3, 0xFFC0_0000_FFC0_0000);
-            a!(self, pcmpeqd(xmm7, xmm3));
-        }
-        // lanes whose addend is a NaN take that NaN, quieted
-        a!(self, movdqa(xmm4, xmm6));
-        if double { a!(self, cmppd(xmm4, xmm4, 3)); } else { a!(self, cmpps(xmm4, xmm4, 3)); }
-        self.vconst(xmm5, if double { 0x0008_0000_0000_0000 } else { 0x0040_0000_0040_0000 });
-        a!(self, por(xmm6, xmm5));
-        a!(self, movdqa(xmm0, xmm4));
-        a!(self, pandn(xmm0, xmm2));
-        a!(self, pand(xmm6, xmm4));
-        a!(self, por(xmm0, xmm6));
-        // ... unless op1*op2 was inf*0: default NaN
-        a!(self, pand(xmm7, xmm4));
-        self.vconst(xmm3, if double { 0x7FF8_0000_0000_0000 } else { 0x7FC0_0000_7FC0_0000 });
-        a!(self, pand(xmm3, xmm7));
-        a!(self, pandn(xmm7, xmm0));
-        a!(self, por(xmm7, xmm3));
-        a!(self, movdqa(xmm0, xmm7));
-        // The fast path already proved every result lane ordered. Canonicalize only
-        // here, avoiding a second NaN test on every ordinary fused operation.
+        a!(self, jz(l_end));
         self.vfix_default_nan(double);
+        // The product is NaN from inf*0 only when neither multiplicand was
+        // already NaN. Comparing its bits with x86's indefinite pattern also
+        // matched propagated negative NaNs and lost their payloads.
+        a!(self, movdqa(xmm2, xmm7));
+        if double { a!(self, mulpd(xmm2, xmm1)); } else { a!(self, mulps(xmm2, xmm1)); }
+        if double { a!(self, cmppd(xmm2, xmm2, 3)); } else { a!(self, cmpps(xmm2, xmm2, 3)); }
+        a!(self, movdqa(xmm3, xmm7));
+        a!(self, movdqa(xmm4, xmm1));
+        if double {
+            a!(self, cmppd(xmm3, xmm3, 3));
+            a!(self, cmppd(xmm4, xmm4, 3));
+        } else {
+            a!(self, cmpps(xmm3, xmm3, 3));
+            a!(self, cmpps(xmm4, xmm4, 3));
+        }
+        a!(self, por(xmm3, xmm4));
+        a!(self, pandn(xmm3, xmm2));
+        a!(self, movdqa(xmm2, xmm3)); // inf*0 mask
+        // ARM's special default-NaN case requires a quiet NaN addend.
+        a!(self, movdqa(xmm3, xmm6));
+        if double { a!(self, cmppd(xmm3, xmm3, 3)); } else { a!(self, cmpps(xmm3, xmm3, 3)); }
+        self.vconst(xmm5, if double { 0x0008_0000_0000_0000 } else { 0x0040_0000_0040_0000 });
+        a!(self, movdqa(xmm4, xmm6));
+        a!(self, pand(xmm4, xmm5));
+        if double { a!(self, pcmpeqq(xmm4, xmm5)); } else { a!(self, pcmpeqd(xmm4, xmm5)); }
+        a!(self, pand(xmm2, xmm3));
+        a!(self, pand(xmm2, xmm4));
+        // FPProcessNaNs3: all signalling operands precede all quiet ones;
+        // within each category the order is addend, op1, op2.
+        for signalling in [false, true] {
+            for src in [xmm1, xmm7, xmm6] {
+                self.select_nan(double, src, signalling);
+            }
+        }
+        self.vconst(xmm3, if double { 0x7FF8_0000_0000_0000 } else { 0x7FC0_0000_7FC0_0000 });
+        a!(self, pand(xmm3, xmm2));
+        a!(self, pandn(xmm2, xmm0));
+        a!(self, por(xmm2, xmm3));
+        a!(self, movdqa(xmm0, xmm2));
         self.u.a.set_label(&mut l_end).unwrap();
         a!(self, nop());
     }
@@ -2792,8 +2840,9 @@ impl<'a> E<'a> {
     }
 
     /// Replace the x86 "real indefinite" NaN produced by invalid operations with the ARM default NaN.
-    fn fix_default_nan(&mut self, double: bool) {
+    fn fix_default_nan(&mut self, double: bool, rn: u32, rm: Option<u32>) {
         let mut skip = self.new_label();
+        let mut select = self.new_label();
         // not a NaN (the usual case): nothing to fix
         if double { a!(self, ucomisd(xmm0, xmm0)); } else { a!(self, ucomiss(xmm0, xmm0)); }
         a!(self, jnp(skip));
@@ -2801,15 +2850,23 @@ impl<'a> E<'a> {
             a!(self, movq(rax, xmm0));
             self.mov_imm(rcx, 0xFFF8_0000_0000_0000);
             a!(self, cmp(rax, rcx));
-            a!(self, jne(skip));
+            a!(self, jne(select));
             self.mov_imm(rax, 0x7FF8_0000_0000_0000);
             a!(self, movq(xmm0, rax));
         } else {
             a!(self, movd(eax, xmm0));
             a!(self, cmp(eax, 0xFFC0_0000u32 as i32));
-            a!(self, jne(skip));
+            a!(self, jne(select));
             a!(self, mov(eax, 0x7FC0_0000));
             a!(self, movd(xmm0, eax));
+        }
+        self.u.a.set_label(&mut select).unwrap();
+        a!(self, nop());
+        self.fld_scalar(xmm6, rn, double);
+        if let Some(rm) = rm { self.fld_scalar(xmm1, rm, double); }
+        for signalling in [false, true] {
+            if rm.is_some() { self.select_nan(double, xmm1, signalling); }
+            self.select_nan(double, xmm6, signalling);
         }
         self.u.a.set_label(&mut skip).unwrap();
         a!(self, nop());
@@ -3359,7 +3416,7 @@ impl<'a> E<'a> {
                     _ => a!(self, subss(xmm0, dword_ptr(r15 + voff(rm)))),
                 }
             }
-            self.fix_default_nan(double);
+            self.fix_default_nan(double, rn, Some(rm));
             a!(self, movdqu(xmmword_ptr(r15 + voff(rd)), xmm0));
             self.vfill(rd, xmm0);
             return true;
@@ -3373,7 +3430,7 @@ impl<'a> E<'a> {
             } else {
                 a!(self, sqrtss(xmm0, xmm0));
             }
-            self.fix_default_nan(double);
+            self.fix_default_nan(double, rn, None);
             a!(self, movdqu(xmmword_ptr(r15 + voff(rd)), xmm0));
             self.vfill(rd, xmm0);
             return true;
@@ -4142,7 +4199,7 @@ impl<'a> E<'a> {
                     self.vld(xmm2, rd, q);
                     self.fma_arm(double);
                 }
-                if mul { self.vfix_default_nan(double); }
+                if mul { self.vfix_binary_nan(double, rn, q); }
                 self.vfin(rd, q);
                 return true;
             }
@@ -4646,7 +4703,7 @@ impl<'a> E<'a> {
                 (_, _) => { a!(self, cmppd(xmm1, xmm0, 1)); a!(self, movdqa(xmm0, xmm1)); }
             }
             if op <= 4 {
-                self.vfix_default_nan(double);
+                self.vfix_binary_nan(double, rn, q);
             }
             self.vfin(rd, q);
             return true;

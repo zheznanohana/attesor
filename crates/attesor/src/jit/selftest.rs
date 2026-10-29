@@ -305,8 +305,7 @@ fn fp_insn(rng: &mut Rng) -> u32 {
 }
 
 /// Bit patterns for FP registers: ordinary numbers of both widths, zeros, infinities, quiet NaNs,
-/// denormals. No signalling NaNs: which of two NaN operands wins differs (x86 takes the first, ARM a
-/// signalling one first), a documented inexactness of the native FP paths.
+/// denormals. `fpnan` separately covers signalling priority and exact canonical payloads.
 fn fp_val(rng: &mut Rng) -> u64 {
     let f = |rng: &mut Rng| -> u32 {
         match rng.next() % 8 {
@@ -466,7 +465,114 @@ fn run_selftest_blocks(count: usize, fp: bool) {
     println!("jit selftest [{}]: ok={ok} mismatch={bad} skipped={skipped} insns={insns} fallback_insns={fallbacks}", if fp { "fpblocks" } else { "blocks" });
 }
 
+/// Deterministic NaN boundary matrix, including signalling/quiet priority,
+/// signed canonical NaNs, invalid operations, destructive destinations and
+/// mixed exceptional/ordinary vector lanes. No random sampling is needed to
+/// hit the very sparse canonical patterns that caused the old failures.
+fn run_selftest_fpnan(count: usize) {
+    const VALUES32: [u32; 12] = [
+        0, 0x8000_0000, 0x3f80_0000, 0xbf80_0000,
+        0x7f80_0000, 0xff80_0000, 0x7fc0_0000, 0xffc0_0000,
+        0x7fc0_1234, 0xffc0_5678, 0x7f80_1234, 0xff80_5678,
+    ];
+    const VALUES64: [u64; 12] = [
+        0, 0x8000_0000_0000_0000, 0x3ff0_0000_0000_0000, 0xbff0_0000_0000_0000,
+        0x7ff0_0000_0000_0000, 0xfff0_0000_0000_0000,
+        0x7ff8_0000_0000_0000, 0xfff8_0000_0000_0000,
+        0x7ff8_0000_0000_1234, 0xfff8_0000_0000_5678,
+        0x7ff0_0000_0000_1234, 0xfff0_0000_0000_5678,
+    ];
+    let page = unsafe {
+        libc::mmap(std::ptr::null_mut(), 0x1000, libc::PROT_READ | libc::PROT_WRITE,
+                   libc::MAP_ANON | libc::MAP_PRIVATE, -1, 0) as u64
+    };
+    let (mut ok, mut bad, mut skipped, mut native) = (0u64, 0u64, 0u64, 0u64);
+    for it in 0..count {
+        let double = it & 1 != 0;
+        let kind = (it / 2) % 18;
+        let inputs = it / 36;
+        let indices = [inputs % 12, (inputs / 12) % 12, (inputs / 144) % 12];
+        let d = 1 + (inputs % 3) as u32; // aliases n, m or addend
+        let ty = if double { 1 << 22 } else { 0 };
+        let q = double || inputs & 1 != 0;
+        let qbit = if q { 1 << 30 } else { 0 };
+        let insn = match kind {
+            0..=3 => 0x1e20_0800 | ty | (2 << 16) | ((kind as u32) << 12) | (1 << 5) | d,
+            4 => 0x1e21_c000 | ty | (1 << 5) | d,
+            5..=8 => {
+                let variant = (kind - 5) as u32;
+                0x1f00_0000 | ty | ((variant >> 1) << 21) | (2 << 16)
+                    | ((variant & 1) << 15) | (3 << 10) | (1 << 5) | d
+            }
+            9..=12 => {
+                let base = [0x0e20_d400, 0x0ea0_d400, 0x2e20_dc00, 0x2e20_fc00][kind - 9];
+                base | qbit | ty | (2 << 16) | (1 << 5) | d
+            }
+            13 | 14 => 0x0e20_cc00 | qbit | ty | (((kind - 13) as u32) << 23)
+                | (2 << 16) | (1 << 5) | d,
+            _ => {
+                let base = [0x0f80_9000, 0x0f80_1000, 0x0f80_5000][kind - 15];
+                let lane = (inputs / 3) as u32 & if double { 1 } else { 3 };
+                base | qbit | ty | (2 << 16) | ((lane >> if double { 0 } else { 1 }) << 11)
+                    | (if double { 0 } else { (lane & 1) << 21 }) | (1 << 5) | d
+            }
+        };
+        let mut init = Cpu::new();
+        for reg in 0..32 {
+            let base = if (1..=3).contains(&reg) { indices[reg - 1] } else { reg % 12 };
+            let mut bytes = [0u8; 16];
+            if double {
+                for lane in 0..2 {
+                    bytes[lane * 8..lane * 8 + 8].copy_from_slice(&VALUES64[(base + 3 * lane) % 12].to_le_bytes());
+                }
+            } else {
+                for lane in 0..4 {
+                    bytes[lane * 4..lane * 4 + 4].copy_from_slice(&VALUES32[(base + 3 * lane) % 12].to_le_bytes());
+                }
+            }
+            init.v[reg] = [u64::from_le_bytes(bytes[..8].try_into().unwrap()),
+                           u64::from_le_bytes(bytes[8..].try_into().unwrap())];
+        }
+        if std::env::var_os("ATTESOR_SELFTEST_FPCR").is_some() {
+            init.fpcr = (((it / 2) as u64 & 3) << 22) | (((it / 8) as u64 & 1) << 24);
+        }
+        interp::sys_sync_host_fp_mode(init.fpcr);
+        init.pc = page;
+        let mut r = Cpu::new();
+        *r = clone_cpu(&init);
+        if interp::exec(&mut r, insn).is_err() { skipped += 1; continue; }
+        unsafe {
+            *(page as *mut u32) = insn;
+            *((page + 4) as *mut u32) = 0xd400_1001;
+        }
+        invalidate_range(page, 8);
+        let mut j = Cpu::new();
+        *j = clone_cpu(&init);
+        setup_cpu(&mut j);
+        let before = STATS_FALLBACK.load(Ordering::Relaxed);
+        let host = lookup_or_translate(page);
+        if STATS_FALLBACK.load(Ordering::Relaxed) == before { native += 1; }
+        unsafe { attesor_jit_enter(&mut *j, host) };
+        if snapshot(&r) != snapshot(&j) || j.exit_reason != EXIT_SVC {
+            bad += 1;
+            if bad <= 20 {
+                println!("MISMATCH fpnan #{it}: {insn:08x} {} inputs={indices:?}", disasm(insn));
+                for reg in 0..32 {
+                    if r.v[reg] != j.v[reg] {
+                        println!("    v{reg}: interp={:x?} jit={:x?}", r.v[reg], j.v[reg]);
+                    }
+                }
+            }
+        } else { ok += 1; }
+    }
+    unsafe { libc::munmap(page as *mut libc::c_void, 0x1000); }
+    println!("jit selftest [fpnan]: ok={ok} mismatch={bad} skipped={skipped} native={native}");
+}
+
 pub fn run_selftest(class: &str, count: usize) {
+    if class == "fpnan" {
+        return run_selftest_fpnan(count);
+    }
     if class == "fuse" {
         return run_selftest_fuse(count, false);
     }
