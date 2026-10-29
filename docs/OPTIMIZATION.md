@@ -74,3 +74,16 @@ Raw samples and binary SHA-256 hashes are in
 The first scalar-alias-only experiment had a small, noisy effect; these final
 measurements are for both changes together. No end-to-end GUI speedup has been
 established. This candidate has not replaced `~/bin/attesor` yet.
+
+## Thread startup regression discovered during native-library testing
+
+A four-worker create/join probe without zlib reproduced an existing race in the
+baseline: the first repeated process terminated with SIGSEGV. `bsdthread_create`
+returned while the host child had not yet published its Mach thread port in the
+guest pthread allocation. The creator now waits for kernel-style setup to finish
+before returning; execution of the guest entry point still happens concurrently.
+
+`python3 tests/attesor/thread-startup-check.py target/release/attesor` compares
+with native x86 and runs ten independent ARM guest processes, each creating and
+joining 120 immediately-returning workers. All 1,200 guest thread results matched.
+This is targeted regression evidence, not proof of all guest thread lifetimes.

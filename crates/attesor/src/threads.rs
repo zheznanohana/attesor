@@ -6,7 +6,7 @@
 
 use attesor_core::cpu::Cpu;
 use std::sync::atomic::{AtomicU32, AtomicU64, AtomicUsize, Ordering};
-use std::sync::Mutex;
+use std::sync::mpsc::sync_channel;
 
 static THREAD_START: AtomicU64 = AtomicU64::new(0);
 static WQTHREAD_START: AtomicU64 = AtomicU64::new(0);
@@ -78,16 +78,22 @@ unsafe impl Send for SendCpu {}
 /// Spawn a host thread running guest code from `cpu`.
 fn spawn_guest(mut cpu: Box<Cpu>, setup: impl FnOnce(&mut Cpu) + Send + 'static) {
     let sc = SendCpu(cpu_take(&mut cpu));
+    // bsdthread_create must not return before kernel-style pthread setup has
+    // published its Mach port. Otherwise the caller may join/reclaim a thread
+    // whose host setup still holds a pointer into that guest allocation.
+    let (ready_tx, ready_rx) = sync_channel(0);
     LIVE_THREADS.fetch_add(1, Ordering::SeqCst);
     std::thread::Builder::new()
         .stack_size(8 << 20)
         .spawn(move || {
             let mut c = sc;
             setup(&mut c.0);
+            ready_tx.send(()).expect("guest thread creator disappeared");
             crate::engine::run_thread(&mut c.0);
             LIVE_THREADS.fetch_sub(1, Ordering::SeqCst);
         })
         .expect("failed to spawn host thread");
+    ready_rx.recv().expect("guest thread setup failed");
 }
 
 fn cpu_take(c: &mut Box<Cpu>) -> Box<Cpu> {
