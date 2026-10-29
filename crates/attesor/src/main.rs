@@ -28,6 +28,7 @@ use std::sync::atomic::Ordering;
 fn usage() -> ! {
     eprintln!("usage: attesor [options] <arm64-program> [args...]");
     eprintln!("       attesor --prewarm [options] <arm64-program|App.app>...  translate without running guest code");
+    eprintln!("       attesor --selftest-jit loops [count] [seed]  differential loop test (decimal/0x seed)");
     eprintln!("                  --aot is an alias; app bundles include ARM executable helpers");
     eprintln!("options:");
     eprintln!("  --interp        interpreter only (no JIT/AOT)");
@@ -140,8 +141,14 @@ fn main() {
             "--selftest-jit" => {
                 let class = args.get(1).cloned().unwrap_or_else(|| "dpreg".into());
                 let n = args.get(2).and_then(|v| v.parse().ok()).unwrap_or(20000);
+                let seed = args.get(3).map(|v| {
+                    let parsed = if let Some(hex) = v.strip_prefix("0x") {
+                        u64::from_str_radix(hex, 16)
+                    } else { v.parse() };
+                    parsed.expect("selftest seed must be a decimal or 0x-prefixed u64")
+                });
                 aot::set_enabled(false);
-                jit::selftest::run_selftest(&class, n);
+                jit::selftest::run_selftest(&class, n, seed);
                 std::process::exit(0);
             }
             "-h" | "--help" => usage(),

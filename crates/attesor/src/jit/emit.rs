@@ -3364,7 +3364,7 @@ impl<'a> E<'a> {
             let scale = if v && opc & 2 != 0 { 4 } else { size };
             if self.u.region.is_some() && (option == 3 || option == 2) {
                 let index = self.src(rm,false,true,rcx);
-                let index = if option == 2 { // UXTW must ignore Xrm[63:32].
+                let mut index = if option == 2 { // UXTW must ignore Xrm[63:32].
                     a!(self, mov(ecx,r32_of(index))); rcx
                 } else { index };
                 let shift = if s != 0 { scale } else { 0 };
@@ -7809,6 +7809,74 @@ mod loopra_tests {
 
     fn cpu() -> Box<Cpu> {
         let mut c = Cpu::new(); crate::jit::setup_cpu(&mut c); c.set_pc(PC); c
+    }
+
+    #[test]
+    fn q_register_offset_scale16_matches_interpreter() {
+        // Minimized from loops seed 0x1234, case 89: STR Q with LSL #4.
+        // Also cover loads, UXTW with stale upper bits, signed extends, both
+        // scale choices, helper checks and both relocatable region tail kinds.
+        for kind in [StubKind::Plain, StubKind::Patchable] {
+        for commpage in [false, true] {
+        for option in [2,3,6,7] {
+        for scaled in [false, true] {
+        for load in [false, true] {
+            let w = 0x3ca0_0800 | ((load as u32) << 22) | (29 << 16)
+                | (option << 13) | ((scaled as u32) << 12) | (20 << 5);
+            let words = [w,0xf100_079c,0x54ff_ffc1,0xd400_1001];
+            let u = unit(&words,&[0,3],kind,false,commpage);
+            assert_eq!(u.region_exits.len(),1);
+            assert_eq!(u.insns_fallback,0);
+            assert!(u.a.instructions().iter().all(|i| i.memory_index_scale() <= 8));
+            let (host,_) = assemble(u,0);
+            let mut memory: Vec<u8> = (0..256).map(|n| (n ^ (n >> 4)) as u8).collect();
+            let original = memory.clone();
+            let mut c = cpu(); c.x[20] = (memory.as_mut_ptr() as u64 + 128) | 0xab00_0000_0000_0000;
+            c.x[29] = match option {2 => 0xfeed_beef_0000_0003,6 => 0xfeed_beef_ffff_fffd,7 => (-3i64) as u64,_ => 3};
+            c.x[28] = 2; c.v[0] = [0x0123_4567_89ab_cdef,0xfedc_ba98_7654_3210]; c.set_nzcv(15);
+            let mut reference = cpu(); reference.x=c.x; reference.v=c.v; reference.set_nzcv(c.nzcv());
+            for _ in 0..16 {
+                let w=words[((reference.pc()-PC)/4) as usize];
+                match attesor_core::interp::exec(&mut reference,w) {
+                    Ok(())=>{},Err(attesor_core::interp::Exit::Svc(_))=>break,Err(e)=>panic!("{e:?}"),
+                }
+            }
+            let expected = memory.clone(); memory.copy_from_slice(&original);
+            unsafe { crate::jit::attesor_jit_enter(&mut *c,host); }
+            assert_eq!(memory,expected,"memory option={option} scaled={scaled} load={load}");
+            assert_eq!(c.x,reference.x,"GPR option={option} scaled={scaled} load={load}");
+            assert_eq!(c.v,reference.v,"SIMD option={option} scaled={scaled} load={load}");
+            assert_eq!(c.nzcv(),reference.nzcv()); assert_eq!(c.pc(),reference.pc());
+            assert_eq!(c.exit_reason,EXIT_SVC);
+        }}}}}
+    }
+
+    #[test]
+    fn w_zero_and_bit_branches_ignore_dirty_upper_halves() {
+        for kind in [StubKind::Plain, StubKind::Patchable] {
+            // ADD X leaves a nonzero high half while its low half first wraps
+            // to zero. CBZ W must take exactly one backedge, then fall through.
+            // TBZ W31 likewise observes bit 31, never the dirty X sign bit.
+            for words in [
+                [0x9100_0400,0x34ff_ffe0,0xd400_1001],
+                [0xd261_0000,0x36ff_ffe0 | (31 << 19),0xd400_1001],
+            ] {
+                let u=unit(&words,&[0,2],kind,false,false);
+                assert_eq!(u.region_exits.len(),1);
+                let (host,_) = assemble(u,0);
+                let mut c=cpu(); c.x[0]=0xdead_beef_ffff_ffff; c.set_nzcv(11);
+                let mut reference=cpu(); reference.x=c.x; reference.set_nzcv(c.nzcv());
+                for _ in 0..8 {
+                    let w=words[((reference.pc()-PC)/4) as usize];
+                    match attesor_core::interp::exec(&mut reference,w) {
+                        Ok(())=>{},Err(attesor_core::interp::Exit::Svc(_))=>break,Err(e)=>panic!("{e:?}"),
+                    }
+                }
+                unsafe {crate::jit::attesor_jit_enter(&mut *c,host);}
+                assert_eq!(c.x,reference.x); assert_eq!(c.nzcv(),reference.nzcv());
+                assert_eq!(c.pc(),reference.pc()); assert_eq!(c.exit_reason,EXIT_SVC);
+            }
+        }
     }
 
     #[test]
