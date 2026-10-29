@@ -92,9 +92,60 @@ pub struct Unit {
     /// Blocks to translate into this unit after the current one: call continuations, so a translated
     /// RET lands on code that runs straight into the caller's next block.
     pub inline_queue: Vec<u64>,
+    /// Guest V registers held in xmm8-xmm15 within the current block (see `VCache`).
+    pub vc: VCache,
+    /// The V register(s) the instruction being translated may write: never read from the cache, since
+    /// its own code may have stored part of them already.
+    pub vc_dest: [u8; 2],
 }
 
 pub const NCREGS: usize = 5;
+pub const NVREGS: usize = 8;
+
+/// Read cache of guest V registers in xmm8-xmm15, within one block. Memory (`Cpu::v`) stays up to date
+/// (every write still stores it); a slot is a copy, so dependent FP operations read a register instead
+/// of reloading what the previous instruction just stored (store-forwarding latency on the critical
+/// path). Kept correct from the guest side: before each instruction, the V registers its encoding can
+/// write are dropped (`v_writes`); any emitted `call` (helpers, the interpreter) drops everything, since
+/// xmm registers are caller-saved; every block starts empty.
+#[derive(Clone, Copy)]
+pub struct VCache {
+    pub reg: [u8; NVREGS],
+    pub stamp: [u32; NVREGS],
+    pub tick: u32,
+}
+
+impl VCache {
+    fn new() -> VCache {
+        VCache { reg: [0xff; NVREGS], stamp: [0; NVREGS], tick: 0 }
+    }
+}
+
+const VREGS: [AsmRegisterXmm; NVREGS] = [xmm8, xmm9, xmm10, xmm11, xmm12, xmm13, xmm14, xmm15];
+
+/// V registers `insn` may write: `None` = none, `Some([a, b])` (0xff = unused), or all of them when
+/// the encoding is not understood (structure loads, anything new).
+fn v_writes(insn: u32) -> Option<[u8; 2]> {
+    const ALL: Option<[u8; 2]> = Some([0xfe, 0xfe]);
+    let rd = (insn & 31) as u8;
+    if (insn >> 25) & 7 == 7 {
+        return Some([rd, 0xff]); // data processing, SIMD & FP: only Vd (or a GPR / NZCV)
+    }
+    if (insn >> 25) & 5 == 4 {
+        // loads and stores
+        if insn & (1 << 26) == 0 {
+            return None; // general registers only
+        }
+        let load = insn & (1 << 22) != 0;
+        return match (insn >> 27) & 7 {
+            0b011 => Some([rd, 0xff]), // LDR (literal), SIMD & FP
+            0b101 => if load { Some([rd, ((insn >> 10) & 31) as u8]) } else { None }, // LDP/STP and the no-allocate pair
+            0b111 => if load { Some([rd, 0xff]) } else { None }, // LDR/STR single register (all addressing forms)
+            _ => ALL, // structure loads (LD1-LD4, LD1R, ...) write several registers
+        };
+    }
+    None // data processing (immediate / register), branches, system
+}
 pub static DEAD_FLAG_SKIPS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
 const LOOKAHEAD: usize = 10;
 
@@ -169,6 +220,8 @@ impl Unit {
             skip_next: false,
             inline_ok: false,
             inline_queue: Vec::new(),
+            vc: VCache::new(),
+            vc_dest: [0xff; 2],
         }
     }
 
@@ -316,6 +369,58 @@ impl<'a> E<'a> {
     }
     fn rc_clear(&mut self) {
         self.u.rc = RegCache::new();
+        self.u.vc = VCache::new();
+    }
+    fn vc_find(&self, n: u32) -> Option<usize> {
+        self.u.vc.reg.iter().position(|&r| r as u32 == n)
+    }
+    fn vc_touch(&mut self, s: usize) {
+        self.u.vc.tick += 1;
+        self.u.vc.stamp[s] = self.u.vc.tick;
+    }
+    fn vc_alloc(&mut self, n: u32) -> usize {
+        let vc = &self.u.vc;
+        let s = (0..NVREGS).find(|&i| vc.reg[i] == 0xff).unwrap_or_else(|| (0..NVREGS).min_by_key(|&i| vc.stamp[i]).unwrap());
+        self.u.vc.reg[s] = n as u8;
+        self.vc_touch(s);
+        s
+    }
+    /// xmm register holding all of Vn, if cached; `None`: read memory. Slots are filled only from
+    /// results (`vfill`), never by loading: a 16-byte load right after the two 8-byte stores of an
+    /// LDR Dt or FMOV Dd, Xn cannot be store-forwarded and stalls longer than the load it saves.
+    fn vsrc(&mut self, n: u32) -> Option<AsmRegisterXmm> {
+        if self.u.vc_dest.contains(&(n as u8)) {
+            return None;
+        }
+        let s = self.vc_find(n)?;
+        self.vc_touch(s);
+        Some(VREGS[s])
+    }
+    /// All of Vd was just stored from `x` as the instruction's last V write: keep a copy if it is read
+    /// soon. Only at the end of an instruction, where every path through its code has merged.
+    fn vfill(&mut self, d: u32, x: AsmRegisterXmm) {
+        if jit_off("vcache") {
+            return;
+        }
+        let s = match self.vc_find(d) {
+            Some(s) => s,
+            None if self.used_soon(d) => self.vc_alloc(d),
+            None => return,
+        };
+        a!(self, movdqa(VREGS[s], x));
+        self.vc_touch(s);
+    }
+    /// Scalar FP operand Vn into `x` (64-bit lane for double, 32-bit otherwise), rest of `x` zero.
+    fn fld_scalar(&mut self, x: AsmRegisterXmm, n: u32, double: bool) {
+        match self.vsrc(n) {
+            Some(c) if double => a!(self, movq(x, c)),
+            Some(c) => {
+                a!(self, xorps(x, x));
+                a!(self, movss(x, c));
+            }
+            None if double => a!(self, movsd_2(x, qword_ptr(r15 + voff(n)))),
+            None => a!(self, movss(x, dword_ptr(r15 + voff(n)))),
+        }
     }
     /// Does a later instruction of this block name guest register `n` in any register field?
     /// (Heuristic: false positives only cost performance.)
@@ -799,6 +904,7 @@ pub fn has_f16c() -> bool {
 pub fn emit_block(u: &mut Unit, pc: u64, read: &dyn Fn(u64) -> Option<u32>) -> u64 {
     u.fuse = None;
     u.rc = RegCache::new();
+    u.vc = VCache::new();
     u.rc_frozen = false;
     u.look.clear();
     {
@@ -883,11 +989,29 @@ pub fn emit_block(u: &mut Unit, pc: u64, read: &dyn Fn(u64) -> Option<u32>) -> u
                 DEAD_FLAG_SKIPS.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
             }
         }
+        let vw = v_writes(insn);
+        match vw {
+            Some([0xfe, _]) => u.vc = VCache::new(),
+            Some(regs) => {
+                for r in regs {
+                    if let Some(s) = u.vc.reg.iter().position(|&x| x == r) {
+                        u.vc.reg[s] = 0xff;
+                    }
+                }
+            }
+            None => {}
+        }
+        u.vc_dest = match vw { Some([0xfe, _]) => [0xff; 2], Some(r) => r, None => [0xff; 2] };
+        let code_start = u.a.instructions().len();
         let mut e = E { u, pc: cur, fuse_in };
         let term = is_terminator(insn);
         e.u.insns_translated += 1;
         let translated = e.translate(insn);
         e.u.dead_flags = false;
+        e.u.vc_dest = [0xff; 2];
+        if e.u.skip_next || e.u.a.instructions()[code_start..].iter().any(|i| i.mnemonic() == iced_x86::Mnemonic::Call) {
+            e.u.vc = VCache::new(); // fused pair (writes the next one's Vd too) or helper call (clobbers xmm8-15)
+        }
         if !translated {
             if term {
                 e.fallback_terminator(insn);
@@ -1014,18 +1138,24 @@ impl<'a> E<'a> {
                 }
                 let Some(imm) = decode_logic_imm(n, bits(insn, 15, 10), bits(insn, 21, 16), sf) else { return false };
                 self.ld(rax, rn, false, sf);
-                self.mov_imm(rcx, imm);
-                if sf {
+                // an immediate x86 can encode directly (sign-extended imm32; any value for 32-bit ops)
+                let simm = if sf { imm as i64 } else { imm as u32 as i32 as i64 };
+                if simm >= i32::MIN as i64 && simm <= i32::MAX as i64 {
+                    let i = simm as i32;
+                    match (sf, opc) {
+                        (true, 0 | 3) => a!(self, and(rax, i)),
+                        (true, 1) => a!(self, or(rax, i)),
+                        (true, _) => a!(self, xor(rax, i)),
+                        (false, 0 | 3) => a!(self, and(eax, i)),
+                        (false, 1) => a!(self, or(eax, i)),
+                        (false, _) => a!(self, xor(eax, i)),
+                    }
+                } else if sf {
+                    self.mov_imm(rcx, imm);
                     match opc {
                         0 | 3 => a!(self, and(rax, rcx)),
                         1 => a!(self, or(rax, rcx)),
                         _ => a!(self, xor(rax, rcx)),
-                    }
-                } else {
-                    match opc {
-                        0 | 3 => a!(self, and(eax, ecx)),
-                        1 => a!(self, or(eax, ecx)),
-                        _ => a!(self, xor(eax, ecx)),
                     }
                 }
                 if opc == 3 {
@@ -2229,6 +2359,13 @@ impl<'a> E<'a> {
                 (4, true) => {
                     a!(self, movdqu(xmm0, xmmword_ptr(rax)));
                     a!(self, movdqu(xmmword_ptr(r15 + voff(rt)), xmm0));
+                    self.vfill(rt, xmm0);
+                }
+                (2 | 3, true) => {
+                    // through xmm0 (upper part zero) with one 16-byte store, so the value can stay cached
+                    if kind == 2 { a!(self, movd(xmm0, dword_ptr(rax))); } else { a!(self, movq(xmm0, qword_ptr(rax))); }
+                    a!(self, movdqu(xmmword_ptr(r15 + voff(rt)), xmm0));
+                    self.vfill(rt, xmm0);
                 }
                 (4, false) => {
                     a!(self, movdqu(xmm0, xmmword_ptr(r15 + voff(rt))));
@@ -2471,6 +2608,12 @@ impl<'a> E<'a> {
     /// Vector form of `fix_default_nan` on xmm0 (uses xmm2-xmm5).
     fn vfix_default_nan(&mut self, double: bool) {
         // x86's "real indefinite" NaN has the sign bit set; ARM's default NaN does not.
+        // Usually no lane is a NaN at all: test that first (4 instructions instead of 13).
+        let mut l_ok = self.new_label();
+        a!(self, movdqa(xmm3, xmm0));
+        if double { a!(self, cmppd(xmm3, xmm3, 3)); } else { a!(self, cmpps(xmm3, xmm3, 3)); }
+        a!(self, ptest(xmm3, xmm3));
+        a!(self, jz(l_ok));
         if double {
             self.vconst(xmm2, 0xFFF8_0000_0000_0000);
             a!(self, movdqa(xmm3, xmm0));
@@ -2487,6 +2630,8 @@ impl<'a> E<'a> {
         a!(self, pand(xmm3, xmm4));
         a!(self, por(xmm5, xmm3));
         a!(self, movdqa(xmm0, xmm5));
+        self.u.a.set_label(&mut l_ok).unwrap();
+        a!(self, nop());
     }
 
     /// Fused multiply-add with ARM NaN selection: xmm0 = op1 (already negated for FMLS-like forms),
@@ -2497,6 +2642,16 @@ impl<'a> E<'a> {
         a!(self, movdqa(xmm6, xmm2)); // addend
         a!(self, movdqa(xmm7, xmm0)); // op1
         if double { a!(self, vfmadd231pd(xmm2, xmm0, xmm1)); } else { a!(self, vfmadd231ps(xmm2, xmm0, xmm1)); }
+        // no NaN lane in the result: no NaN went in and nothing was invalid, x86 and ARM agree exactly
+        let mut l_slow = self.new_label();
+        let mut l_end = self.new_label();
+        a!(self, movdqa(xmm3, xmm2));
+        if double { a!(self, cmppd(xmm3, xmm3, 3)); } else { a!(self, cmpps(xmm3, xmm3, 3)); }
+        a!(self, ptest(xmm3, xmm3));
+        a!(self, jnz(l_slow));
+        a!(self, movdqa(xmm0, xmm2));
+        a!(self, jmp(l_end));
+        self.u.a.set_label(&mut l_slow).unwrap();
         // inf*0 marker: the unfused product is the x86 real indefinite exactly then
         if double {
             a!(self, mulpd(xmm7, xmm1));
@@ -2523,6 +2678,8 @@ impl<'a> E<'a> {
         a!(self, pandn(xmm7, xmm0));
         a!(self, por(xmm7, xmm3));
         a!(self, movdqa(xmm0, xmm7));
+        self.u.a.set_label(&mut l_end).unwrap();
+        a!(self, nop());
     }
 
     /// ARM FMAX/FMIN/FMAXNM/FMINNM on every lane: xmm0 = op(xmm0, xmm1), using xmm2-xmm5.
@@ -2625,6 +2782,9 @@ impl<'a> E<'a> {
     /// Replace the x86 "real indefinite" NaN produced by invalid operations with the ARM default NaN.
     fn fix_default_nan(&mut self, double: bool) {
         let mut skip = self.new_label();
+        // not a NaN (the usual case): nothing to fix
+        if double { a!(self, ucomisd(xmm0, xmm0)); } else { a!(self, ucomiss(xmm0, xmm0)); }
+        a!(self, jnp(skip));
         if double {
             a!(self, movq(rax, xmm0));
             self.mov_imm(rcx, 0xFFF8_0000_0000_0000);
@@ -3154,16 +3314,32 @@ impl<'a> E<'a> {
                 return false;
             }
             let double = ftype == 1;
+            let cm = self.vsrc(rm);
+            self.fld_scalar(xmm0, rn, double);
             if double {
-                a!(self, movsd_2(xmm0, qword_ptr(r15 + voff(rn))));
+                if let Some(c) = cm {
+                    match opcode {
+                        0 => a!(self, mulsd(xmm0, c)),
+                        1 => a!(self, divsd(xmm0, c)),
+                        2 => a!(self, addsd(xmm0, c)),
+                        _ => a!(self, subsd(xmm0, c)),
+                    }
+                } else {
+                    match opcode {
+                        0 => a!(self, mulsd(xmm0, qword_ptr(r15 + voff(rm)))),
+                        1 => a!(self, divsd(xmm0, qword_ptr(r15 + voff(rm)))),
+                        2 => a!(self, addsd(xmm0, qword_ptr(r15 + voff(rm)))),
+                        _ => a!(self, subsd(xmm0, qword_ptr(r15 + voff(rm)))),
+                    }
+                }
+            } else if let Some(c) = cm {
                 match opcode {
-                    0 => a!(self, mulsd(xmm0, qword_ptr(r15 + voff(rm)))),
-                    1 => a!(self, divsd(xmm0, qword_ptr(r15 + voff(rm)))),
-                    2 => a!(self, addsd(xmm0, qword_ptr(r15 + voff(rm)))),
-                    _ => a!(self, subsd(xmm0, qword_ptr(r15 + voff(rm)))),
+                    0 => a!(self, mulss(xmm0, c)),
+                    1 => a!(self, divss(xmm0, c)),
+                    2 => a!(self, addss(xmm0, c)),
+                    _ => a!(self, subss(xmm0, c)),
                 }
             } else {
-                a!(self, movss(xmm0, dword_ptr(r15 + voff(rn))));
                 match opcode {
                     0 => a!(self, mulss(xmm0, dword_ptr(r15 + voff(rm)))),
                     1 => a!(self, divss(xmm0, dword_ptr(r15 + voff(rm)))),
@@ -3173,20 +3349,21 @@ impl<'a> E<'a> {
             }
             self.fix_default_nan(double);
             a!(self, movdqu(xmmword_ptr(r15 + voff(rd)), xmm0));
+            self.vfill(rd, xmm0);
             return true;
         }
         // FSQRT
         if insn & 0xFF3F_FC00 == 0x1E21_C000 && ftype <= 1 {
             let double = ftype == 1;
+            self.fld_scalar(xmm0, rn, double);
             if double {
-                a!(self, movsd_2(xmm0, qword_ptr(r15 + voff(rn))));
                 a!(self, sqrtsd(xmm0, xmm0));
             } else {
-                a!(self, movss(xmm0, dword_ptr(r15 + voff(rn))));
                 a!(self, sqrtss(xmm0, xmm0));
             }
             self.fix_default_nan(double);
             a!(self, movdqu(xmmword_ptr(r15 + voff(rd)), xmm0));
+            self.vfill(rd, xmm0);
             return true;
         }
         // SCVTF / UCVTF (scalar, integer source)
@@ -3213,21 +3390,15 @@ impl<'a> E<'a> {
         if insn & 0xFF20_FC07 == 0x1E20_2000 && ftype <= 1 {
             let with_zero = bit(insn, 3) != 0;
             let double = ftype == 1;
+            self.fld_scalar(xmm0, rn, double);
+            if with_zero {
+                a!(self, xorps(xmm1, xmm1));
+            } else {
+                self.fld_scalar(xmm1, rm, double);
+            }
             if double {
-                a!(self, movsd_2(xmm0, qword_ptr(r15 + voff(rn))));
-                if with_zero {
-                    a!(self, xorpd(xmm1, xmm1));
-                } else {
-                    a!(self, movsd_2(xmm1, qword_ptr(r15 + voff(rm))));
-                }
                 a!(self, ucomisd(xmm0, xmm1));
             } else {
-                a!(self, movss(xmm0, dword_ptr(r15 + voff(rn))));
-                if with_zero {
-                    a!(self, xorps(xmm1, xmm1));
-                } else {
-                    a!(self, movss(xmm1, dword_ptr(r15 + voff(rm))));
-                }
                 a!(self, ucomiss(xmm0, xmm1));
             }
             let mut un = self.new_label();
@@ -3990,15 +4161,9 @@ impl<'a> E<'a> {
             let o1 = bit(insn, 21) != 0;
             let o0 = bit(insn, 15) != 0;
             let ra = bits(insn, 14, 10);
-            if double {
-                a!(self, movsd_2(xmm0, qword_ptr(r15 + voff(rn))));
-                a!(self, movsd_2(xmm1, qword_ptr(r15 + voff(rm))));
-                a!(self, movsd_2(xmm2, qword_ptr(r15 + voff(ra))));
-            } else {
-                a!(self, movss(xmm0, dword_ptr(r15 + voff(rn))));
-                a!(self, movss(xmm1, dword_ptr(r15 + voff(rm))));
-                a!(self, movss(xmm2, dword_ptr(r15 + voff(ra))));
-            }
+            self.fld_scalar(xmm0, rn, double);
+            self.fld_scalar(xmm1, rm, double);
+            self.fld_scalar(xmm2, ra, double);
             if o1 != o0 {
                 self.vneg(xmm0, xmm3, double); // FMSUB, FNMADD: -n
             }
@@ -4010,6 +4175,7 @@ impl<'a> E<'a> {
             if double { a!(self, movq(xmm0, xmm0)); } else { a!(self, insertps(xmm0, xmm0, 0x0E)); }
             self.fix_default_nan(double);
             a!(self, movdqu(xmmword_ptr(r15 + voff(rd)), xmm0));
+            self.vfill(rd, xmm0);
             return true;
         }
 

@@ -282,7 +282,52 @@ fn run_selftest_selchain(count: usize) {
 /// Random straight-line blocks over a small register set (so values are reused constantly): exercises
 /// the JIT's register cache and flag fusion across instructions. Memory operations use x20-x23 as
 /// bases, which no other instruction may write except through their own writeback.
-fn run_selftest_blocks(count: usize) {
+/// A scalar/vector FP or SIMD&FP load/store instruction over v0-v5 (memory through x20-x23), or an
+/// integer one: blocks of these exercise the V-register cache (`VCache`).
+fn fp_insn(rng: &mut Rng) -> u32 {
+    let r = |rng: &mut Rng| rng.next() as u32 % 6;
+    let (d, n, m, a) = (r(rng), r(rng), r(rng), r(rng));
+    let ty = if rng.next() % 3 == 0 { 0 } else { 1 << 22 }; // single / double
+    let base = 20 + rng.next() as u32 % 4;
+    match rng.next() % 14 {
+        0 | 1 | 2 => 0x1E20_0800 | ty | (m << 16) | ((rng.next() as u32 % 4) << 12) | (n << 5) | d, // FMUL/FDIV/FADD/FSUB
+        3 => 0x1E21_C000 | ty | (n << 5) | d, // FSQRT
+        4 | 5 => 0x1F00_0000 | ty | ((rng.next() as u32 & 1) << 21) | (m << 16) | ((rng.next() as u32 & 1) << 15) | (a << 10) | (n << 5) | d, // FMADD family
+        6 => 0x1E20_2000 | ty | (m << 16) | (n << 5) | ((rng.next() as u32 & 1) << 3), // FCMP (reg / #0)
+        7 => 0x1E20_0C00 | ty | (m << 16) | ((rng.next() as u32 % 14) << 12) | (n << 5) | d, // FCSEL
+        8 => 0x1E20_4000 | ty | ((rng.next() as u32 % 3) << 15) | (n << 5) | d, // FMOV/FABS/FNEG
+        9 => 0x4E20_D400 | ((ty >> 22) << 22) | (m << 16) | (n << 5) | d, // FADD (vector, 4s / 2d)
+        10 => 0xFD40_0000 | ((rng.next() as u32 % 64) << 10) | (base << 5) | d, // LDR d
+        11 => 0xFD00_0000 | ((rng.next() as u32 % 64) << 10) | (base << 5) | d, // STR d
+        12 => 0x9E67_0000 | (n << 5) | d, // FMOV d, x
+        _ => 0x8B00_0000 | (m << 16) | (n << 5) | d, // ADD x (integer)
+    }
+}
+
+/// Bit patterns for FP registers: ordinary numbers of both widths, zeros, infinities, quiet NaNs,
+/// denormals. No signalling NaNs: which of two NaN operands wins differs (x86 takes the first, ARM a
+/// signalling one first), a documented inexactness of the native FP paths.
+fn fp_val(rng: &mut Rng) -> u64 {
+    let f = |rng: &mut Rng| -> u32 {
+        match rng.next() % 8 {
+            0 => 0x7FC0_0000 | (rng.next() as u32 & 0xFFFF), // qNaN
+            1 => 0xFFC0_0000 | (rng.next() as u32 & 0xFFFF), // negative qNaN
+            2 => 0x7F80_0000 | (rng.next() as u32 & 0x8000_0000), // inf
+            3 => rng.next() as u32 & 0x807F_FFFF, // denormal / zero
+            _ => ((rng.next() as f32 / u64::MAX as f32 - 0.5) * 100.0).to_bits(),
+        }
+    };
+    match rng.next() % 10 {
+        0 => 0x7FF8_0000_0000_0000 | (rng.next() & 0xFFFF),
+        1 => 0xFFF8_0000_0000_0000 | (rng.next() & 0xFFFF),
+        2 => 0x7FF0_0000_0000_0000 | (rng.next() & 0x8000_0000_0000_0000),
+        3 => rng.next() & 0x800F_FFFF_FFFF_FFFF,
+        4 | 5 => (f(rng) as u64) | (f(rng) as u64) << 32,
+        _ => ((rng.next() as f64 / u64::MAX as f64 - 0.5) * 1000.0).to_bits(),
+    }
+}
+
+fn run_selftest_blocks(count: usize, fp: bool) {
     const CLASSES: [(u32, u32); 6] = [
         (0x1C00_0000, 0x1000_0000), // dp immediate
         (0x0E00_0000, 0x0A00_0000), // dp register
@@ -299,11 +344,18 @@ fn run_selftest_blocks(count: usize) {
     let mut rng = Rng(0x0dd_ba11_f00d_cafe);
     let (mut ok, mut bad, mut skipped, mut insns, mut fallbacks) = (0u64, 0u64, 0u64, 0u64, 0u64);
     for it in 0..count {
-        let len = 2 + (rng.next() % 10) as usize;
+        let len = match std::env::var("ATTESOR_SELFTEST_LEN").ok().and_then(|v| v.parse().ok()) {
+            Some(n) => n,
+            None => 2 + (rng.next() % 10) as usize,
+        };
         let mut prog: Vec<u32> = Vec::new();
         let mut tries = 0;
         while prog.len() < len && tries < 200 {
             tries += 1;
+            if fp {
+                prog.push(fp_insn(&mut rng));
+                continue;
+            }
             let (mask, val) = CLASSES[(rng.next() % CLASSES.len() as u64) as usize];
             let mut insn = (rng.next() as u32 & !mask) | val;
             let mem = mask != 0x1C00_0000 && mask != 0x0E00_0000;
@@ -334,7 +386,14 @@ fn run_selftest_blocks(count: usize) {
         init.x[31] = bufp + 0x80000;
         init.set_nzcv((rng.next() % 16) as u32);
         for i in 0..32 {
-            init.v[i] = [rng.val(), rng.val()];
+            init.v[i] = if fp { [fp_val(&mut rng), fp_val(&mut rng)] } else { [rng.val(), rng.val()] };
+        }
+        if fp {
+            // some doubles in memory for LDR d
+            for k in 0..0x2000 {
+                let v = fp_val(&mut rng);
+                buf[0x40000 + 8 * k..0x40000 + 8 * k + 8].copy_from_slice(&v.to_le_bytes());
+            }
         }
         init.pc = page;
         let mem0: Vec<u8> = buf.clone();
@@ -404,7 +463,7 @@ fn run_selftest_blocks(count: usize) {
         }
         buf.copy_from_slice(&mem0);
     }
-    println!("jit selftest [blocks]: ok={ok} mismatch={bad} skipped={skipped} insns={insns} fallback_insns={fallbacks}");
+    println!("jit selftest [{}]: ok={ok} mismatch={bad} skipped={skipped} insns={insns} fallback_insns={fallbacks}", if fp { "fpblocks" } else { "blocks" });
 }
 
 pub fn run_selftest(class: &str, count: usize) {
@@ -414,8 +473,8 @@ pub fn run_selftest(class: &str, count: usize) {
     if class == "fuse2" {
         return run_selftest_fuse(count, true);
     }
-    if class == "blocks" {
-        return run_selftest_blocks(count);
+    if class == "blocks" || class == "fpblocks" {
+        return run_selftest_blocks(count, class == "fpblocks");
     }
     if class == "selchain" {
         return run_selftest_selchain(count);
