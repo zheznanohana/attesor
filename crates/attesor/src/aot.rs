@@ -627,6 +627,9 @@ fn save_profile_inner(exiting: bool) {
         return;
     }
     if !sync {
+        // Only the detached fork child is a dedicated translator. In sync mode
+        // (including save-before-exec) this is still the guest's own thread.
+        crate::process_qos::background_translation_worker("aot-exit");
         unsafe {
             libc::setsid();
             let null = libc::open(c"/dev/null".as_ptr(), libc::O_RDWR);

@@ -15,6 +15,7 @@ mod macho;
 mod native;
 mod paths;
 mod profile;
+mod process_qos;
 mod sandbox;
 mod signals;
 mod spawn;
@@ -164,6 +165,9 @@ fn main() {
         }
     }
     if prewarm {
+        // This invocation never runs a guest; lowering the calling thread is
+        // safe here, unlike a synchronous save on a live guest thread.
+        process_qos::background_translation_worker("prewarm");
         // Match the runtime commpage/code-generation configuration before making
         // compatibility keys. Never initialize dyld or execute a guest entry.
         let _cp = commpage::CommPage::install();
