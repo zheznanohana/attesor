@@ -19,6 +19,18 @@ import tempfile
 from pathlib import Path
 
 
+def host_load():
+    result = subprocess.run(['ps', '-axo', 'pid=,pcpu=,comm='],
+                            capture_output=True, text=True, check=True)
+    processes = []
+    for line in result.stdout.splitlines():
+        fields = line.split(None, 2)
+        if len(fields) == 3:
+            processes.append(dict(pid=int(fields[0]), cpu_percent=float(fields[1]), executable=fields[2]))
+    return dict(load_average=os.getloadavg(),
+                busiest=sorted(processes, key=lambda p: p['cpu_percent'], reverse=True)[:8])
+
+
 def main():
     p = argparse.ArgumentParser(description=__doc__)
     p.add_argument('--before', required=True)
@@ -51,6 +63,7 @@ def main():
                 command.append('--no-aot')
             command += [str(Path(args.guest).resolve())] + args.guest_arg
             environment = {**os.environ, **modes[label]}
+            load_before = host_load()
             with tempfile.TemporaryDirectory(prefix='attesor-compare-cache-') as cache:
                 if args.cold_aot:
                     environment.update(ATTESOR_CACHE=cache, ATTESOR_NO_AOT_BUILD='1')
@@ -62,6 +75,7 @@ def main():
                        re.findall(r'^(\S+)\s+([\d.]+) ms$', result.stdout, re.M)}
             sample = dict(round=round_no, build=label, command=command,
                           wall_ms=elapsed, environment=modes[label],
+                          host_load_before=load_before, host_load_after=host_load(),
                           cold_aot=args.cold_aot,
                           metrics=metrics, stdout=result.stdout, stderr=result.stderr)
             samples.append(sample)
