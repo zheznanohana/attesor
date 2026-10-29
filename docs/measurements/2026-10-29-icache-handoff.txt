@@ -1,0 +1,17 @@
+PASS baseline demonstrates stale indirect target after legal publication
+PASS default: icache-handoff direct PASS rounds=4
+PASS default: icache-handoff indirect PASS rounds=4
+PASS immediate-jit: icache-handoff direct PASS rounds=4
+PASS immediate-jit: icache-handoff indirect PASS rounds=4
+PASS callret: icache-handoff direct PASS rounds=4
+PASS callret: icache-handoff indirect PASS rounds=4
+PASS redirect: icache-handoff direct PASS rounds=4
+PASS redirect: icache-handoff indirect PASS rounds=4
+PASS interpreter: icache-handoff direct PASS rounds=4
+PASS interpreter: icache-handoff indirect PASS rounds=4
+PASS ordinary-indirect workload agrees with independent native reference: checksum 0000000000001001
+
+Candidate attesor SHA-256: a8023f4c3deb661f3e6bd238a46a4f86fc01012749f437681b1931a903a96985
+Pre-fix attesor SHA-256: 345dd01558a17a4877ad4b74db688317ec50cf1d882218911f2b8526eb5d71e4
+cargo test -p attesor -- --test-threads=1: 9 passed, 0 failed
+existing aot-prewarm suite: 29 checks PASS

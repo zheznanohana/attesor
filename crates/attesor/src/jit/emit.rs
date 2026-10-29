@@ -970,7 +970,13 @@ fn disabled_classes() -> u32 {
     })
 }
 
-/// Is this instruction a block terminator (changes control flow)?
+/// Instruction synchronization barrier (all immediate option encodings).
+/// Unlike SB, this is a context synchronization point for published guest code.
+pub fn is_isb(insn: u32) -> bool {
+    insn & 0xFFFF_F0FF == 0xD503_30DF
+}
+
+/// Is this instruction a block terminator (changes control flow or synchronizes instructions)?
 pub fn is_terminator(insn: u32) -> bool {
     (insn & 0x7C00_0000 == 0x1400_0000)          // B, BL
         || (insn & 0xFF00_0000 == 0x5400_0000)   // B.cond / BC.cond
@@ -979,6 +985,7 @@ pub fn is_terminator(insn: u32) -> bool {
         || (insn & 0xFE00_0000 == 0xD600_0000)   // BR/BLR/RET(+PAC)
         || (insn & 0xFF00_0000 == 0xD400_0000)   // exceptions (SVC, BRK...)
         || (insn & 0xFFFF_FFE0 == 0xD50B_7520)   // IC IVAU only (runtime must see it); DC ops are not terminators
+        || is_isb(insn)                         // context synchronization must pass through dispatch
 }
 
 /// Debugging aid: ATTESOR_JIT_OFF=ext,fma,… routes the named SIMD translation groups to the interpreter
@@ -2126,7 +2133,17 @@ impl<'a> E<'a> {
                     }
                     return true;
                 }
-                6 | 7 => return true, // ISB, SB
+                6 => {
+                    // ISB is a context synchronization event. A different thread
+                    // may have invalidated code while this one stayed in an IBTC
+                    // or intra-unit loop. Returning without a patchable slot lets
+                    // the dispatcher observe EPOCH and clear stale local targets.
+                    // Never use goto here: an internal edge or a chained slot
+                    // could bypass that synchronization on subsequent executions.
+                    self.st_pc_and_exit(next);
+                    return true;
+                }
+                7 => return true, // SB (speculation barrier), not an ISB
                 _ => return false,
             }
         }
@@ -6121,5 +6138,49 @@ mod cache_nextuse_tests {
         e.u.look = (0..8).map(|r| 0x1e60281f | (r << 5) | (r << 16)).collect();
         e.u.cache_uses = cache_next_uses(&e.u.look);
         assert_eq!(e.vc_alloc(9), 7);
+    }
+}
+
+#[cfg(test)]
+mod context_sync_tests {
+    use super::*;
+    use attesor_core::cpu::Cpu;
+
+    #[test]
+    fn isb_exits_before_internal_successor_and_cannot_chain() {
+        const PC: u64 = 0x1000_0000;
+        for kind in [StubKind::Plain, StubKind::Patchable] {
+            for option in 0..16 {
+                let isb = 0xd503_30df | (option << 8);
+                assert!(is_terminator(isb));
+                assert!(!is_terminator(0xd503_30ff)); // SB remains distinct
+                let words = [isb, 0x9100_0400, 0xd400_1001]; // ISB; ADD X0,X0,#1; SVC
+                let mut u = Unit::new(kind, false);
+                let entry = u.a.create_label();
+                let successor = u.a.create_label();
+                u.labels.insert(PC, entry);
+                u.labels.insert(PC + 4, successor);
+                let read = |pc: u64| words.get(((pc - PC) / 4) as usize).copied();
+                assert_eq!(emit_block(&mut u, PC, &read), PC + 4);
+                assert!(u.stubs.is_empty(), "ISB must not produce a chainable exit");
+                emit_block(&mut u, PC + 4, &read);
+                u.finish();
+                let host = crate::jit::code_cache().alloc(4096);
+                let bytes = u.a.assemble(host).unwrap();
+                assert!(bytes.len() <= 4096);
+                unsafe { std::ptr::copy_nonoverlapping(bytes.as_ptr(), host as *mut u8, bytes.len()); }
+                let mut cpu = Cpu::new();
+                crate::jit::setup_cpu(&mut cpu);
+                cpu.x[0] = 42;
+                cpu.set_nzcv(0b1011);
+                cpu.exit_data = 0xfeed;
+                unsafe { crate::jit::attesor_jit_enter(&mut *cpu, host); }
+                assert_eq!(cpu.pc, PC + 4);
+                assert_eq!(cpu.x[0], 42, "must not execute the already-emitted internal successor");
+                assert_eq!(cpu.nzcv(), 0b1011);
+                assert_eq!(cpu.exit_reason, EXIT_CONTINUE);
+                assert_eq!(cpu.exit_data, 0);
+            }
+        }
     }
 }

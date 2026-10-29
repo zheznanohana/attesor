@@ -603,8 +603,8 @@ fn discover(entries: &[u64], start: u64, end: u64, read: &dyn Fn(u64) -> Option<
                 if insn & 0xFE00_0000 == 0xD600_0000 && (insn >> 21) & 0xf == 1 {
                     work.push(next); // BLR returns here
                 }
-                if insn & 0xFFE0_001F == 0xD400_0001 {
-                    work.push(next); // SVC continues
+                if insn & 0xFFE0_001F == 0xD400_0001 || emit::is_isb(insn) {
+                    work.push(next); // SVC/ISB continue, through the dispatcher
                 }
                 break;
             }
@@ -893,6 +893,18 @@ pub fn function_starts(path: &str, m: &crate::macho::MachO, slide: u64) -> Vec<u
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn static_discovery_keeps_isb_successor() {
+        const PC: u64 = 0x1000_0000;
+        let words = [0xd503_3fdf, 0x9100_0400, 0xd65f_03c0]; // ISB; ADD; RET
+        let read = |pc: u64| {
+            pc.checked_sub(PC).and_then(|d| words.get((d / 4) as usize)).copied()
+        };
+        let found = discover(&[PC], PC, PC + 12, &read, 32);
+        assert!(found.contains(&PC));
+        assert!(found.contains(&(PC + 4)), "static prewarm must continue beyond ISB");
+    }
 
     #[test]
     fn prewarm_mapping_does_not_overwrite_an_existing_region() {
