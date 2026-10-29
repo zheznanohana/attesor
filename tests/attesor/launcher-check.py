@@ -220,7 +220,13 @@ def main():
         listed = cli('list')
         check(str(path) in listed.stdout and all(p.read_bytes() == bits for p, bits in before_list.items()),
               'list reports handled apps without modifying application executables')
-    print(f'launcher integration: {passed} checks PASS')
+    print(f'launcher integration: {passed} checks PASS', flush=True)
+    roles = ['python3', str(Path(__file__).with_name('run-app-modes.py'))]
+    if args.attesor:
+        roles += ['--attesor', str(Path(args.attesor).resolve())]
+    if args.sysroot:
+        roles += ['--sysroot', args.sysroot]
+    subprocess.run(roles, check=True)
 
 
 if __name__ == '__main__':

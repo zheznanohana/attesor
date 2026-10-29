@@ -65,3 +65,26 @@ The real-emulator check discovers the installed ARM cache before changing HOME;
 24 isolated command-line checks. The process checker is controlled in the fixture,
 so the running/unknown tests prove refusal semantics, not unrestricted process
 visibility in this sandbox. The default checker remains fail-closed.
+
+
+## Generic Electron and Chromium process roles
+
+Automatic scanning and stub injection remain the default for newly discovered
+ARM-only applications. No application-name or bundle-id rule is used.
+
+The same application executable may be launched as its GUI, an Electron-as-Node
+host, or a Chromium child process. Before adding GUI/GPU switches, changing cwd
+or opening GUI log files, `run-app` now recognizes a nonempty
+`ELECTRON_RUN_AS_NODE` or the `--type=…` / `--type …` process option. Those roles
+`exec` Attesor with the original executable and arguments. They retain inherited
+stdin/stdout/stderr pipes, cwd, environment (including `NODE_OPTIONS`) and exit
+status. Top-level GUI startup keeps its existing defaults and log behavior.
+
+The additional `tests/attesor/run-app-modes.py` suite uses both Electron Framework
+and Chromium Embedded Framework fixture applications through real owned stub
+entries. It verifies 64 KiB pipe data, exact arguments, environment/cwd/status,
+renderer/utility/GPU/split-option modes, and a GUI parent launching the same
+executable as a Node child. With `--attesor`, both fixtures also execute a real ARM
+program through the transparent child path. All **17** checks pass. This suite is
+called by `launcher-check.py` after its original **25** checks. Real DeepSeek
+Harness and ARM VS Code validation remains a separate integration check.

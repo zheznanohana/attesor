@@ -1,13 +1,24 @@
 #!/bin/bash
 # Started by the x86-64 stub slice of an app attesor-apps made universal:  run-app <executable> [args…]
 # Runs the arm64 slice of the same executable under Attesor, with the flags its kind of app needs, and
-# logs to ~/Library/Logs/Attesor/<name>.log (an alert shows the log path if it exits with an error).
+# top-level GUI logs go to ~/Library/Logs/Attesor/<name>.log. Node/child roles preserve their inherited streams.
 set -uo pipefail
 [ $# -ge 1 ] || { echo "usage: run-app EXECUTABLE [args…]" >&2; exit 2; }
 EXE=$1; shift
+ATTESOR=${ATTESOR:-$HOME/bin/attesor}
+# The same Electron executable is also a Node host and Chromium subprocess
+# entry point. Those roles must never receive top-level GUI switches or have
+# their IPC pipes/cwd redirected by this launcher. This applies to every app.
+child_mode=0
+[ -n "${ELECTRON_RUN_AS_NODE:-}" ] && child_mode=1
+for arg in "$@"; do
+  case "$arg" in --type|--type=*) child_mode=1;; esac
+done
+if [ "$child_mode" = 1 ]; then
+  exec "$ATTESOR" "$EXE" "$@"
+fi
 APP=${EXE%/Contents/MacOS/*}
 name=$(basename "$APP" .app)
-ATTESOR=${ATTESOR:-$HOME/bin/attesor}
 LOG="$HOME/Library/Logs/Attesor/${name}.log"
 mkdir -p "$(dirname "$LOG")"
 # keep the log bounded: past 5 MB the old one becomes .1
