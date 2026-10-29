@@ -6,6 +6,7 @@
 // runners are exactly such middlemen (Electron "node" wrappers, pnpm, bundled Python). Interpose execve,
 // posix_spawn and posix_spawnp: an arm64-only target, or a #! script whose interpreter is arm64-only, is
 // started as `attesor <program> args…`; everything else runs natively with this library passed on.
+// If starting attesor fails, the original exec/spawn runs instead; ATTESOR_EXEC_OFF=1 disables the redirect.
 #include <errno.h>
 #include <dlfcn.h>
 #include <fcntl.h>
@@ -134,7 +135,10 @@ static int my_execve(const char *path, char *const argv[], char *const envp[]) {
     static char interp[PATH_MAX], iarg[PATH_MAX];
     char **env = with_self(envp);
     int kind = classify(path, interp, iarg);
-    if (kind) return execve(attesor_bin(), attesor_argv(path, argv, kind, interp, iarg), env);
+    if (kind && !getenv("ATTESOR_EXEC_OFF")) {
+        execve(attesor_bin(), attesor_argv(path, argv, kind, interp, iarg), env);
+        // attesor missing or broken: fall through to the plain exec (and its usual error)
+    }
     return execve(path, argv, env);
 }
 
@@ -143,11 +147,12 @@ static int my_posix_spawn(pid_t *pid, const char *path, const posix_spawn_file_a
     char interp[PATH_MAX], iarg[PATH_MAX];
     char **env = with_self(envp);
     int kind = classify(path, interp, iarg);
-    if (kind) {
+    if (kind && !getenv("ATTESOR_EXEC_OFF")) {
         char **av = attesor_argv(path, argv, kind, interp, iarg);
         int r = posix_spawn(pid, attesor_bin(), fa, attr, av, env);
         free(av);
-        return r;
+        if (r == 0) return 0;
+        // attesor missing or broken: fall back to the plain spawn
     }
     return posix_spawn(pid, path, fa, attr, argv, env);
 }
@@ -163,7 +168,7 @@ static int my_posix_spawnp(pid_t *pid, const char *file, const posix_spawn_file_
         size_t len = c ? (size_t)(c - p) : strlen(p);
         snprintf(buf, sizeof buf, "%.*s/%s", (int)len, len ? p : ".", file);
         if (access(buf, X_OK) == 0) {
-            if (classify(buf, interp, iarg)) return my_posix_spawn(pid, buf, fa, attr, argv, envp);
+            if (classify(buf, interp, iarg) && !getenv("ATTESOR_EXEC_OFF")) return my_posix_spawn(pid, buf, fa, attr, argv, envp);
             break;
         }
         p = c ? c + 1 : NULL;

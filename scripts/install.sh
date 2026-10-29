@@ -29,7 +29,7 @@ ln -sf chromium-gpu "$PREFIX/chromium"; ln -sf vscode-gpu "$PREFIX/code"; ln -sf
 LAUNCHER=$HOME/attesor-launcher
 mkdir -p "$LAUNCHER/bin" "$HOME/Library/Logs/Attesor"
 install -S -m 755 launcher/attesor-apps launcher/fix-dock.py "$LAUNCHER/"
-install -S -m 644 launcher/badge.swift "$LAUNCHER/"
+install -S -m 644 launcher/badge.swift launcher/attesor.zsh "$LAUNCHER/"
 swiftc -O launcher/badge.swift -o "$LAUNCHER/bin/badge.new" && mv -f "$LAUNCHER/bin/badge.new" "$LAUNCHER/bin/badge"
 ln -sf "$LAUNCHER/attesor-apps" "$PREFIX/attesor-apps"
 
