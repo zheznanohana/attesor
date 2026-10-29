@@ -22,3 +22,15 @@ branches): do not re-implement it. Candidates to evaluate only if your measureme
 - Page/region translation at mprotect(PROT_EXEC) time: only if most generated code becomes hot.
 - Direct rel32 patching of chain slots instead of `jmp [slot]` (small).
 Borrow architecture only: QEMU is GPL; do not copy code from it.
+
+## Round 2 (Claude)
+Round 1 committed (74a004b profiling, 3ed3cbf slotreuse). Your table is dominated by start-up (39% image
+translation/loading in a ~3 s run), while the 5-6x gap users see is measured inside JS (Date.now around each
+kernel, i.e. steady state). Next:
+1. Profile steady state only: warm up each kernel in js.js, then start sampling (add a profiler start/stop
+   control, e.g. a signal or a file trigger, or a time window) and report the same table for the steady phase
+   per kernel (loops, closures, sort, objects, json, regex, strings): execution of translated code vs
+   dispatcher/IBTC vs runtime translation vs invalidation vs syscalls, and the hottest guest PCs/blocks
+   (which V8 tier generated them, block count of their loops).
+2. From that, list which wave-2 tracks (E translation speed, F calls/IBTC, H memory, I isel) and track A
+   (multi-block loops) would address what share; fix anything that is clearly C's scope (run-time code) now.
