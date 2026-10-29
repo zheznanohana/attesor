@@ -122,6 +122,12 @@ static COUNT_LOOP_REGIONS: AtomicBool = AtomicBool::new(false);
 /// Loopra public region entries actually executed (not compilations or backedges).
 /// Ordinary loops and the write-through regioncache do not count.
 static STATS_LOOP_REGIONS: AtomicU64 = AtomicU64::new(0);
+static STATS_AOT_LOOP_REGIONS: AtomicU64 = AtomicU64::new(0);
+
+pub fn stats_enabled() -> bool {
+    static ON: OnceLock<bool> = OnceLock::new();
+    *ON.get_or_init(|| std::env::var_os("ATTESOR_STATS").is_some())
+}
 
 static STATS_TRANSLATE_NS: AtomicU64 = AtomicU64::new(0);
 static STATS_INTERP_BLOCKS: AtomicU64 = AtomicU64::new(0);
@@ -449,6 +455,7 @@ pub fn flush_profile() {
             STATS_JIT_ENTRIES.load(Ordering::Relaxed),
             STATS_INTERP_BLOCKS.load(Ordering::Relaxed),
         );
+        eprintln!("[attesor] aot: loop_regions={}", STATS_AOT_LOOP_REGIONS.load(Ordering::Relaxed));
     }
 }
 
@@ -671,6 +678,9 @@ pub fn run(cpu: &mut Cpu) {
         } else {
             ibtc_insert(pc, host);
             unsafe { attesor_jit_enter(cpu, host) };
+            if stats_enabled() {
+                STATS_AOT_LOOP_REGIONS.fetch_add(std::mem::take(&mut cpu.aot_loop_regions), Ordering::Relaxed);
+            }
         }
         crate::profile::set(crate::profile::State::Dispatch);
         match cpu.exit_reason {

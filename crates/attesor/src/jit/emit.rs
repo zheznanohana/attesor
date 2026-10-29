@@ -328,6 +328,16 @@ pub enum Cc {
     E, Ne, B, Ae, S, Ns, O, No, A, Be, L, Ge, G, Le,
 }
 
+impl Cc {
+    fn inverse(self) -> Self {
+        use Cc::*;
+        match self {
+            E => Ne, Ne => E, B => Ae, Ae => B, S => Ns, Ns => S,
+            O => No, No => O, A => Be, Be => A, L => Ge, Ge => L, G => Le, Le => G,
+        }
+    }
+}
+
 /// The x86 condition equivalent to ARM condition `cond` (0..=13) for flags produced by `kind`,
 /// if there is a single one.
 pub fn x86_cc(kind: FuseKind, cond: u32) -> Option<Cc> {
@@ -367,7 +377,7 @@ impl Unit {
             rc: RegCache::new(),
             loop_cache: None,
             regioncache: regioncache_enabled(),
-            loopra: loopra_enabled() && stub_kind == StubKind::Patchable,
+            loopra: loopra_enabled(),
             region: None,
             region_exits: Vec::new(),
             loop_exit_flags: None,
@@ -1571,7 +1581,7 @@ fn callret_enabled() -> bool {
     *F.get_or_init(|| std::env::var("ATTESOR_JIT_ON").unwrap_or_default().split(',').any(|g| g == "callret"))
 }
 
-/// Experimental ten-register write-back region (JIT only).
+/// Ten-register write-back region for JIT units and position-independent AOT blobs.
 /// On by default (ATTESOR_JIT_OFF=loopra turns it off): single-block loops keep their working set in
 /// ten host registers. Measured int-hash +34%, branchy +54%, memops +45%, crc32 +19%.
 fn loopra_enabled() -> bool {
@@ -1698,9 +1708,14 @@ pub fn emit_block(u: &mut Unit, pc: u64, read: &dyn Fn(u64) -> Option<u32>) -> u
             let region = LoopRa { pc, fast, exit, reg, dirty: 0 };
             // JIT-only instrumentation: absolute host addresses must never enter
             // an AOT blob. Count executed public entries, not translations.
-            if super::COUNT_LOOP_REGIONS.load(std::sync::atomic::Ordering::Relaxed) {
+            if u.stub_kind == StubKind::Patchable && super::COUNT_LOOP_REGIONS.load(std::sync::atomic::Ordering::Relaxed) {
                 u.a.mov(rax, &super::STATS_LOOP_REGIONS as *const _ as u64).unwrap();
                 u.a.lock().inc(qword_ptr(rax)).unwrap();
+            }
+            if u.stub_kind == StubKind::Plain && super::stats_enabled() {
+                // Cpu belongs to this thread; no host pointer or locked shared
+                // counter enters the disk blob. Count entries, not backedges.
+                u.a.inc(qword_ptr(r15 + off::AOT_LOOP_REGIONS)).unwrap();
             }
             region.reload(&mut u.a);
             if !u.commpage_checks && !jit_off("tbimask") {
@@ -1793,6 +1808,9 @@ pub fn emit_block(u: &mut Unit, pc: u64, read: &dyn Fn(u64) -> Option<u32>) -> u
                     }
                     if flags_dead_at(target, read) && flags_dead_at(cur + 8, read) {
                         u.dead_flags = true;
+                        // Both successors overwrite NZCV. In particular, a
+                        // region needs no deferred flag stores on its exit.
+                        u.loop_exit_flags = None;
                         DEAD_FLAG_SKIPS.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
                     }
                 }
@@ -2697,11 +2715,7 @@ impl<'a> E<'a> {
             if let Some(k) = self.fuse_in {
                 if let Some(cc_nt) = x86_cc(k, cond ^ 1) {
                     // x86 flags of the preceding compare are still live: branch on them directly.
-                    let mut l_nt = self.new_label();
-                    self.jcc(cc_nt, l_nt);
-                    self.goto(target);
-                    self.u.a.set_label(&mut l_nt).unwrap();
-                    self.goto(next);
+                    self.flags_branch(target, next, cc_nt);
                     return true;
                 }
             }
@@ -2935,6 +2949,17 @@ impl<'a> E<'a> {
     /// for the not-taken edge; successors retain the existing intra-unit/slot paths.
     /// Guest NZCV is in Cpu and is not modified by CBZ/TBZ or these host flags.
     fn flags_branch(&mut self, taken: u64, not_taken: u64, cc_not_taken: Cc) {
+        if let Some(r) = self.u.region.filter(|r| r.pc == taken && !self.u.no_internal_jumps) {
+            // Branch straight to the private entry on another iteration.
+            // The exit falls through; no jcc-exit + unconditional backedge pair.
+            // A helper may have invalidated r11; MOV keeps the producer flags.
+            if !self.u.commpage_checks && !jit_off("tbimask") && !self.u.tbi_mask_live {
+                a!(self, mov(r11, 0x00ff_ffff_ffff_ffffu64));
+            }
+            self.jcc(cc_not_taken.inverse(), r.fast);
+            self.goto(not_taken);
+            return;
+        }
         let mut l_nt = self.new_label();
         self.jcc(cc_not_taken, l_nt);
         self.goto(taken);
@@ -2944,12 +2969,8 @@ impl<'a> E<'a> {
 
     /// al holds the condition; emit taken/not-taken successors.
     fn cond_branch(&mut self, taken: u64, not_taken: u64) {
-        let mut l_nt = self.new_label();
         a!(self, test(al, al));
-        a!(self, jz(l_nt));
-        self.goto(taken);
-        self.u.a.set_label(&mut l_nt).unwrap();
-        self.goto(not_taken);
+        self.flags_branch(taken, not_taken, Cc::E);
     }
 
     /// Indirect branch to the guest address in rax via the per-thread
@@ -7628,7 +7649,7 @@ mod loopra_tests {
 
     fn unit(words: &[u32], entries: &[usize], kind: StubKind, verify: bool, commpage: bool) -> Unit {
         let mut u = Unit::new(kind, commpage);
-        u.loopra = kind == StubKind::Patchable;
+        u.loopra = true;
         u.regioncache = false;
         u.no_internal_jumps = verify;
         for &i in entries { let l = u.a.create_label(); u.labels.insert(PC + i as u64 * 4, l); }
@@ -7646,16 +7667,111 @@ mod loopra_tests {
         assert!(res.inner.code_buffer.len() <= 65536);
         unsafe { std::ptr::copy_nonoverlapping(res.inner.code_buffer.as_ptr(), host as *mut u8, res.inner.code_buffer.len()); }
         let mut slots = Vec::new();
-        for s in &u.finished_stubs {
-            let slot = res.label_ip(&s.slot).unwrap();
-            unsafe { (slot as *mut u64).write_unaligned(res.label_ip(&s.cont).unwrap()); }
-            slots.push(slot);
+        if u.stub_kind == StubKind::Patchable {
+            for s in &u.finished_stubs {
+                let slot = res.label_ip(&s.slot).unwrap();
+                unsafe { (slot as *mut u64).write_unaligned(res.label_ip(&s.cont).unwrap()); }
+                slots.push(slot);
+            }
         }
         (res.label_ip(&label).unwrap(), slots)
     }
 
     fn cpu() -> Box<Cpu> {
         let mut c = Cpu::new(); crate::jit::setup_cpu(&mut c); c.set_pc(PC); c
+    }
+
+    #[test]
+    fn plain_regions_relocate_and_match_interpreter() {
+        // Exercise a public successor and an out-of-unit Plain stub, plus a
+        // helper barrier and the FPCR guard (which can exit before any writes).
+        for words in [
+            vec![0x9100_0400, 0xf100_0631, 0x54ff_ffc1, 0xd400_1001],
+            vec![0xd280_00e0, 0x1ac1_4000, 0xf100_0631, 0x54ff_ffa1, 0xd400_1001], // CRC32B helper
+            vec![0x9100_0400, 0x1e61_2800, 0xf100_0631, 0x54ff_ffa1, 0xd400_1001],
+        ] {
+            for internal_exit in [false, true] {
+                let svc = words.len() - 1;
+                let entries = if internal_exit { vec![0, svc] } else { vec![0] };
+                let mut u = unit(&words, &entries, StubKind::Plain, false, false);
+                assert_eq!(u.region_exits.len(), 1);
+                u.finish();
+                assert!(!u.a.instructions().iter().any(|i| i.has_lock_prefix()));
+                let label = u.labels[&PC];
+                let mut first_bytes = None;
+                for _ in 0..2 {
+                    let host = crate::jit::code_cache().alloc(65536);
+                    let res = u.a.assemble_options(host, iced_x86::BlockEncoderOptions::RETURN_NEW_INSTRUCTION_OFFSETS).unwrap();
+                    if let Some(bytes) = &first_bytes { assert_eq!(bytes, &res.inner.code_buffer); }
+                    else { first_bytes = Some(res.inner.code_buffer.clone()); }
+                    unsafe { std::ptr::copy_nonoverlapping(res.inner.code_buffer.as_ptr(), host as *mut u8, res.inner.code_buffer.len()); }
+                    for count in [1, 2, 31] {
+                        let mut c = cpu(); c.x[0] = 19; c.x[17] = count;
+                        c.v[0][0] = 2f64.to_bits(); c.v[1][0] = 3f64.to_bits(); c.set_nzcv(11);
+                        let mut reference = cpu(); reference.x = c.x; reference.v = c.v; reference.set_nzcv(c.nzcv());
+                        loop {
+                            let w = words[((reference.pc() - PC) / 4) as usize];
+                            match attesor_core::interp::exec(&mut reference, w) {
+                                Ok(()) => {}, Err(attesor_core::interp::Exit::Svc(_)) => break,
+                                Err(e) => panic!("reference: {e:?}"),
+                            }
+                        }
+                        unsafe { crate::jit::attesor_jit_enter(&mut *c, res.label_ip(&label).unwrap()); }
+                        assert_eq!(c.x, reference.x); assert_eq!(c.v, reference.v);
+                        assert_eq!(c.nzcv(), reference.nzcv());
+                        assert_eq!(c.pc(), reference.pc() - if internal_exit { 0 } else { 4 });
+                        assert_eq!(c.exit_reason, if internal_exit { EXIT_SVC } else { EXIT_CONTINUE });
+                        if words.contains(&0x1e61_2800) {
+                            c.set_pc(PC); c.fpcr = 1 << 25;
+                            let before = c.x;
+                            unsafe { crate::jit::attesor_jit_enter(&mut *c, res.label_ip(&label).unwrap()); }
+                            assert_eq!(c.x, before); assert_eq!(c.pc(), PC); assert_eq!(c.exit_reason, EXIT_INTERP);
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn short_loop_uses_one_backedge_and_skips_only_dead_exit_flags() {
+        // The scalar marking loop extracted from bench.c. CMP after the loop
+        // models the next flag writer in the outer loop; SVC keeps flags live.
+        for kind in [StubKind::Plain, StubKind::Patchable] {
+            for dead in [false, true] {
+                let mut words = vec![0x3824_6818, 0x8b0e_0084, 0xeb14_009f, 0x54ff_ffa3];
+                if dead { words.push(0xeb07_00bf); } // cmp x5,x7
+                words.push(0xd400_1001);
+                let u = unit(&words, &[0], kind, false, false);
+                assert_eq!(u.loop_exit_flags.is_none(), dead);
+                // Only the final successor transfer remains unconditional.
+                assert_eq!(u.a.instructions().iter().filter(|i| i.mnemonic() == iced_x86::Mnemonic::Jmp).count(), 1);
+                assert_eq!(u.a.instructions().iter().filter(|i| i.mnemonic() == iced_x86::Mnemonic::Sets).count(), if dead { 0 } else { 1 });
+                let (host, _) = assemble(u, 0);
+                for count in [1, 2, 97] {
+                    let mut buf = [0u8; 128];
+                    let mut c = cpu(); c.x[0] = buf.as_mut_ptr() as u64;
+                    c.x[4] = 0; c.x[14] = 1; c.x[20] = count; c.x[24] = 1;
+                    c.x[5] = 7; c.x[7] = 9; c.set_nzcv(15);
+                    let mut reference = cpu(); reference.x = c.x; reference.set_nzcv(c.nzcv());
+                    // Execute through the successor flag writer before SVC.
+                    loop {
+                        let w = words[((reference.pc() - PC) / 4) as usize];
+                        if w == 0xd400_1001 { break; }
+                        attesor_core::interp::exec(&mut reference, w).unwrap();
+                    }
+                    let expected = buf; buf.fill(0);
+                    unsafe { crate::jit::attesor_jit_enter(&mut *c, host); }
+                    assert_eq!(c.x, reference.x); assert_eq!(buf, expected);
+                    if !dead { assert_eq!(c.nzcv(), reference.nzcv()); }
+                    // Both normal exits are outside this unit. The dispatcher
+                    // executes the successor and must observe its final flags.
+                    assert_eq!(c.pc(), PC + 16);
+                    if dead { attesor_core::interp::exec(&mut c, words[4]).unwrap(); }
+                    assert_eq!(c.nzcv(), reference.nzcv());
+                }
+            }
+        }
     }
 
     extern "C" fn mutate(c: *mut Cpu, _: u32, _: u64) -> u64 {
@@ -7869,9 +7985,9 @@ mod loopra_tests {
     }
 
     #[test]
-    fn verification_aot_and_scratch_templates_do_not_enter_regions() {
+    fn verification_and_scratch_templates_do_not_enter_regions() {
         let words = [0x9100_0400, 0xf100_0631, 0x54ff_ffc1, 0xd400_1001];
-        assert!(unit(&words, &[0], StubKind::Plain, false, false).region.is_none());
+        assert!(unit(&words, &[0], StubKind::Plain, false, false).region.is_some());
         assert!(unit(&words, &[0], StubKind::Patchable, true, false).region.is_none());
         for scratch in [0xc8a0_7c22, 0xf820_0022, 0x5e00_4000, 0x5e00_5000] {
             let words = [0x9100_0400, scratch, 0xf100_0631, 0x54ff_ffa1];
