@@ -319,6 +319,12 @@ pub fn ensure_loaded() {
         img.loaded = true;
         match load_file(&file_for(img, "aot")) {
             Ok(n) if n > 0 => {
+                // in use: keep tidy_cache's 30-day rule from removing it (atime is not reliable)
+                for kind in ["aot", "profile"] {
+                    if let Ok(c) = std::ffi::CString::new(file_for(img, kind).as_os_str().as_encoded_bytes()) {
+                        unsafe { libc::utimes(c.as_ptr(), std::ptr::null()) };
+                    }
+                }
                 if std::env::var_os("ATTESOR_TRACE").is_some() || std::env::var_os("ATTESOR_STATS").is_some() {
                     eprintln!("[attesor] aot: loaded {n} blocks for {}", img.name);
                 }
@@ -446,6 +452,38 @@ fn update_profiles() -> Vec<(Image, BTreeSet<u64>)> {
     rebuild
 }
 
+/// Cache housekeeping, once per process (on the checkpoint thread): removes temporaries of builders
+/// that died (a killed process leaves a full-size `.aot.tmp.<pid>.<n>`), translation files this code
+/// generator cannot load (older translator versions), and files of images not used for 30 days (an
+/// app or system update gives its libraries new UUIDs, so their old files would never be read again).
+fn tidy_cache() {
+    let Ok(dir) = std::fs::read_dir(cache_dir()) else { return };
+    let month = std::time::Duration::from_secs(30 * 86400);
+    for e in dir.flatten() {
+        let path = e.path();
+        let name = e.file_name().to_string_lossy().into_owned();
+        let pid = name
+            .split_once(".aot.tmp.")
+            .and_then(|(_, rest)| rest.split('.').next())
+            .or_else(|| name.rsplit_once(".profile.").map(|(_, p)| p))
+            .and_then(|p| p.parse::<i32>().ok());
+        let stale = if let Some(pid) = pid {
+            pid != std::process::id() as i32
+                && unsafe { libc::kill(pid, 0) } != 0
+                && std::io::Error::last_os_error().raw_os_error() == Some(libc::ESRCH)
+        } else if name.ends_with(".aot") || name.ends_with(".profile") || name.ends_with(".lock") {
+            let unused = e.metadata().and_then(|m| m.accessed().or_else(|_| m.modified())).ok()
+                .and_then(|t| t.elapsed().ok()).is_some_and(|age| age > month);
+            unused || (name.ends_with(".aot") && compatible_header(&path).is_none())
+        } else {
+            false
+        };
+        if stale {
+            let _ = std::fs::remove_file(&path);
+        }
+    }
+}
+
 /// Periodic checkpoints: a background thread updates the profiles and rebuilds the changed images
 /// (first after ATTESOR_AOT_CHECKPOINT seconds, default 60, 0 = off; then every 10 minutes), so a session
 /// that is force-quit or crashes still leaves translations for the next launch. In-process at background QoS.
@@ -462,6 +500,7 @@ pub fn start_checkpoints() {
             fn pthread_set_qos_class_self_np(qos: u32, relpri: i32) -> i32;
         }
         unsafe { pthread_set_qos_class_self_np(0x09, 0) }; // QOS_CLASS_BACKGROUND
+        tidy_cache();
         std::thread::sleep(std::time::Duration::from_secs(first));
         loop {
             if SAVED.load(Ordering::SeqCst) {
