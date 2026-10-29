@@ -487,44 +487,69 @@ fn bsd_inner(cpu: &mut Cpu, n: u64, mut args: [u64; 8]) {
 
 /// arm64 macOS has 16 KiB pages; the Intel host has 4 KiB. Guest allocators (V8,
 /// PartitionAlloc, libmalloc) rely on mmap returning 16 KiB-aligned, 16 KiB-sized
-/// regions, so over-reserve, align, and trim.
+/// regions. Try the requested mapping first; only over-reserve, align, and trim
+/// when the host did not already give us a suitably aligned address.
 fn mmap_16k(args: &[u64; 8]) -> hostsys::SysResult {
+    // A preference, never a reservation or MAP_FIXED: concurrent mappings and
+    // stale hints are harmless, and caller-supplied hints always take priority.
+    static NEXT_HINT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+    mmap_16k_with(args, &NEXT_HINT, hostsys::unix)
+}
+
+fn mmap_16k_with(args: &[u64; 8], hint: &std::sync::atomic::AtomicU64,
+                 mut syscall: impl FnMut(u64, &[u64; 8]) -> SysResult) -> SysResult {
     const PAGE: u64 = 0x4000;
     const MAP_FIXED: u64 = 0x10;
     const MAP_ANON: u64 = 0x1000;
     const MAP_PRIVATE: u64 = 0x2;
-    let (len, flags, fd) = (args[1], args[3], args[4] as i64);
+    let (len, flags) = (args[1], args[3]);
     if len == 0 || flags & MAP_FIXED != 0 {
-        return hostsys::unix(SYS_MMAP, args);
+        return syscall(SYS_MMAP, args);
     }
-    let len16 = (len + PAGE - 1) & !(PAGE - 1);
+    let Some(rounded) = len.checked_add(PAGE - 1) else {
+        return SysResult { rax: libc::EINVAL as u64, rdx: 0, carry: true };
+    };
+    let len16 = rounded & !(PAGE - 1);
+    let mut a = *args;
+    a[1] = len16;
+    if a[0] == 0 { a[0] = hint.load(Ordering::Relaxed); }
+    let first = syscall(SYS_MMAP, &a);
+    let aligned_first = !first.carry && first.rax & (PAGE - 1) == 0;
+    crate::profile::mmap_fast_path(aligned_first);
+    if first.carry { return first; }
+    if aligned_first {
+        hint.store(first.rax + len16, Ordering::Relaxed);
+        return first;
+    }
+    syscall(SYS_MUNMAP, &[first.rax, len16, 0, 0, 0, 0, 0, 0]);
     // Reserve len16 + one page of slack, address space only.
-    let reserve = hostsys::unix(SYS_MMAP, &[0, len16 + PAGE, 0, MAP_ANON | MAP_PRIVATE, u64::MAX, 0, 0, 0]);
+    let Some(reserve_len) = len16.checked_add(PAGE) else {
+        return SysResult { rax: libc::EINVAL as u64, rdx: 0, carry: true };
+    };
+    let reserve = syscall(SYS_MMAP, &[0, reserve_len, 0, MAP_ANON | MAP_PRIVATE, u64::MAX, 0, 0, 0]);
     if reserve.carry {
         return reserve;
     }
     let base = reserve.rax;
     let aligned = (base + PAGE - 1) & !(PAGE - 1);
     // Map the real thing over the aligned window.
-    let mut a = *args;
     a[0] = aligned;
-    a[1] = len16;
     a[3] = flags | MAP_FIXED;
-    let _ = fd;
-    let r = hostsys::unix(SYS_MMAP, &a);
+    let r = syscall(SYS_MMAP, &a);
     if r.carry {
-        hostsys::unix(SYS_MUNMAP, &[base, len16 + PAGE, 0, 0, 0, 0, 0, 0]);
+        syscall(SYS_MUNMAP, &[base, reserve_len, 0, 0, 0, 0, 0, 0]);
         return r;
     }
     // Give back the slack before and after the aligned window.
     if aligned > base {
-        hostsys::unix(SYS_MUNMAP, &[base, aligned - base, 0, 0, 0, 0, 0, 0]);
+        syscall(SYS_MUNMAP, &[base, aligned - base, 0, 0, 0, 0, 0, 0]);
     }
     let end = aligned + len16;
-    let reserve_end = base + len16 + PAGE;
+    let reserve_end = base + reserve_len;
     if reserve_end > end {
-        hostsys::unix(SYS_MUNMAP, &[end, reserve_end - end, 0, 0, 0, 0, 0, 0]);
+        syscall(SYS_MUNMAP, &[end, reserve_end - end, 0, 0, 0, 0, 0, 0]);
     }
+    hint.store(end, Ordering::Relaxed);
     r
 }
 
@@ -1236,3 +1261,7 @@ mod profile_state_tests {
         assert!(matches!(svc_state(&cpu), State::Bsd));
     }
 }
+
+#[cfg(all(test, target_os = "macos", target_arch = "x86_64"))]
+#[path = "syscalls/mmap_tests.rs"]
+mod mmap_tests;

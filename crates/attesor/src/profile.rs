@@ -85,14 +85,21 @@ struct Call {
     host_ns: u64,
 }
 struct Active { key: Key, start: u64, host_start: Option<u64>, host_ns: u64, idle: bool }
+impl Active {
+    fn host_begin(&mut self, start: u64) { self.host_start = Some(start); }
+    fn host_end(&mut self, end: u64) {
+        if let Some(start) = self.host_start.take() { self.host_ns += end.saturating_sub(start); }
+    }
+}
 #[derive(Default)]
 struct CallData {
     calls: BTreeMap<Key, Call>,
     active: BTreeMap<u64, Active>,
     next_id: u64,
+    mmap_fast: (u64, u64), // first attempts, aligned successes (profiling only)
 }
 static CALL_DATA: Mutex<CallData> = Mutex::new(CallData {
-    calls: BTreeMap::new(), active: BTreeMap::new(), next_id: 0,
+    calls: BTreeMap::new(), active: BTreeMap::new(), next_id: 0, mmap_fast: (0, 0),
 });
 thread_local! { static ACTIVE: Cell<u64> = const { Cell::new(0) }; }
 
@@ -158,7 +165,7 @@ impl Drop for HostGuard {
         if let Some(id) = self.0 {
             let end = now();
             if let Some(a) = CALL_DATA.lock().unwrap().active.get_mut(&id) {
-                if let Some(start) = a.host_start.take() { a.host_ns += end.saturating_sub(start); }
+                a.host_end(end);
             }
         }
     }
@@ -170,7 +177,7 @@ pub fn host() -> HostGuard {
     let id = ACTIVE.with(Cell::get);
     if id == 0 { return HostGuard(None); }
     if let Some(a) = CALL_DATA.lock().unwrap().active.get_mut(&id) {
-        a.host_start = Some(now()); return HostGuard(Some(id));
+        a.host_begin(now()); return HostGuard(Some(id));
     }
     HostGuard(None)
 }
@@ -179,6 +186,14 @@ pub fn host() -> HostGuard {
 pub fn host_call<T>(f: impl FnOnce() -> T) -> T {
     let _host = host();
     f()
+}
+
+/// Non-fixed mmap first-try hit rate; failed attempts remain in the denominator.
+pub fn mmap_fast_path(aligned: bool) {
+    if !ENABLED.load(Ordering::Relaxed) { return; }
+    let mut d = CALL_DATA.lock().unwrap();
+    d.mmap_fast.0 += 1;
+    d.mmap_fast.1 += u64::from(aligned);
 }
 
 /// The caller waits until the bridge has finished, so its CPU remains alive.
@@ -227,6 +242,7 @@ struct Data {
     counts: Counts,
     stats_base: (u64, u64),
     stats_prior: (u64, u64),
+    mmap_fast_prior: (u64, u64),
     resolved: BTreeMap<u64, (String, String)>,
     calls: BTreeMap<Key, Call>,
     bridge_selectors: Option<bool>,
@@ -239,7 +255,7 @@ pub fn init(name: &str, args: &[String]) {
         eprintln!("attesor: profile directory: {e}"); return;
     }
     let mut data = Data { dir: dir.into(), name: name.into(), args: args.to_vec(),
-        counts: Counts::default(), stats_base: (0, 0), stats_prior: (0, 0), resolved: BTreeMap::new(), calls: BTreeMap::new(), bridge_selectors: None };
+        counts: Counts::default(), stats_base: (0, 0), stats_prior: (0, 0), mmap_fast_prior: (0, 0), resolved: BTreeMap::new(), calls: BTreeMap::new(), bridge_selectors: None };
     // A successful exec of the same executable keeps its pid and report path.
     // Continue that snapshot instead of losing the previous execution epoch.
     data.resume();
@@ -315,13 +331,13 @@ impl ForkGuard {
     // fork_safely already holds CALL_DATA, so use its existing guard.
     pub fn host_begin(&mut self) {
         if let Some(calls) = self.calls.as_mut() {
-            if let Some(a) = calls.active.get_mut(&ACTIVE.with(Cell::get)) { a.host_start = Some(now()); }
+            if let Some(a) = calls.active.get_mut(&ACTIVE.with(Cell::get)) { a.host_begin(now()); }
         }
     }
     pub fn host_end(&mut self) {
         if let Some(calls) = self.calls.as_mut() {
             if let Some(a) = calls.active.get_mut(&ACTIVE.with(Cell::get)) {
-                if let Some(start) = a.host_start.take() { a.host_ns += now().saturating_sub(start); }
+                a.host_end(now());
             }
         }
     }
@@ -331,6 +347,8 @@ impl ForkGuard {
             d.calls.clear();
             let calls = self.calls.as_mut().unwrap();
             calls.calls.clear();
+            calls.mmap_fast = (0, 0);
+            d.mmap_fast_prior = (0, 0);
             let current = ACTIVE.with(Cell::get);
             calls.active.retain(|&id, _| id == current);
             for a in calls.active.values_mut() {
@@ -398,6 +416,11 @@ impl Data {
                 ["translation", blocks, ms] => {
                     if let (Ok(b), Ok(m)) = (blocks.parse(), ms.parse()) { self.stats_prior = (b, m); }
                 }
+                ["mmap-fast", attempts, hits] => {
+                    if let (Ok(a), Ok(h)) = (attempts.parse::<u64>(), hits.parse::<u64>()) {
+                        if h <= a { self.mmap_fast_prior = (a, h); }
+                    }
+                }
                 _ => {}
             }
         }
@@ -451,6 +474,8 @@ impl Data {
         out.push_str("\n# Complete merger records (tab separated; cumulative snapshot)\n");
         let _ = writeln!(out, "process\t{}\t{}", clean(&self.name), self.args.iter().map(|a| clean(a)).collect::<Vec<_>>().join("\t"));
         let _ = writeln!(out, "translation\t{blocks}\t{ms}");
+        let (attempts, hits) = CALL_DATA.lock().unwrap().mmap_fast;
+        let _ = writeln!(out, "mmap-fast\t{}\t{}", attempts + self.mmap_fast_prior.0, hits + self.mmap_fast_prior.1);
         for (i, &n) in c.states.iter().enumerate() { let _ = writeln!(out, "state\t{}\t{n}", STATES[i]); }
         for (&(class, number), c) in &calls {
             let _ = writeln!(out, "call\t{}\t{number}\t{}\t{}\t{}\t{}\t{}\t{}\t{}", class.name(), clean(&c.name), c.samples, c.idle_samples, c.calls, c.idle_calls, c.ns, c.host_ns);
@@ -469,6 +494,30 @@ impl Data {
 #[cfg(test)]
 mod call_tests {
     use super::*;
+
+    #[test]
+    fn multiple_host_calls_accumulate_instead_of_counting_only_the_last() {
+        let key = (Class::Bsd, 197);
+        let mut a = Active { key, start: 100, host_start: None, host_ns: 0, idle: false };
+        // mmap, fixed remap, prefix and suffix munmap within one guest mmap.
+        for (start, end) in [(110, 130), (140, 170), (180, 190), (200, 240)] {
+            a.host_begin(start);
+            a.host_end(end);
+        }
+        assert_eq!(a.host_ns, 100);
+        let mut calls = BTreeMap::new();
+        Data::add_active(&mut calls, &a, 260);
+        assert_eq!((calls[&key].calls, calls[&key].ns, calls[&key].host_ns), (1, 160, 100));
+        // Snapshot a fifth unfinished host call, then finish it: no double count.
+        a.host_begin(270);
+        let mut snapshot = BTreeMap::new();
+        Data::add_active(&mut snapshot, &a, 280);
+        assert_eq!(snapshot[&key].host_ns, 110);
+        a.host_end(300);
+        let mut completed = BTreeMap::new();
+        Data::add_active(&mut completed, &a, 310);
+        assert_eq!(completed[&key].host_ns, 130);
+    }
 
     #[test]
     fn atomic_identity_covers_classes_numbers_and_nested_gpu() {
@@ -510,9 +559,10 @@ mod call_tests {
         let dir = std::env::temp_dir().join(format!("attesor-profile-unit-{}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();
         let make = || Data { dir: dir.clone(), name: "roundtrip".into(), args: vec![],
-            counts: Counts::default(), stats_base: (0, 0), stats_prior: (0, 0),
+            counts: Counts::default(), stats_base: (0, 0), stats_prior: (0, 0), mmap_fast_prior: (0, 0),
             resolved: BTreeMap::new(), calls: BTreeMap::new(), bridge_selectors: Some(true) };
         let mut first = make();
+        first.mmap_fast_prior = (20, 15);
         first.calls.insert((Class::Bsd, 363), Call { name: "kevent".into(), samples: 4,
             idle_samples: 3, calls: 20, idle_calls: 20, ns: 900, host_ns: 600 });
         first.counts.states[State::Idle as usize] = 3;
@@ -522,6 +572,7 @@ mod call_tests {
         let c = &resumed.calls[&(Class::Bsd, 363)];
         assert_eq!((c.samples, c.idle_samples, c.calls, c.idle_calls, c.ns, c.host_ns), (4, 3, 20, 20, 900, 600));
         assert_eq!(resumed.bridge_selectors, Some(true));
+        assert_eq!(resumed.mmap_fast_prior, (20, 15));
         std::fs::write(first.path(), "Attesor guest profile v1\nstate\tjit\t42\ntranslation\t5\t7\n").unwrap();
         let mut legacy = make();
         legacy.resume();

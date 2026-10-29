@@ -13,12 +13,15 @@ class Report:
         # samples, idle samples, calls, idle calls, total ns, host kernel ns
         self.calls = defaultdict(lambda: [0] * 6)
         self.bridge_selectors = Counter()
+        self.mmap_attempts = self.mmap_hits = 0
         self.blocks = self.ms = self.processes = 0
 
     def add(self, other):
         self.states.update(other.states)
         self.symbols.update(other.symbols)
         self.bridge_selectors.update(other.bridge_selectors)
+        self.mmap_attempts += other.mmap_attempts
+        self.mmap_hits += other.mmap_hits
         for key, counts in other.calls.items():
             for i, n in enumerate(counts):
                 self.calls[key][i] += n
@@ -76,6 +79,10 @@ def read_profile(path):
                 report.calls[key][i] += n
         elif kind == 'bridge-selectors':
             report.bridge_selectors[fields[1]] += 1
+        elif kind == 'mmap-fast':
+            report.mmap_attempts, report.mmap_hits = map(int, fields[1:])
+            if not 0 <= report.mmap_hits <= report.mmap_attempts:
+                raise ValueError('invalid mmap fast-path counters')
         elif kind == 'symbol':
             report.symbols[fields[1]] += int(fields[2])
     if name is None or not report.states:
@@ -125,6 +132,9 @@ def render(label, r):
     for state, n in sorted(r.states.items(), key=lambda x: (-x[1], x[0])):
         print(f'{state:<20} {n:>8} {pct(n, total):>9.2f}')
     render_calls(r)
+    if r.mmap_attempts:
+        print(f'\nmmap first-try aligned: {r.mmap_hits}/{r.mmap_attempts} '
+              f'({pct(r.mmap_hits, r.mmap_attempts):.2f}%; includes failed attempts)')
     print('\nTop images (jit + interp)       Samples   % exec    % jit % interp')
     for image, (jit, interp) in sorted(r.images.items(), key=lambda x: (-sum(x[1]), x[0]))[:40]:
         n = jit + interp
