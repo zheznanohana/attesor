@@ -80,6 +80,10 @@ pub struct Unit {
     loop_cache: Option<LoopCache>,
     regioncache: bool,
     loopra: bool,
+    loopra2: bool,
+    // Private clones only: never published in the JIT registry or AOT index.
+    region_labels: HashMap<u64, CodeLabel>,
+    pub extra_guest_range: Option<(u64, u64)>,
     region: Option<LoopRa>,
     region_exits: Vec<LoopRa>,
     // Final fused loop condition: materialize NZCV only on the exit edge.
@@ -383,6 +387,9 @@ impl Unit {
             loop_cache: None,
             regioncache: regioncache_enabled(),
             loopra: loopra_enabled(),
+            loopra2: loopra2_enabled(),
+            region_labels: HashMap::new(),
+            extra_guest_range: None,
             region: None,
             region_exits: Vec::new(),
             loop_exit_flags: None,
@@ -1269,6 +1276,13 @@ impl<'a> E<'a> {
     /// Jump to a direct successor: inside the unit, or through a stub.
     fn goto(&mut self, target: u64) {
         if let Some(r) = self.u.region {
+            if let Some(label) = self.u.region_labels.get(&target).copied() {
+                if !self.u.commpage_checks && !jit_off("tbimask") && !self.u.tbi_mask_live {
+                    a!(self, mov(r11, 0x00ff_ffff_ffff_ffffu64));
+                }
+                a!(self, jmp(label));
+                return;
+            }
             if target == r.pc && !self.u.no_internal_jumps {
                 // A helper or scratch immediate may have invalidated the mask.
                 // MOV preserves fused condition flags on this edge.
@@ -1700,6 +1714,13 @@ fn loopra_enabled() -> bool {
     *F.get_or_init(|| !jit_off("loopra"))
 }
 
+/// Phase 2 remains opt-in, independently of the accepted phase-1 default.
+fn loopra2_enabled() -> bool {
+    static F: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *F.get_or_init(|| !jit_off("loopra2") && !jit_off("loopra")
+        && std::env::var("ATTESOR_JIT_ON").unwrap_or_default().split(',').any(|g| g == "loopra2"))
+}
+
 /// Experimental write-through natural-loop region; public entries remain canonical.
 fn regioncache_enabled() -> bool {
     static F: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
@@ -1786,12 +1807,87 @@ pub fn has_f16c() -> bool {
 /// created and registered the label for `pc` if it wants intra-unit jumps.
 /// Returns the guest address just past the block.
 pub fn emit_block(u: &mut Unit, pc: u64, read: &dyn Fn(u64) -> Option<u32>) -> u64 {
+    if u.loopra2 && u.loopra && !u.no_internal_jumps
+        && loop_layout::<NLOOPREGS>(u, pc, read).is_none() {
+        if let Some(mut l) = super::loops::allocation(pc, read).filter(|l| l.starts.len() > 1) {
+            // Calls/context changes and the phase-1 scratch exclusions remain
+            // barriers. Unknown non-terminators still use synchronized helpers.
+            let safe = l.words.values().all(|&w| {
+                !(w & 0x3fa0_7c00 == 0x08a0_7c00 || w & 0x3f20_0c00 == 0x3820_0000
+                    || w & 0xffe0_ec00 == 0x5e00_4000)
+                && (!is_terminator(w) || w & 0xfc00_0000 == 0x1400_0000
+                    || w & 0xff00_0010 == 0x5400_0000 || w & 0x7e00_0000 == 0x3400_0000
+                    || w & 0x7e00_0000 == 0x3600_0000)
+            });
+            // Public AOT/profile cuts and maximum-length cuts are private block
+            // boundaries too. No fusion/dead-store proof may straddle them.
+            l.starts.extend(u.labels.keys().filter(|p| l.words.contains_key(p)).copied());
+            let mut n = 0;
+            for &p in l.words.keys() {
+                if l.starts.contains(&p) || n == MAX_BLOCK_INSNS { l.starts.insert(p); n = 0; }
+                n += 1;
+            }
+            if safe && l.starts.len() <= 32 && l.words.len() <= 256 && l.reducible() && loopra_bisect(pc) {
+                return emit_multi_region(u, &l, read);
+            }
+        }
+    }
+    emit_block_inner(u, pc, read, None)
+}
+
+fn emit_multi_region(u: &mut Unit, l: &super::loops::Loop, read: &dyn Fn(u64) -> Option<u32>) -> u64 {
+    assert!(GUEST_FAULTS_FATAL); // identical fatal-fault contract to phase 1
+    if super::loops::census_enabled() {
+        eprintln!("loopra2-region\t{:x}\t{}\t{}", l.header, l.starts.len(), l.words.len());
+    }
+    let mut counts = [0u32; 32];
+    for &w in l.words.values() {
+        let a = cache_access(w);
+        if a.xr != u32::MAX {
+            for n in 0..32 { counts[n] += ((a.xr >> n) & 1) * 2 + ((a.xw >> n) & 1); }
+        }
+    }
+    let mut regs: Vec<usize> = (0..32).filter(|&n| counts[n] != 0).collect();
+    regs.sort_by_key(|&n| (std::cmp::Reverse(counts[n]), n));
+    let mut reg = [0xff; NLOOPREGS];
+    for (s, n) in regs.into_iter().take(NLOOPREGS).enumerate() { reg[s] = n as u8; }
+    let region = LoopRa { pc: l.header, fast: u.a.create_label(), exit: u.a.create_label(), reg,
+        // Every predecessor/iteration can have written any assigned slot.
+        // A compile-order dirtiness mask is NOT a dataflow solution at joins.
+        dirty: u32::MAX };
+    u.region_exits.push(region);
+    let mut saved = Vec::new();
+    for &p in &l.starts {
+        let label = if p == l.header { region.fast } else { u.a.create_label() };
+        u.region_labels.insert(p, label);
+        if p != l.header { saved.push((p, u.labels.insert(p, label))); }
+    }
+    let lo = *l.words.first_key_value().unwrap().0;
+    let hi = *l.words.last_key_value().unwrap().0 + 4;
+    u.extra_guest_range = Some(u.extra_guest_range.map_or((lo, hi), |(a,b)| (a.min(lo),b.max(hi))));
+    // Snapshot exactly the selected members. A cut/unreadable successor exits
+    // canonically rather than accidentally emitting past the discovered region.
+    let snapshot = |p| l.words.get(&p).copied();
+    super::loops::census(l.header, read);
+    let end = emit_block_inner(u, l.header, &snapshot, Some(region));
+    for &p in l.starts.iter().filter(|&&p| p != l.header) {
+        emit_block_inner(u, p, &snapshot, Some(region));
+    }
+    for (p, old) in saved {
+        if let Some(label) = old { u.labels.insert(p, label); } else { u.labels.remove(&p); }
+    }
+    u.region_labels.clear();
+    u.region = None;
+    end
+}
+
+fn emit_block_inner(u: &mut Unit, pc: u64, read: &dyn Fn(u64) -> Option<u32>, multi: Option<LoopRa>) -> u64 {
     super::loops::census(pc, read);
     u.fuse = None;
     u.loop_cache = None;
-    u.region = None;
+    u.region = multi;
     u.loop_exit_flags = None;
-    u.tbi_mask_live = false;
+    u.tbi_mask_live = multi.is_some() && !u.commpage_checks && !jit_off("tbimask");
     u.rc = RegCache::new();
     u.vc = VCache::new();
     u.rc_frozen = false;
@@ -1809,20 +1905,26 @@ pub fn emit_block(u: &mut Unit, pc: u64, read: &dyn Fn(u64) -> Option<u32>) -> u
     }
     let mut label = *u.labels.get(&pc).expect("block label");
     u.a.set_label(&mut label).unwrap();
-    if u.loopra && !u.no_internal_jumps {
-        if let Some(reg) = loop_layout::<NLOOPREGS>(u, pc, read).filter(|_| loopra_bisect(pc)) {
+    if multi.is_some_and(|r| r.pc != pc) {
+        // Private internal entry: all incoming edges share the same assignment.
+    } else if u.loopra && !u.no_internal_jumps {
+        let layout = multi.map(|r| r.reg).or_else(|| loop_layout::<NLOOPREGS>(u, pc, read).filter(|_| loopra_bisect(pc)));
+        if let Some(reg) = layout {
             // signals.rs does not deliver guest fault handlers. Register-only
             // state is therefore visible only in fatal crash dumps; revisit this
             // feature before implementing resumable guest faults.
             assert!(GUEST_FAULTS_FATAL);
-            let fast = u.a.create_label();
-            let exit = u.a.create_label();
-            let region = LoopRa { pc, fast, exit, reg, dirty: 0 };
+            let region = multi.unwrap_or_else(|| LoopRa { pc, fast: u.a.create_label(), exit: u.a.create_label(), reg, dirty: 0 });
+            let fast = region.fast;
             // JIT-only instrumentation: absolute host addresses must never enter
             // an AOT blob. Count executed public entries, not translations.
             if u.stub_kind == StubKind::Patchable && super::COUNT_LOOP_REGIONS.load(std::sync::atomic::Ordering::Relaxed) {
                 u.a.mov(rax, &super::STATS_LOOP_REGIONS as *const _ as u64).unwrap();
                 u.a.lock().inc(qword_ptr(rax)).unwrap();
+                if multi.is_some() {
+                    u.a.mov(rax, &super::STATS_MULTI_LOOP_REGIONS as *const _ as u64).unwrap();
+                    u.a.lock().inc(qword_ptr(rax)).unwrap();
+                }
             }
             if u.stub_kind == StubKind::Plain && super::stats_enabled() {
                 // Cpu belongs to this thread; no host pointer or locked shared
@@ -1837,7 +1939,7 @@ pub fn emit_block(u: &mut Unit, pc: u64, read: &dyn Fn(u64) -> Option<u32>) -> u
             let mut fast_label = fast;
             u.a.set_label(&mut fast_label).unwrap();
             u.region = Some(region);
-            u.region_exits.push(region);
+            if multi.is_none() { u.region_exits.push(region); }
         }
     } else if u.regioncache && !u.no_internal_jumps {
         if let Some(reg) = loop_layout::<NCREGS>(u, pc, read) {
@@ -1917,7 +2019,7 @@ pub fn emit_block(u: &mut Unit, pc: u64, read: &dyn Fn(u64) -> Option<u32>) -> u
                     // the exit when the next iteration overwrites it before a
                     // reader. No helper may observe it in between. Faults are
                     // fatal (GUEST_FAULTS_FATAL), as for flags_dead_at itself.
-                    if u.region.is_some() && target == pc && !u.commpage_checks
+                    if u.region.is_some() && u.region_labels.is_empty() && target == pc && !u.commpage_checks
                         && disabled_classes() == 0 && flags_dead_at(pc, read)
                         && !u.a.instructions()[loop_body_start..].iter().any(|i| i.mnemonic() == iced_x86::Mnemonic::Call)
                     {
@@ -3084,6 +3186,14 @@ impl<'a> E<'a> {
     /// for the not-taken edge; successors retain the existing intra-unit/slot paths.
     /// Guest NZCV is in Cpu and is not modified by CBZ/TBZ or these host flags.
     fn flags_branch(&mut self, taken: u64, not_taken: u64, cc_not_taken: Cc) {
+        if let Some(label) = self.u.region_labels.get(&taken).copied() {
+            if !self.u.commpage_checks && !jit_off("tbimask") && !self.u.tbi_mask_live {
+                a!(self, mov(r11, 0x00ff_ffff_ffff_ffffu64));
+            }
+            self.jcc(cc_not_taken.inverse(), label);
+            self.goto(not_taken);
+            return;
+        }
         if let Some(r) = self.u.region.filter(|r| r.pc == taken && !self.u.no_internal_jumps) {
             // Branch straight to the private entry on another iteration.
             // The exit falls through; no jcc-exit + unconditional backedge pair.
@@ -7787,6 +7897,7 @@ mod loopra_tests {
     fn unit(words: &[u32], entries: &[usize], kind: StubKind, verify: bool, commpage: bool) -> Unit {
         let mut u = Unit::new(kind, commpage);
         u.loopra = true;
+        u.loopra2 = false;
         u.regioncache = false;
         u.no_internal_jumps = verify;
         for &i in entries { let l = u.a.create_label(); u.labels.insert(PC + i as u64 * 4, l); }
@@ -7816,6 +7927,75 @@ mod loopra_tests {
 
     fn cpu() -> Box<Cpu> {
         let mut c = Cpu::new(); crate::jit::setup_cpu(&mut c); c.set_pc(PC); c
+    }
+
+    #[test]
+    fn multi_block_private_entries_helpers_and_public_joins() {
+        // A diamond with an early exit in either arm, a helper in one arm,
+        // and FP in the other. All public entries remain canonical, including
+        // AOT entries in the middle of the private clone.
+        let words = [
+            0x91000400, // add x0,x0,#1
+            0x360000c2, // tbz w2,#0,+24 -> other arm (7)
+            0x8b000021, // add x1,x1,x0
+            0x1ac04021, // crc32b w1,w1,w0 (helper)
+            0xb4000123, // cbz x3,+36 -> side svc (13)
+            0x14000004, // b latch (9)
+            0xd503201f, // unreachable
+            0xcb000021, // sub x1,x1,x0
+            0x1e612800, // fadd d0,d0,d1
+            0xf1000442, // subs x2,x2,#1
+            0x54fffec1, // b.ne header
+            0xd4001001, // svc normal
+            0xd503201f,
+            0xd4001021, // svc side
+        ];
+        for kind in [StubKind::Plain, StubKind::Patchable] {
+        for commpage in [false, true] {
+        for entry in [0,2,7,9] {
+        for trips in [1,2,7] {
+        for side in [0,1] {
+            let entries = [0,2,5,7,9,11,13];
+            let mut u = Unit::new(kind, commpage); u.loopra = true; u.loopra2 = true;
+            for &i in &entries { let l = u.a.create_label(); u.labels.insert(PC+i*4,l); }
+            let read = |p: u64| p.checked_sub(PC).and_then(|o| words.get((o/4) as usize)).copied();
+            for &i in &entries { emit_block(&mut u, PC+i*4, &read); }
+            assert_eq!(u.labels.len(), entries.len());
+            assert!(u.extra_guest_range.is_some());
+            assert_eq!(u.region_exits[0].dirty, u32::MAX);
+            assert!(u.region_labels.is_empty());
+            let (host,_) = assemble(u, entry as usize);
+            let mut c = cpu(); c.set_pc(PC+entry*4); c.x[0]=11; c.x[1]=17; c.x[2]=trips; c.x[3]=side;
+            c.v[0]=[1f64.to_bits(),0]; c.v[1]=[2f64.to_bits(),0]; c.set_nzcv(11);
+            let mut r = crate::jit::cpu_clone(&c);
+            for _ in 0..1000 {
+                let w=read(r.pc()).unwrap();
+                if let Err(attesor_core::interp::Exit::Svc(_))=attesor_core::interp::exec(&mut r,w) { break; }
+            }
+            unsafe { crate::jit::attesor_jit_enter(&mut *c,host); }
+            assert_eq!(c.x,r.x,"entry={entry} trips={trips} side={side}");
+            assert_eq!(c.v,r.v); assert_eq!(c.nzcv(),r.nzcv()); assert_eq!(c.pc(),r.pc());
+            assert_eq!(c.exit_reason,EXIT_SVC);
+        }}}}}
+    }
+
+    #[test]
+    fn multi_block_verification_and_fpcr_guard_are_canonical() {
+        let words = [0x91000400,0x36000042,0xd503201f,0x1e612800,0xf1000442,0x54ffff61,0xd4001001];
+        for verify in [false,true] {
+            let mut u=Unit::new(StubKind::Plain,false);u.loopra2=true;u.loopra=true;u.no_internal_jumps=verify;
+            let l=u.a.create_label();u.labels.insert(PC,l);
+            emit_block(&mut u,PC,&|p| p.checked_sub(PC).and_then(|o| words.get((o/4) as usize)).copied());
+            assert_eq!(u.extra_guest_range.is_some(),!verify);
+            if verify { continue; }
+            let (host,_)=assemble(u,0);
+            let mut c=cpu();c.x[0]=41;c.x[2]=2;c.fpcr=1<<25;
+            unsafe {crate::jit::attesor_jit_enter(&mut *c,host);}
+            assert_eq!(c.exit_reason,EXIT_INTERP);
+            // The header's integer write must be visible when the private FP
+            // block hands off, even though it was not emitted in that block.
+            assert_eq!(c.x[0],42);assert_eq!(c.x[2],2);assert_eq!(c.pc(),PC+12);
+        }
     }
 
     #[test]

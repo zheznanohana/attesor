@@ -5,17 +5,21 @@ cd "$(dirname "$0")/../.."
 ATTESOR=${1:-target/release/attesor}
 # Explicit temp root also works in the restricted development sandbox.
 export TMPDIR=/private/tmp
-python3 - "$ATTESOR" <<'PY'
+python3 - "$ATTESOR" "${2:-}" <<'PY'
 import os, re, subprocess, sys, tempfile
 from pathlib import Path
 binary = Path(sys.argv[1]).resolve()
 clean = {k: v for k, v in os.environ.items() if not k.startswith('ATTESOR_')}
+on = sys.argv[2]
+clean['ATTESOR_JIT_ON'] = on
 def run(cmd, extra=None):
     return subprocess.run([str(x) for x in cmd], env={**clean, **(extra or {})},
                           text=True, capture_output=True, check=True, timeout=300)
 with tempfile.TemporaryDirectory(prefix='loopra-aot-') as td:
     root = Path(td)
-    for k, name in enumerate(['int-hash', 'crc32', 'sieve', 'branchy', 'pointer', 'pre-post', 'ldp-stp']):
+    names = ['int-hash', 'crc32', 'sieve', 'branchy', 'pointer', 'pre-post', 'ldp-stp']
+    if on == 'loopra2': names += ['diamond', 'early-exit', 'nested']
+    for k, name in enumerate(names):
         guest, native, cache = root / name, root / (name + '-x86'), root / (name + '-cache')
         cache.mkdir()
         for arch, dest in [('arm64', guest), ('x86_64', native)]:
@@ -52,5 +56,14 @@ with tempfile.TemporaryDirectory(prefix='loopra-aot-') as td:
         assert p.stdout.strip() == expected and re.search(r'aot: loaded [1-9]', p.stderr), p.stderr
         assert re.search(r'aot: loop_regions=0(?:\s|$)', p.stderr), p.stderr
         print(f'PASS {name}: loopra=off rejects on-cache, distinct identity, warm output matches, aot_loop_regions=0', flush=True)
-print('PASS loopra AOT: all 7 workloads and cache identities match')
+        if k >= 7:
+            disabled = {**env, 'ATTESOR_JIT_OFF': 'loopra2'}
+            p = run([binary, guest], disabled)
+            assert p.stdout.strip() == expected and not re.search(r'aot: loaded [1-9]', p.stderr), p.stderr
+            assert files[0].read_bytes()[8:12] != default_header[8:12]
+            p = run([binary, guest], {**disabled, 'ATTESOR_NO_AOT_BUILD': '1'})
+            assert p.stdout.strip() == expected and re.search(r'aot: loaded [1-9]', p.stderr), p.stderr
+            print(f'PASS {name}: loopra2-only toggle has a distinct AOT identity and matching warm output', flush=True)
+
+print(f'PASS loopra AOT: all {len(names)} workloads and cache identities match; jit_on={on or "none"}')
 PY

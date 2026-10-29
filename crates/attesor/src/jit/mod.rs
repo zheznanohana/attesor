@@ -128,6 +128,7 @@ static COUNT_LOOP_REGIONS: AtomicBool = AtomicBool::new(false);
 /// Loopra public region entries actually executed (not compilations or backedges).
 /// Ordinary loops and the write-through regioncache do not count.
 static STATS_LOOP_REGIONS: AtomicU64 = AtomicU64::new(0);
+static STATS_MULTI_LOOP_REGIONS: AtomicU64 = AtomicU64::new(0);
 static STATS_AOT_LOOP_REGIONS: AtomicU64 = AtomicU64::new(0);
 
 pub fn stats_enabled() -> bool {
@@ -338,6 +339,7 @@ fn translate_inner(pc: u64) -> u64 {
         lo = lo.min(lpc);
         hi = hi.max(lpc);
     }
+    if let Some((a, b)) = u.extra_guest_range { lo = lo.min(a); hi = hi.max(b); }
     // The last block can run up to MAX_BLOCK_INSNS instructions past its label.
     let hi = hi + (emit::MAX_BLOCK_INSNS as u64 + 1) * 4;
     let id = ix.units.len() as u32;

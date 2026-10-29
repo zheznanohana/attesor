@@ -602,9 +602,9 @@ fn loop_insn(rng: &mut Rng, pool: &[u32], wide: bool, i: usize, index_option: u3
     }
 }
 
-/// Bounded single-block loops, plus side-exit, interpreter-helper and in-body
-/// SVC probes. Side exits/SVC split basic blocks deliberately: those cases must
-/// remain correct even when a loop is ineligible for the region optimization.
+/// Bounded single/multi-block loops: diamonds, side exits in either arm,
+/// helpers in one arm, flag-carrying joins, multiple latches and nested reentry.
+/// The same random memory/FP/alias/pressure operands run on the new path.
 fn run_selftest_loops(count: usize, seed: u64) {
     assert_ne!(seed, 0, "xorshift seed must be nonzero");
     let counting = COUNT_LOOP_REGIONS.swap(true, Ordering::Relaxed);
@@ -620,6 +620,9 @@ fn run_selftest_loops(count: usize, seed: u64) {
     let (mut ok, mut bad, mut skipped, mut native) = (0u64, 0u64, 0u64, 0u64);
     let (mut max_blocks, mut nested_entries, mut aliases, mut q_scale16, mut negative_sxtw) = (0u64,0u64,0u64,0u64,0u64);
     let regions0 = STATS_LOOP_REGIONS.load(Ordering::Relaxed);
+    let multi0 = STATS_MULTI_LOOP_REGIONS.load(Ordering::Relaxed);
+    let mut multi_cases = 0;
+    let mut guest_calls = 0;
     for it in 0..count {
         let wide = (it / 8) % 4 == 0;
         let pool_len = if wide { 12 + rng.next() as usize % 5 } else { 3 + rng.next() as usize % 4 };
@@ -630,13 +633,54 @@ fn run_selftest_loops(count: usize, seed: u64) {
         let branch_kind = it % 3;
         let max_body = it % 32 == 0;
         let nested = it % 16 == 1;
+        let shape = (it / 8) % 8;
         let len = if max_body { emit::MAX_BLOCK_INSNS - if branch_kind == 2 {3} else {2} }
             else if wide { pool_len - 2 } else { 2 + rng.next() as usize % 13 };
         let iterations = 1 + rng.next() % if max_body || nested {3} else {50};
         let outer = if nested { 2 + rng.next() % 15 } else {1};
         let index_option = [2,3,6,7][it % 4];
         let mut prog = Vec::new();
-        let mut side_branch = None;
+        let mut side_branches = Vec::new();
+        let mut guest_call = None;
+        if !max_body && shape != 0 {
+            multi_cases += 1;
+            // Both arms contain random operand forms. Even/odd trip counts
+            // exercise both arms repeatedly, with a single fixed assignment.
+            if shape == 7 {
+                prog.push(0xd100_0000 | ((1 + rng.next() % iterations) as u32) << 10 | (28 << 5) | 27);
+                side_branches.push(prog.len()); prog.push(0);
+            }
+            let split = prog.len(); prog.push(0); // TBZ counter -> second arm
+            for i in 0..3 { prog.push(loop_insn(&mut rng, &pool, wide, i, index_option)); }
+            if shape == 2 {
+                if it & 1 != 0 {
+                    guest_call = Some(prog.len()); prog.push(0); // BL callee, patched below
+                    guest_calls += 1;
+                } else {
+                    prog.push(0x1ac0_4000 | (pool[1] << 16) | (pool[0] << 5) | pool[0]);
+                }
+            }
+            if shape == 3 || shape == 6 {
+                prog.push(0xd100_0000 | ((1 + rng.next() % iterations) as u32) << 10 | (28 << 5) | 27);
+                side_branches.push(prog.len()); prog.push(0);
+            }
+            let join = prog.len(); prog.push(0); // B join
+            let arm = prog.len();
+            for i in 0..3 { prog.push(loop_insn(&mut rng, &pool, wide, i+3, index_option)); }
+            if shape == 3 || shape == 7 {
+                prog.push(0xd100_0000 | ((1 + rng.next() % iterations) as u32) << 10 | (28 << 5) | 27);
+                side_branches.push(prog.len()); prog.push(0);
+            }
+            prog[split] = 0x3600_001c | (((arm - split) as u32) << 5);
+            prog[join] = 0x1400_0000 | ((prog.len() - join) as u32);
+            if shape == 4 {
+                // NZCV survives a non-flag-setting branch and an internal join.
+                prog.push(0xf100_071f); // cmp x24,#1
+                prog.push(0x3600_005c); // tbz w28,#0,+8
+                prog.push(0xd503_201f); // nop
+                prog.push(0x9a9f_07fa); // cset x26,ne
+            }
+        }
         for i in 0..len {
             prog.push(loop_insn(&mut rng, &pool, wide, i, index_option));
             if !max_body && i == 0 && it % 16 < 4 {
@@ -655,7 +699,7 @@ fn run_selftest_loops(count: usize, seed: u64) {
                         // still positive here, so subtracting zero never takes it.
                         let at = if exit_kind == 4 { 1 + rng.next() % iterations } else { 0 };
                         prog.push(0xd100_0000 | ((at as u32) << 10) | (28 << 5) | 27);
-                        side_branch = Some(prog.len());
+                        side_branches.push(prog.len());
                         prog.push(0); // CBZ x27, side_svc (patched below)
                     }
                     6 => {
@@ -674,12 +718,22 @@ fn run_selftest_loops(count: usize, seed: u64) {
         // bit. NEG(counter) has its sign bit set exactly while counter > 0.
         prog.push(sf | 0x5100_0400 | (if branch_kind == 0 { 1 << 29 } else { 0 }) | (28 << 5) | 28);
         if branch_kind == 2 { prog.push(sf | 0x4b00_0000 | (28 << 16) | (31 << 5) | 27); }
-        let back = -(prog.len() as i32) as u32;
-        prog.push(match branch_kind {
-            0 => 0x5400_0001 | ((back & 0x7ffff) << 5),
-            1 => sf | 0x3500_0000 | ((back & 0x7ffff) << 5) | 28,
-            _ => sf | 0x3700_0000 | (31 << 19) | ((back & 0x3fff) << 5) | 27,
-        });
+        let latch = |at: usize| {
+            let back = -(at as i32) as u32;
+            match branch_kind {
+                0 => 0x5400_0001 | ((back & 0x7ffff) << 5),
+                1 => sf | 0x3500_0000 | ((back & 0x7ffff) << 5) | 28,
+                _ => sf | 0x3700_0000 | (31 << 19) | ((back & 0x3fff) << 5) | 27,
+            }
+        };
+        if !max_body && shape == 5 {
+            // Alternate between two genuinely executed backedges. All inserted
+            // branches preserve NZCV produced by SUBS on the flag-based form.
+            prog.push(0x3600_007c); // tbz w28,#0,+12
+            prog.push(latch(prog.len()));
+            prog.push(0x1400_0002); // b exit
+            prog.push(latch(prog.len()));
+        } else { prog.push(latch(prog.len())); }
         if max_body { assert_eq!(prog.len(),emit::MAX_BLOCK_INSNS); max_blocks += 1; }
         if nested { nested_entries += outer; }
         if index_option == 6 { negative_sxtw += 1; }
@@ -697,11 +751,16 @@ fn run_selftest_loops(count: usize, seed: u64) {
             prog.push(0x1400_0000 | (back & 0x3ff_ffff));
         }
         prog.push(0xd400_1001); // normal exit: SVC #0x80
-        if let Some(at) = side_branch {
+        for at in side_branches {
             let offset = (prog.len() - at) as u32;
             prog[at] = 0xb400_0000 | (offset << 5) | 27;
         }
         prog.push(0xd400_1021); // side exit: SVC #0x81
+        if let Some(at) = guest_call {
+            prog[at] = 0x9400_0000 | (prog.len()-at) as u32;
+            prog.push(0x1ac0_4000 | (pool[1] << 16) | (27 << 5) | 27); // CRC32B w27,w27,wM
+            prog.push(0xd65f_03c0); // RET: x30 was set by BL
+        }
         unsafe {
             for (i, &w) in prog.iter().enumerate() { *((page + i as u64 * 4) as *mut u32) = w; }
         }
@@ -732,9 +791,11 @@ fn run_selftest_loops(count: usize, seed: u64) {
         let mut reference = clone_cpu(&init);
         let limit = (prog.len() + 1) * (iterations as usize + 1) * (outer as usize + 1);
         let mut svc = None;
+        let mut helper_probe_executed = false;
         for _ in 0..limit {
             let idx = reference.pc().wrapping_sub(page) / 4;
             let Some(&w) = prog.get(idx as usize) else { break };
+            helper_probe_executed |= w & 0xffe0_fc00 == 0x1ac0_4000;
             match interp::exec(&mut reference, w) {
                 Ok(()) => {}
                 Err(Exit::Svc(imm)) => { svc = Some(imm); break; }
@@ -760,7 +821,7 @@ fn run_selftest_loops(count: usize, seed: u64) {
         let fallbacks = STATS_FALLBACK.load(Ordering::Relaxed) - fb0;
         if fallbacks == 0 { native += 1; }
         // Keep the fallback probe honest if native instruction coverage changes.
-        assert!(exit_kind != 6 || fallbacks != 0, "loop fallback probe became native");
+        assert!(!helper_probe_executed || fallbacks != 0, "loop fallback probe became native");
         let (a, b) = (snapshot(&reference), snapshot(&translated));
         let mem_diff = buf != expected_memory;
         if a != b || mem_diff || reference.pc() != translated.pc()
@@ -785,7 +846,8 @@ fn run_selftest_loops(count: usize, seed: u64) {
     unsafe { libc::munmap(page as *mut libc::c_void, 0x1000); }
     COUNT_LOOP_REGIONS.store(counting, Ordering::Relaxed);
     let loop_regions = STATS_LOOP_REGIONS.load(Ordering::Relaxed) - regions0;
-    println!("jit selftest [loops]: ok={ok} mismatch={bad} skipped={skipped} native={native} loop_regions={loop_regions} seed={seed:#x} max_blocks={max_blocks} nested_entries={nested_entries} aliases={aliases} q_scale16={q_scale16} negative_sxtw={negative_sxtw}");
+    let multi_regions = STATS_MULTI_LOOP_REGIONS.load(Ordering::Relaxed) - multi0;
+    println!("jit selftest [loops]: ok={ok} mismatch={bad} skipped={skipped} native={native} loop_regions={loop_regions} seed={seed:#x} max_blocks={max_blocks} nested_entries={nested_entries} aliases={aliases} q_scale16={q_scale16} negative_sxtw={negative_sxtw} multi_cases={multi_cases} multi_regions={multi_regions} guest_calls={guest_calls}");
     assert_eq!(bad, 0, "loop differential mismatches");
 }
 
