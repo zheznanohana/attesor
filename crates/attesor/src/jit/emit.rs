@@ -105,6 +105,8 @@ pub struct Unit {
     /// r11 holds the TBI mask on every path to this point. Per-block, never
     /// established under conditional emission, invalidated by scratch writes/calls.
     pub tbi_mask_live: bool,
+    /// Rare FP fixups, emitted after the current block's unconditional transfer.
+    cold_paths: Vec<Box<dyn FnOnce(&mut Unit)>>,
 }
 
 pub const NCREGS: usize = 5;
@@ -331,7 +333,15 @@ impl Unit {
             vc: VCache::new(),
             vc_dest: [0xff; 2],
             tbi_mask_live: false,
+            cold_paths: Vec::new(),
         }
+    }
+
+    fn emit_cold_paths(&mut self) {
+        for emit in std::mem::take(&mut self.cold_paths) {
+            emit(self);
+        }
+        debug_assert!(self.cold_paths.is_empty());
     }
 
     /// Emit the shared "jump to dispatcher" tail. Call once after all blocks.
@@ -458,6 +468,14 @@ macro_rules! a {
     ($e:expr, $m:ident ( $($arg:expr),* )) => { $e.u.a.$m($($arg),*).unwrap() };
 }
 
+/// A V operand location captured before emitting an out-of-line fixup. Cold
+/// emission must never consult the cache state of a later guest instruction.
+#[derive(Clone, Copy)]
+struct FpSource {
+    cached: Option<AsmRegisterXmm>,
+    offset: i32,
+}
+
 impl<'a> E<'a> {
     fn rc_find(&self, n: u32) -> Option<usize> {
         self.u.rc.reg.iter().position(|&r| r as u32 == n)
@@ -534,21 +552,42 @@ impl<'a> E<'a> {
     }
     /// Scalar FP operand Vn into `x` (64-bit lane for double, 32-bit otherwise), rest of `x` zero.
     fn fld_scalar(&mut self, x: AsmRegisterXmm, n: u32, double: bool) {
+        let src = self.scalar_source(n);
+        self.fld_source(x, src, double);
+    }
+    fn scalar_source(&mut self, n: u32) -> FpSource {
         let cached = self.vsrc(n).or_else(|| {
             self.scalar_inputs.as_ref()
                 .and_then(|vc| vc.reg.iter().position(|&r| r as u32 == n))
                 .map(|s| VREGS[s])
         });
-        match cached {
+        FpSource { cached, offset: voff(n) }
+    }
+    fn fld_source(&mut self, x: AsmRegisterXmm, src: FpSource, double: bool) {
+        match src.cached {
             Some(c) if double => a!(self, movq(x, c)),
             Some(c) => {
                 a!(self, xorps(x, x));
                 a!(self, movss(x, c));
             }
-            None if double => a!(self, movsd_2(x, qword_ptr(r15 + voff(n)))),
-            None => a!(self, movss(x, dword_ptr(r15 + voff(n)))),
+            None if double => a!(self, movsd_2(x, qword_ptr(r15 + src.offset))),
+            None => a!(self, movss(x, dword_ptr(r15 + src.offset))),
         }
     }
+    /// Register contracts are the same as the hot FP helper: only xmm0-xmm7
+    /// and rax/rcx/rdx/r11 may be scratched, with no cache fills or helper calls.
+    fn cold_path(&mut self, mut cold: CodeLabel, emit: impl FnOnce(&mut E<'_>) + 'static) {
+        let mut resume = self.u.a.create_label();
+        self.u.a.set_label(&mut resume).unwrap();
+        let pc = self.pc;
+        self.u.cold_paths.push(Box::new(move |u| {
+            u.a.set_label(&mut cold).unwrap();
+            let mut e = E { u, pc, fuse_in: None, scalar_inputs: None };
+            emit(&mut e);
+            a!(e, jmp(resume));
+        }));
+    }
+
     /// Is the current bank-local value read before a known overwrite in the
     /// lookahead? Unknown encodings are conservative; this affects speed only.
     fn used_soon_bank(&self, n: u32, vector: bool) -> bool {
@@ -1259,6 +1298,7 @@ pub fn emit_block(u: &mut Unit, pc: u64, read: &dyn Fn(u64) -> Option<u32>) -> u
             // Unreadable: let the dispatcher fault properly.
             let mut e = E { u, pc: cur, fuse_in: None, scalar_inputs: None };
             e.st_pc_and_exit(cur);
+            u.emit_cold_paths();
             return cur;
         };
         let fuse_in = u.fuse.take();
@@ -1326,6 +1366,7 @@ pub fn emit_block(u: &mut Unit, pc: u64, read: &dyn Fn(u64) -> Option<u32>) -> u
         cur += 4;
         count += 1;
         if term {
+            u.emit_cold_paths();
             return cur;
         }
         // a fused pair consumed the next instruction too: step over it (its pc is not a label)
@@ -1348,12 +1389,14 @@ pub fn emit_block(u: &mut Unit, pc: u64, read: &dyn Fn(u64) -> Option<u32>) -> u
         if count >= MAX_BLOCK_INSNS {
             let mut e = E { u, pc: cur, fuse_in: None, scalar_inputs: None };
             e.goto(cur);
+            u.emit_cold_paths();
             return cur;
         }
         // Stop before running into another block of this unit: jump to it.
         if u.labels.contains_key(&cur) {
             let mut e = E { u, pc: cur, fuse_in: None, scalar_inputs: None };
             e.goto(cur);
+            u.emit_cold_paths();
             return cur;
         }
     }
@@ -2952,12 +2995,6 @@ impl<'a> E<'a> {
     /// Vector form of `fix_default_nan` on xmm0 (uses xmm2-xmm5).
     fn vfix_default_nan(&mut self, double: bool) {
         // x86's "real indefinite" NaN has the sign bit set; ARM's default NaN does not.
-        // Usually no lane is a NaN at all: test that first (4 instructions instead of 13).
-        let mut l_ok = self.new_label();
-        a!(self, movdqa(xmm3, xmm0));
-        if double { a!(self, cmppd(xmm3, xmm3, 3)); } else { a!(self, cmpps(xmm3, xmm3, 3)); }
-        a!(self, ptest(xmm3, xmm3));
-        a!(self, jz(l_ok));
         if double {
             self.vconst(xmm2, 0xFFF8_0000_0000_0000);
             a!(self, movdqa(xmm3, xmm0));
@@ -2974,8 +3011,6 @@ impl<'a> E<'a> {
         a!(self, pand(xmm3, xmm4));
         a!(self, por(xmm5, xmm3));
         a!(self, movdqa(xmm0, xmm5));
-        self.u.a.set_label(&mut l_ok).unwrap();
-        a!(self, nop());
     }
 
     /// Overlay a quieted NaN source onto xmm0, using xmm3-xmm5 only. Sources
@@ -3069,18 +3104,24 @@ impl<'a> E<'a> {
     /// Binary vector arithmetic, with the second source still in xmm1. Reload
     /// the first source only on the rare NaN path, before the destination store.
     fn vfix_binary_nan(&mut self, double: bool, rn: u32, q: bool) {
-        let mut ordered = self.new_label();
+        let src = FpSource { cached: self.vsrc(rn), offset: voff(rn) };
+        let cold = self.u.a.create_label();
         a!(self, movdqa(xmm3, xmm0));
         if double { a!(self, cmppd(xmm3, xmm3, 3)); } else { a!(self, cmpps(xmm3, xmm3, 3)); }
         a!(self, ptest(xmm3, xmm3));
-        a!(self, jz(ordered));
-        self.vfix_default_nan(double);
-        self.vld(xmm6, rn, q);
-        for signalling in [false, true] {
-            for src in [xmm1, xmm6] { self.select_nan(double, src, signalling); }
-        }
-        self.u.a.set_label(&mut ordered).unwrap();
-        a!(self, nop());
+        a!(self, jnz(cold));
+        self.cold_path(cold, move |e| {
+            e.vfix_default_nan(double);
+            match src.cached {
+                Some(c) if q => a!(e, movdqa(xmm6, c)),
+                Some(c) => a!(e, movq(xmm6, c)),
+                None if q => a!(e, movdqu(xmm6, xmmword_ptr(r15 + src.offset))),
+                None => a!(e, movq(xmm6, qword_ptr(r15 + src.offset))),
+            }
+            for signalling in [false, true] {
+                for src in [xmm1, xmm6] { e.select_nan(double, src, signalling); }
+            }
+        });
     }
 
     /// Fused multiply-add with ARM NaN selection: xmm0 = op1 (already negated for FMLS-like forms),
@@ -3090,15 +3131,18 @@ impl<'a> E<'a> {
     fn fma_arm(&mut self, double: bool) {
         a!(self, movdqa(xmm6, xmm2)); // addend
         a!(self, movdqa(xmm7, xmm0)); // op1
-        // 213 writes the final result register directly. An ordered result can
-        // skip the slow path with one branch, without a result copy or a second jump.
+        // 213 writes the final result register directly.
         if double { a!(self, vfmadd213pd(xmm0, xmm1, xmm2)); } else { a!(self, vfmadd213ps(xmm0, xmm1, xmm2)); }
         // no NaN lane in the result: no NaN went in and nothing was invalid, x86 and ARM agree exactly
-        let mut l_end = self.new_label();
+        let cold = self.u.a.create_label();
         a!(self, movdqa(xmm3, xmm0));
         if double { a!(self, cmppd(xmm3, xmm3, 3)); } else { a!(self, cmpps(xmm3, xmm3, 3)); }
         a!(self, ptest(xmm3, xmm3));
-        a!(self, jz(l_end));
+        a!(self, jnz(cold));
+        self.cold_path(cold, move |e| e.fma_nan(double));
+    }
+
+    fn fma_nan(&mut self, double: bool) {
         self.vfix_default_nan(double);
         // The product is NaN from inf*0 only when neither multiplicand was
         // already NaN. Comparing its bits with x86's indefinite pattern also
@@ -3139,8 +3183,6 @@ impl<'a> E<'a> {
         a!(self, pandn(xmm2, xmm0));
         a!(self, por(xmm2, xmm3));
         a!(self, movdqa(xmm0, xmm2));
-        self.u.a.set_label(&mut l_end).unwrap();
-        a!(self, nop());
     }
 
     /// ARM FMAX/FMIN/FMAXNM/FMINNM on every lane: xmm0 = op(xmm0, xmm1), using xmm2-xmm5.
@@ -3148,7 +3190,36 @@ impl<'a> E<'a> {
     /// min = -0 (AND/OR of equal values), NM forms pick the number over a quiet NaN, the others
     /// propagate the first NaN, quietened; a signalling NaN always wins (FPProcessNaNs: sNaN a, sNaN b,
     /// then the quiet ones), quietened. Exact for every input. Uses xmm2-xmm7.
-    fn fp_maxmin(&mut self, double: bool, max: bool, nm: bool) {
+    fn fp_maxmin(&mut self, double: bool, max: bool, nm: bool, scalar: bool, q: bool) {
+        let cold = self.u.a.create_label();
+        if scalar {
+            if double { a!(self, ucomisd(xmm0, xmm1)); } else { a!(self, ucomiss(xmm0, xmm1)); }
+            a!(self, je(cold)); // equal or unordered
+        } else {
+            a!(self, movdqa(xmm3, xmm0));
+            a!(self, movdqa(xmm4, xmm0));
+            if double {
+                a!(self, cmppd(xmm3, xmm1, 0));
+                a!(self, cmppd(xmm4, xmm1, 3));
+            } else {
+                a!(self, cmpps(xmm3, xmm1, 0));
+                a!(self, cmpps(xmm4, xmm1, 3));
+            }
+            a!(self, por(xmm3, xmm4));
+            if !q { a!(self, movq(xmm3, xmm3)); }
+            a!(self, ptest(xmm3, xmm3));
+            a!(self, jnz(cold));
+        }
+        match (double, max) {
+            (false, true) => a!(self, maxps(xmm0, xmm1)),
+            (false, false) => a!(self, minps(xmm0, xmm1)),
+            (true, true) => a!(self, maxpd(xmm0, xmm1)),
+            (true, false) => a!(self, minpd(xmm0, xmm1)),
+        }
+        self.cold_path(cold, move |e| e.fp_maxmin_exact(double, max, nm));
+    }
+
+    fn fp_maxmin_exact(&mut self, double: bool, max: bool, nm: bool) {
         let unord = |e: &mut Self, x: AsmRegisterXmm| if double { a!(e, cmppd(x, x, 3)) } else { a!(e, cmpps(x, x, 3)) };
         // FPCR.FZ flushes denormal inputs to signed zeros before comparing: x*1.0 does that under the host
         // DAZ the FPCR sync sets (and is exact without it); NaN lanes keep their bits for the sNaN rules.
@@ -3242,11 +3313,17 @@ impl<'a> E<'a> {
 
     /// Replace the x86 "real indefinite" NaN produced by invalid operations with the ARM default NaN.
     fn fix_default_nan(&mut self, double: bool, rn: u32, rm: Option<u32>) {
-        let mut skip = self.new_label();
-        let mut select = self.new_label();
+        let nsrc = self.scalar_source(rn);
+        let msrc = rm.map(|m| self.scalar_source(m));
+        let cold = self.u.a.create_label();
         // not a NaN (the usual case): nothing to fix
         if double { a!(self, ucomisd(xmm0, xmm0)); } else { a!(self, ucomiss(xmm0, xmm0)); }
-        a!(self, jnp(skip));
+        a!(self, jp(cold));
+        self.cold_path(cold, move |e| e.scalar_nan(double, nsrc, msrc));
+    }
+
+    fn scalar_nan(&mut self, double: bool, nsrc: FpSource, msrc: Option<FpSource>) {
+        let mut select = self.new_label();
         if double {
             a!(self, movq(rax, xmm0));
             self.mov_imm(rcx, 0xFFF8_0000_0000_0000);
@@ -3263,14 +3340,12 @@ impl<'a> E<'a> {
         }
         self.u.a.set_label(&mut select).unwrap();
         a!(self, nop());
-        self.fld_scalar(xmm6, rn, double);
-        if let Some(rm) = rm { self.fld_scalar(xmm1, rm, double); }
+        self.fld_source(xmm6, nsrc, double);
+        if let Some(src) = msrc { self.fld_source(xmm1, src, double); }
         for signalling in [false, true] {
-            if rm.is_some() { self.select_nan(double, xmm1, signalling); }
+            if msrc.is_some() { self.select_nan(double, xmm1, signalling); }
             self.select_nan(double, xmm6, signalling);
         }
-        self.u.a.set_label(&mut skip).unwrap();
-        a!(self, nop());
     }
 
     fn simd_fp(&mut self, insn: u32) -> bool {
@@ -4527,7 +4602,7 @@ impl<'a> E<'a> {
                         self.vld(xmm0, rn, q);
                         self.vld(xmm1, rm, q);
                     }
-                    self.fp_maxmin(double, max, nm);
+                    self.fp_maxmin(double, max, nm, scalar, q);
                     if scalar {
                         // upper lanes were zero in both operands; clear whatever the quiet-NaN step set
                         if double { a!(self, movq(xmm0, xmm0)); } else { a!(self, insertps(xmm0, xmm0, 0x0E)); }
@@ -6740,5 +6815,97 @@ mod fpcr_boundary_tests {
                 }
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod fp_cold_tests {
+    use super::*;
+    use attesor_core::{cpu::Cpu, interp};
+
+    #[test]
+    fn fixups_resume_and_flush_at_every_block_ending() {
+        const PC: u64 = 0x4000_0000;
+        for ending in 0..4 {
+            // FADD D1,D1,D2 aliases its cached input on subsequent iterations.
+            let mut words = vec![0x1e622821; if ending == 2 { MAX_BLOCK_INSNS } else { 3 }];
+            if ending == 0 { words.push(0xd4001001); }
+            let mut u = Unit::new(StubKind::Plain, false);
+            let entry = u.a.create_label(); u.labels.insert(PC, entry);
+            if ending == 3 {
+                let join = u.a.create_label(); u.labels.insert(PC + 8, join);
+            }
+            let read = |p| words.get(((p - PC) / 4) as usize).copied();
+            let end = emit_block(&mut u, PC, &read);
+            assert!(u.cold_paths.is_empty());
+            assert_eq!(u.insns_fallback, 0);
+            if ending == 3 {
+                // A following public entry must come after all the first block's cold paths.
+                emit_block(&mut u, PC + 8, &read);
+                assert!(u.cold_paths.is_empty());
+            }
+            u.finish();
+            let host = crate::jit::code_cache().alloc(65536);
+            let bytes = u.a.assemble(host).unwrap();
+            assert!(bytes.len() <= 65536);
+            unsafe { std::ptr::copy_nonoverlapping(bytes.as_ptr(), host as *mut u8, bytes.len()); }
+            let mut c = Cpu::new(); crate::jit::setup_cpu(&mut c);
+            c.set_vq(1, 0xfff8_0000_0000_0000); // propagated x86-indefinite-looking NaN
+            c.set_vq(2, 0x7ff0_0000_0000_1234); // signalling operand has priority
+            c.x = [0x1234_5678_9abc_def0; 32];
+            unsafe { crate::jit::attesor_jit_enter(&mut *c, host); }
+            assert_eq!(c.vq(1), 0x7ff8_0000_0000_1234, "ending={ending}");
+            assert_eq!(c.vq(2), 0x7ff0_0000_0000_1234);
+            assert_eq!(c.x, [0x1234_5678_9abc_def0; 32]);
+            assert_eq!(c.pc, if ending == 0 { end } else { PC + words.len() as u64 * 4 });
+        }
+    }
+
+    #[test]
+    fn maxmin_fast_and_cold_lanes_match_with_flush_to_zero() {
+        const PC: u64 = 0x5000_0000;
+        for base in [0x1e224820, 0x0e22f420, 0x4e22f420, 0x4e62f420] {
+            let scalar = base >> 24 == 0x1e;
+            let double = base & (1 << 22) != 0;
+            for variant in 0..4 {
+                let word = if scalar { base | (variant << 12) }
+                    else { base ^ ((variant & 1) << 23) ^ ((variant >> 1) * 0x3000) };
+                let mut u = Unit::new(StubKind::Plain, false);
+                let label = u.a.create_label(); u.labels.insert(PC, label);
+                emit_block(&mut u, PC, &|p| match p - PC { 0 => Some(word), 4 => Some(0xd4001001), _ => None });
+                assert_eq!(u.insns_fallback, 0, "word={word:08x}");
+                u.finish();
+                let host = crate::jit::code_cache().alloc(8192);
+                let bytes = u.a.assemble(host).unwrap();
+                unsafe { std::ptr::copy_nonoverlapping(bytes.as_ptr(), host as *mut u8, bytes.len()); }
+                let values: &[u64] = if double {
+                    &[0, 1 << 63, 1, 0x8000_0000_0000_0001, 0x3ff0_0000_0000_0000,
+                      0xbff0_0000_0000_0000, 0x7ff0_0000_0000_0000, 0x7ff8_0000_0000_1234, 0xfff0_0000_0000_1234]
+                } else {
+                    &[0, 1 << 31, 1, 0x8000_0001, 0x3f80_0000, 0xbf80_0000, 0x7f80_0000, 0x7fc0_1234, 0xff80_1234]
+                };
+                let width = if double { 64 } else { 32 };
+                let lanes = if scalar { 1 } else if word & (1 << 30) != 0 { 128 / width } else { 64 / width };
+                for fz in [false, true] { for &a in values { for &b in values {
+                    let mut c = Cpu::new(); crate::jit::setup_cpu(&mut c);
+                    c.fpcr = if fz { 1 << 24 } else { 0 };
+                    let mut va = 0; let mut vb = 0;
+                    for lane in 0..lanes {
+                        // Mix ordinary and exceptional lanes.
+                        va |= (if lane & 1 == 0 { a } else { 0 } as u128) << (lane * width);
+                        vb |= (if lane & 1 == 0 { b } else { values[4] } as u128) << (lane * width);
+                    }
+                    c.set_vq(1, va); c.set_vq(2, vb);
+                    let mut expected = Cpu::new(); expected.fpcr = c.fpcr;
+                    expected.set_vq(1, va); expected.set_vq(2, vb);
+                    interp::sys_sync_host_fp_mode(c.fpcr);
+                    interp::exec(&mut expected, word).unwrap();
+                    interp::sys_sync_host_fp_mode(c.fpcr);
+                    unsafe { crate::jit::attesor_jit_enter(&mut *c, host); }
+                    assert_eq!(c.vq(0), expected.vq(0), "word={word:08x} a={a:x} b={b:x} fz={fz}");
+                }}}
+            }
+        }
+        interp::sys_sync_host_fp_mode(0);
     }
 }
