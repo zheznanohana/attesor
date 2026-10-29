@@ -61,3 +61,22 @@ Do not run long benchmarks; Claude measures performance.
 ## Report (last message)
 Changed functions, before/after code size of the nbody loop (bytes and instruction count), exact test
 lines, anything uncertain, commit hashes.
+
+## Review round 1 (Claude)
+Accepted: A1 cold paths (hot nbody block 5,731 B / 1,183 insns -> 925 B / 176 insns), captured `FpSource`,
+the tests. Required changes before merge:
+1. **No second assembly pass.** `finish_constants` assembles the whole Unit once more just to compute the
+   pool alignment. Measured: FP-heavy translation (`--selftest-jit fpblocks 100000`, 3 alternating runs)
+   46.3/49.5/50.9 s -> 49.9/57.3/55.5 s (+8..15%). Translation time is startup time. Remove the pass:
+   do not require 16-byte alignment. Use VEX-encoded forms with memory operands (unaligned allowed) when
+   the host has AVX (`has_fma()` implies it; add an `has_avx()` check), otherwise `movdqu xmm_scratch, [rip+c]`
+   then the register form. Keep deduplication; the pool may be emitted unaligned with `dq`.
+2. **Enforce the cold-path register contract.** Today no cold path writes r11, CREGS or xmm8-xmm15, but
+   nothing guarantees it. In `cold_path`, record the instruction index range each cold emission produced
+   and, in debug builds and in a unit test that translates every FP fixup site, check with iced's
+   instruction info that none of them writes rbx/rbp/r12/r13/r14/r15/rsp, r11 while `tbi_mask_live`
+   was true at the jump-out point, or xmm8-xmm15. (Add the iced `instr_info` feature if needed.)
+3. Then re-run the full test list from this brief and report fpblocks-translation timing the same way
+   (3 alternating runs vs `~/attesor/target/release/attesor`), plus the nbody hot/whole-unit sizes.
+Commit on branch `fpcold` (git works now: first commit your A1 and A2 work as two commits from the saved
+patches in target/fpcold/, then the fixes).
