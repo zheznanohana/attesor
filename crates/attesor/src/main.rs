@@ -168,7 +168,7 @@ fn main() {
     let gpu_active = std::env::var_os("ATTESOR_GPU").is_some()
         && std::env::var("ATTESOR_GPU_ONLY").map(|o| args.iter().skip(1).any(|a| a.contains(&o))).unwrap_or(true);
     let mut envp: Vec<String> = std::env::vars()
-        .filter(|(k, _)| !k.starts_with("ATTESOR_") || matches!(k.as_str(), "ATTESOR_DUMP_ON_FAULT" | "ATTESOR_GPU_BRIDGE" | "ATTESOR_UI_TRACE" | "ATTESOR_NO_DOCK_ICON" | "ATTESOR_STDERR_LOG" | "ATTESOR_CACHE" | "ATTESOR_NO_AOT_BUILD" | "ATTESOR_AOT_SYNC" | "ATTESOR_JIT_DISABLE" | "ATTESOR_JIT_THRESHOLD" | "ATTESOR_STATS" | "ATTESOR_FALLBACK_HIST"))
+        .filter(|(k, _)| !k.starts_with("ATTESOR_") || matches!(k.as_str(), "ATTESOR_DUMP_ON_FAULT" | "ATTESOR_GPU_BRIDGE" | "ATTESOR_UI_TRACE" | "ATTESOR_NO_DOCK_ICON" | "ATTESOR_STDERR_LOG" | "ATTESOR_CACHE" | "ATTESOR_NO_AOT_BUILD" | "ATTESOR_AOT_CHECKPOINT" | "ATTESOR_AOT_SYNC" | "ATTESOR_JIT_DISABLE" | "ATTESOR_JIT_THRESHOLD" | "ATTESOR_STATS" | "ATTESOR_FALLBACK_HIST"))
         .map(|(k, v)| format!("{k}={v}"))
         .collect();
 
@@ -224,6 +224,7 @@ fn main() {
         let (lo, hi) = d.vm_range();
         aot::register_dyld(&dyld, d.uuid, lo.wrapping_add(loaded.dyld.slide), hi.wrapping_add(loaded.dyld.slide));
     }
+    aot::start_checkpoints();
     engine::run_thread(&mut cpu);
     // The main thread ended (pthread_exit on main): wait for other threads.
     while threads::LIVE_THREADS.load(Ordering::SeqCst) > 1 {

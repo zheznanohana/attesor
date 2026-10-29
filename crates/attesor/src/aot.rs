@@ -321,6 +321,20 @@ fn load_file(path: &std::path::Path) -> std::io::Result<usize> {
     Ok(n)
 }
 
+/// Run `f` holding an exclusive advisory lock for `img`'s cache files. Processes of one app map the same
+/// library at the same base and so share its profile and translation file; without the lock a
+/// read-merge-write of one process could drop the blocks another had just merged.
+fn with_image_lock<T>(img: &Image, f: impl FnOnce() -> T) -> T {
+    use std::os::unix::io::AsRawFd;
+    let lock = std::fs::OpenOptions::new().create(true).write(true).open(file_for(img, "lock"));
+    if let Ok(l) = &lock {
+        unsafe { libc::flock(l.as_raw_fd(), libc::LOCK_EX) };
+    }
+    let r = f();
+    drop(lock); // closing releases the lock
+    r
+}
+
 fn read_profile(path: &std::path::Path) -> BTreeSet<u64> {
     let mut s = BTreeSet::new();
     if let Ok(d) = std::fs::read(path) {
@@ -333,30 +347,83 @@ fn read_profile(path: &std::path::Path) -> BTreeSet<u64> {
 
 /// Save this run's profile; if it contains new blocks, rebuild AOT files in
 /// a background (forked) process.
-pub fn save_profile() {
-    if !ENABLED.load(Ordering::Relaxed) || SAVED.swap(true, Ordering::SeqCst) {
-        return;
-    }
-    flush_pending();
+/// Merge the blocks seen so far into each image's on-disk profile; returns the images whose profile
+/// grew (or that have no translation file yet), i.e. the ones worth (re)building.
+fn update_profiles() -> Vec<(Image, BTreeSet<u64>)> {
     let imgs = IMAGES.lock().unwrap().clone();
     let seen = SEEN.lock().unwrap().clone();
     let _ = std::fs::create_dir_all(cache_dir());
     let mut rebuild = Vec::new();
     for (i, img) in imgs.iter().enumerate() {
         let path = file_for(img, "profile");
-        let mut prof = read_profile(&path);
-        let before = prof.len();
-        prof.extend(seen[i].iter().copied());
-        let aot_missing = !file_for(img, "aot").exists();
-        if prof.len() != before || (aot_missing && (!prof.is_empty() || !img.entries.is_empty())) {
+        let merged = with_image_lock(img, || {
+            let mut prof = read_profile(&path);
+            let before = prof.len();
+            prof.extend(seen[i].iter().copied());
+            let aot_missing = !file_for(img, "aot").exists();
+            if prof.len() == before && !(aot_missing && (!prof.is_empty() || !img.entries.is_empty())) {
+                return None;
+            }
             let mut buf = Vec::with_capacity(prof.len() * 8);
             for pc in &prof {
                 buf.extend_from_slice(&pc.to_le_bytes());
             }
-            let _ = std::fs::write(&path, buf);
+            // atomic: other processes of the same app read these profiles concurrently
+            let tmp = path.with_extension(format!("profile.{}", std::process::id()));
+            if std::fs::write(&tmp, buf).is_ok() {
+                let _ = std::fs::rename(&tmp, &path);
+            }
+            Some(prof)
+        });
+        if let Some(prof) = merged {
             rebuild.push((img.clone(), prof));
         }
     }
+    rebuild
+}
+
+/// Periodic checkpoints: a background thread updates the profiles and rebuilds the changed images
+/// (first after ATTESOR_AOT_CHECKPOINT seconds, default 60, 0 = off; then every 10 minutes), so a session
+/// that is force-quit or crashes still leaves translations for the next launch. In-process at background QoS.
+pub fn start_checkpoints() {
+    if !ENABLED.load(Ordering::Relaxed) || std::env::var_os("ATTESOR_NO_AOT_BUILD").is_some() {
+        return;
+    }
+    let first: u64 = std::env::var("ATTESOR_AOT_CHECKPOINT").ok().and_then(|v| v.parse().ok()).unwrap_or(60);
+    if first == 0 {
+        return;
+    }
+    let _ = std::thread::Builder::new().name("attesor-aot".into()).spawn(move || {
+        extern "C" {
+            fn pthread_set_qos_class_self_np(qos: u32, relpri: i32) -> i32;
+        }
+        unsafe { pthread_set_qos_class_self_np(0x09, 0) }; // QOS_CLASS_BACKGROUND
+        std::thread::sleep(std::time::Duration::from_secs(first));
+        loop {
+            if SAVED.load(Ordering::SeqCst) {
+                return; // exiting: save_profile has taken over
+            }
+            let changed = update_profiles();
+            if std::env::var_os("ATTESOR_STATS").is_some() {
+                eprintln!("[attesor] aot checkpoint: {} image(s) to rebuild", changed.len());
+            }
+            for (img, prof) in changed {
+                let r = build(&img, &prof);
+                if std::env::var_os("ATTESOR_STATS").is_some() {
+                    eprintln!("[attesor] aot checkpoint: {} ({} profiled blocks): {:?}", img.name, prof.len(), r.as_ref().map(|_| ()));
+                }
+            }
+            std::thread::sleep(std::time::Duration::from_secs(600));
+        }
+    });
+}
+
+pub fn save_profile() {
+    if !ENABLED.load(Ordering::Relaxed) || SAVED.swap(true, Ordering::SeqCst) {
+        return;
+    }
+    flush_pending();
+    let rebuild = update_profiles();
     if rebuild.is_empty() || std::env::var_os("ATTESOR_NO_AOT_BUILD").is_some() {
         return;
     }
@@ -473,7 +540,8 @@ fn build(img: &Image, profile: &BTreeSet<u64>) -> std::io::Result<()> {
         }
     }
     let path = file_for(img, "aot");
-    let tmp = path.with_extension("aot.tmp");
+    // per-process temporary: several processes may build the same image concurrently
+    let tmp = path.with_extension(format!("aot.tmp.{}", std::process::id()));
     let mut f = std::fs::File::create(&tmp)?;
     let mut hdr = Vec::new();
     hdr.extend_from_slice(MAGIC);
@@ -491,7 +559,21 @@ fn build(img: &Image, profile: &BTreeSet<u64>) -> std::io::Result<()> {
     f.write_all(&hdr)?;
     f.write_all(&code)?;
     drop(f);
-    std::fs::rename(tmp, path)?;
+    // keep whichever translation covers more blocks: a builder that started from a smaller profile
+    // and finishes last must not replace a larger file another process wrote meanwhile
+    with_image_lock(img, || {
+        let existing = std::fs::File::open(&path).ok().and_then(|mut e| {
+            let mut h = [0u8; 24];
+            e.read_exact(&mut h).ok()?;
+            (&h[..8] == MAGIC).then(|| u64::from_le_bytes(h[16..24].try_into().unwrap()) as usize)
+        });
+        if existing.is_some_and(|n| n > index.len()) {
+            let _ = std::fs::remove_file(&tmp);
+            Ok(())
+        } else {
+            std::fs::rename(&tmp, &path)
+        }
+    })?;
     Ok(())
 }
 
