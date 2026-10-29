@@ -30,6 +30,7 @@ def main():
     p.add_argument('--after-env', action='append', default=[], metavar='KEY=VALUE')
     p.add_argument('--guest-arg', action='append', default=[])
     p.add_argument('--cold-aot', action='store_true', help='Fresh cache per run, AOT recording enabled, background builds disabled')
+    p.add_argument('--reference', help='Native executable whose non-timing stdout must match every guest run')
     args = p.parse_args()
     if args.runs < 3:
         p.error('--runs must be at least 3')
@@ -65,9 +66,20 @@ def main():
                           metrics=metrics, stdout=result.stdout, stderr=result.stderr)
             samples.append(sample)
             print(f'{round_no + 1}/{args.runs} {label}: {metrics or sample["wall_ms"]}', flush=True)
-    checksums = [re.findall(r'^checksum .+$', s['stdout'], re.M) for s in samples]
-    if any(c != checksums[0] for c in checksums):
-        raise RuntimeError('semantic checksums changed between benchmark runs')
+    def semantic_output(stdout):
+        return '\n'.join(line for line in stdout.splitlines()
+                         if not re.fullmatch(r'\S+\s+[\d.]+ ms', line))
+    outputs = [semantic_output(s['stdout']) for s in samples]
+    if any(value != outputs[0] for value in outputs):
+        raise RuntimeError('non-timing output changed between benchmark runs')
+    reference = None
+    if args.reference:
+        command = [str(Path(args.reference).resolve())] + args.guest_arg
+        result = subprocess.run(command, capture_output=True, text=True, check=True, timeout=300)
+        reference = dict(command=command, stdout=result.stdout,
+                         sha256=hashlib.sha256(Path(args.reference).read_bytes()).hexdigest())
+        if semantic_output(result.stdout) != outputs[0]:
+            raise RuntimeError('guest non-timing output differs from native reference')
     names = samples[0]['metrics'].keys()
     if any(s['metrics'].keys() != names for s in samples):
         raise RuntimeError('benchmark output changed between runs')
@@ -82,7 +94,8 @@ def main():
     report = dict(host=os.uname().nodename,
                   sha256={label: hashlib.sha256(Path(getattr(args, label)).read_bytes()).hexdigest()
                           for label in ['before', 'after', 'guest']},
-                  samples=samples, medians=medians)
+                  samples=samples, medians=medians, reference=reference,
+                  semantic_output_present=bool(outputs[0]))
     Path(args.output).write_text(json.dumps(report, indent=2) + '\n')
     print(json.dumps(medians, indent=2))
 
