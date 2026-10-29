@@ -114,9 +114,12 @@ def main():
         subprocess.run(['clang', '-arch', 'arm64', '-O2', str(exec_source),
                         '-o', str(exec_guest)], check=True)
         subprocess.run(['codesign', '-f', '-s', '-', str(exec_guest)], check=True, capture_output=True)
-        text = run_until('exec-fail', r'aot checkpoint: cache_exec_fail .*Ok', executable=exec_guest)
+        # A background checkpoint can finish during dyld startup, before main
+        # even attempts exec. Require both independent observations before
+        # stopping this process, rather than racing guest stdout against AOT.
+        text = run_until('exec-fail', r'(?s)(?=.*EXEC_FAILED_EXPECTED)(?=.*aot checkpoint: cache_exec_fail [^\n]*Ok)', executable=exec_guest)
         assert 'EXEC_FAILED_EXPECTED' in text
-        run_until('warm-exec-fail', r'aot: loaded \d+ blocks for cache_exec_fail',
+        run_until('warm-exec-fail', r'(?s)(?=.*EXEC_FAILED_EXPECTED)(?=.*aot: loaded \d+ blocks for cache_exec_fail)',
                   build=False, executable=exec_guest)
         print('PASS: failed exec preserves checkpoints and SIGKILL cache reuse')
 
