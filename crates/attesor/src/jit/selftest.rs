@@ -75,7 +75,7 @@ fn run_selftest_fuse(count: usize, deep: bool) {
         }
         init.x[31] = rng.val();
         init.set_nzcv((rng.next() % 16) as u32);
-        init.pc = page;
+        init.set_pc(page);
         let mut r = Cpu::new();
         *r = clone_cpu(&init);
         // deep: [setter, b.cond +8, A, B, svc] with A and B overwriting all flags
@@ -100,9 +100,9 @@ fn run_selftest_fuse(count: usize, deep: bool) {
             // reference: run to the SVC
             let mut steps = 0;
             let mut bad_ref = false;
-            r.pc = page;
+            r.set_pc(page);
             loop {
-                let insn = unsafe { *(r.pc as *const u32) };
+                let insn = unsafe { *(r.pc() as *const u32) };
                 match interp::exec(&mut r, insn) {
                     Ok(()) => {}
                     Err(interp::Exit::Svc(_)) => break,
@@ -120,7 +120,7 @@ fn run_selftest_fuse(count: usize, deep: bool) {
                 skipped += 1;
                 continue;
             }
-            r.pc = page + 4;
+            r.set_pc(page + 4);
             if interp::exec(&mut r, consumer).is_err() {
                 skipped += 1;
                 continue;
@@ -138,7 +138,7 @@ fn run_selftest_fuse(count: usize, deep: bool) {
         unsafe { attesor_jit_enter(&mut *j, host) };
         let mut hops = 0;
         while deep && j.exit_reason != EXIT_SVC && j.exit_reason != EXIT_PENDING && hops < 6 {
-            let h2 = lookup_or_translate(j.pc);
+            let h2 = lookup_or_translate(j.pc());
             unsafe { attesor_jit_enter(&mut *j, h2) };
             hops += 1;
         }
@@ -150,8 +150,8 @@ fn run_selftest_fuse(count: usize, deep: bool) {
         let mut a = snapshot(&r);
         let mut b = snapshot(&j);
         if branch && !deep {
-            a.push(r.pc);
-            b.push(j.pc);
+            a.push(r.pc());
+            b.push(j.pc());
         }
         if a != b || ((!branch || deep) && j.exit_reason != EXIT_SVC) {
             bad += 1;
@@ -215,7 +215,7 @@ fn run_selftest_selchain(count: usize) {
         }
         init.x[31] = rng.val();
         init.set_nzcv((rng.next() % 16) as u32);
-        init.pc = page;
+        init.set_pc(page);
         for (i, w) in prog.iter().enumerate() {
             unsafe { *((page + 4 * i as u64) as *mut u32) = *w };
         }
@@ -224,7 +224,7 @@ fn run_selftest_selchain(count: usize) {
         let mut steps = 0;
         let mut bad_ref = false;
         loop {
-            let insn = unsafe { *(r.pc as *const u32) };
+            let insn = unsafe { *(r.pc() as *const u32) };
             match interp::exec(&mut r, insn) {
                 Ok(()) => {}
                 Err(interp::Exit::Svc(_)) => break,
@@ -249,7 +249,7 @@ fn run_selftest_selchain(count: usize) {
         unsafe { attesor_jit_enter(&mut *j, host) };
         let mut hops = 0;
         while j.exit_reason != EXIT_SVC && j.exit_reason != EXIT_PENDING && hops < 6 {
-            let h2 = lookup_or_translate(j.pc);
+            let h2 = lookup_or_translate(j.pc());
             unsafe { attesor_jit_enter(&mut *j, h2) };
             hops += 1;
         }
@@ -394,13 +394,13 @@ fn run_selftest_blocks(count: usize, fp: bool) {
                 buf[0x40000 + 8 * k..0x40000 + 8 * k + 8].copy_from_slice(&v.to_le_bytes());
             }
         }
-        init.pc = page;
+        init.set_pc(page);
         let mem0: Vec<u8> = buf.clone();
         let mut r = Cpu::new();
         *r = clone_cpu(&init);
         let mut valid = true;
         for (i, w) in prog.iter().enumerate() {
-            r.pc = page + 4 * i as u64;
+            r.set_pc(page + 4 * i as u64);
             if interp::exec(&mut r, *w).is_err() {
                 valid = false;
                 break;
@@ -537,7 +537,7 @@ fn run_selftest_fpnan(count: usize) {
             init.fpcr = (((it / 2) as u64 & 3) << 22) | (((it / 8) as u64 & 1) << 24);
         }
         interp::sys_sync_host_fp_mode(init.fpcr);
-        init.pc = page;
+        init.set_pc(page);
         let mut r = Cpu::new();
         *r = clone_cpu(&init);
         if interp::exec(&mut r, insn).is_err() { skipped += 1; continue; }
@@ -607,7 +607,7 @@ fn run_selftest_tbiblocks(count: usize) {
             0xb940_0ecb, // ldr w11, [x22, #12]
         ];
         let mut init = Cpu::new();
-        init.pc = page;
+        init.set_pc(page);
         init.set_nzcv((rng.next() & 15) as u32);
         for r in 0..31 { init.x[r] = rng.val(); }
         for r in 0..32 { init.v[r] = [rng.next(), rng.next()]; }
@@ -619,7 +619,7 @@ fn run_selftest_tbiblocks(count: usize) {
         let before = memory.clone();
         let mut reference = clone_cpu(&init);
         for (i, insn) in prog.iter().enumerate() {
-            reference.pc = page + i as u64 * 4;
+            reference.set_pc(page + i as u64 * 4);
             interp::exec(&mut reference, *insn).expect("valid TBI probe instruction");
         }
         let expected_memory = memory.clone();
@@ -734,7 +734,7 @@ pub fn run_selftest(class: &str, count: usize) {
             init.fpcr = ((rng.next() & 3) << 22) | ((rng.next() & 1) << 24);
         }
         interp::sys_sync_host_fp_mode(init.fpcr);
-        init.pc = pc;
+        init.set_pc(pc);
         let mem0: Vec<u8> = buf.clone();
         let mut r = Cpu::new();
         *r = clone_cpu(&init);
@@ -769,7 +769,7 @@ pub fn run_selftest(class: &str, count: usize) {
             // non-default FPCR: the block defers to the interpreter, as the dispatcher would
             let _ = interp::exec(&mut j, insn);
             // ...and the svc #0x80 terminator after it exits as the JIT's would
-            j.pc += 4;
+            j.set_pc(j.pc() + 4);
             j.exit_reason = EXIT_SVC;
             j.exit_data = 0x80;
             native = native.saturating_sub(1);
@@ -783,8 +783,8 @@ pub fn run_selftest(class: &str, count: usize) {
         let mut a = snapshot(&r);
         let mut b = snapshot(&j);
         if branch {
-            a.push(r.pc);
-            b.push(j.pc);
+            a.push(r.pc());
+            b.push(j.pc());
         }
         let mem_diff = buf != mem_ref;
         if a != b || mem_diff || (!branch && j.exit_reason != EXIT_SVC) {
@@ -815,7 +815,7 @@ pub fn run_selftest(class: &str, count: usize) {
 fn clone_cpu(c: &Cpu) -> Cpu {
     let mut n = Cpu::default();
     n.x = c.x;
-    n.pc = c.pc;
+    n.set_pc(c.pc());
     n.set_nzcv(c.nzcv());
     n.v = c.v;
     n.fpcr = c.fpcr;

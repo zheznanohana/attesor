@@ -4,6 +4,7 @@
 //! addresses fields directly relative to a pinned host register.
 
 use std::mem::offset_of;
+use std::sync::atomic::{AtomicU64, AtomicU8, Ordering};
 
 /// Number of host helper slots reachable from generated code (`call [r15+..]`).
 pub const HELPER_SLOTS: usize = 32;
@@ -12,7 +13,8 @@ pub const HELPER_SLOTS: usize = 32;
 pub struct Cpu {
     /// X0..X30; index 31 holds SP (XZR is never stored).
     pub x: [u64; 32],
-    pub pc: u64,
+    /// Aligned atomic PC, also stored by existing x86 MOVs in generated code.
+    pub pc: AtomicU64,
     /// NZCV flags, one byte each (0 or 1).
     pub nf: u8,
     pub zf: u8,
@@ -55,6 +57,8 @@ pub struct Cpu {
     pub epoch_ptr: u64,
     /// Host function pointers called by generated code.
     pub helpers: [u64; HELPER_SLOTS],
+    /// Sampling state, written only at Rust transitions. Appended to preserve all JIT offsets.
+    pub profile_state: AtomicU8,
 }
 
 pub mod off {
@@ -103,6 +107,11 @@ impl Default for Cpu {
 }
 
 impl Cpu {
+    #[inline(always)]
+    pub fn pc(&self) -> u64 { self.pc.load(Ordering::Relaxed) }
+    #[inline(always)]
+    pub fn set_pc(&self, pc: u64) { self.pc.store(pc, Ordering::Relaxed); }
+
     pub fn new() -> Box<Cpu> {
         Box::new(Cpu::default())
     }
@@ -195,12 +204,27 @@ impl Cpu {
             s += &format!("x{:<2}={:016x}{}", i, self.x[i], if i % 4 == 3 { "\n" } else { "  " });
         }
         s += &format!(" sp={:016x}\n pc={:016x}  nzcv={}{}{}{}  tpidrro={:x}\n",
-            self.x[31], self.pc,
+            self.x[31], self.pc(),
             if self.nf != 0 { 'N' } else { '-' },
             if self.zf != 0 { 'Z' } else { '-' },
             if self.cf != 0 { 'C' } else { '-' },
             if self.vf != 0 { 'V' } else { '-' },
             self.tpidrro_el0);
         s
+    }
+}
+
+#[cfg(test)]
+mod profile_layout_tests {
+    use super::*;
+    #[test]
+    fn atomic_pc_preserves_jit_layout() {
+        assert_eq!(off::PC, 256);
+        assert_eq!(off::NF, 264);
+        assert_eq!(off::V, 272);
+        assert_eq!(off::HELPERS, 928);
+        assert_eq!(std::mem::size_of::<AtomicU64>(), 8);
+        assert!(off::PC % std::mem::align_of::<AtomicU64>() == 0);
+        assert!(offset_of!(Cpu, profile_state) >= off::HELPERS + HELPER_SLOTS * 8);
     }
 }

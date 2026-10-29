@@ -18,7 +18,7 @@ use crate::mem;
 /// Reasons execution must leave the interpreter/JIT and go to the runtime.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Exit {
-    /// SVC #imm. `cpu.pc` already points past the instruction.
+    /// SVC #imm. `cpu.pc()` already points past the instruction.
     Svc(u16),
     /// BRK #imm (pc points at the BRK).
     Brk(u16),
@@ -33,14 +33,14 @@ pub enum Exit {
 
 pub type R = Result<(), Exit>;
 
-/// Fetch and execute the instruction at `cpu.pc`.
+/// Fetch and execute the instruction at `cpu.pc()`.
 #[inline]
 pub fn step(cpu: &mut Cpu) -> R {
-    let insn = unsafe { mem::r32(cpu.pc) };
+    let insn = unsafe { mem::r32(cpu.pc()) };
     exec(cpu, insn)
 }
 
-/// Execute `insn` located at `cpu.pc`. On normal completion pc is advanced
+/// Execute `insn` located at `cpu.pc()`. On normal completion pc is advanced
 /// (or set to the branch target).
 pub fn exec(cpu: &mut Cpu, insn: u32) -> R {
     let op0 = (insn >> 25) & 0xf;
@@ -55,7 +55,7 @@ pub fn exec(cpu: &mut Cpu, insn: u32) -> R {
         0b0111 | 0b1111 => simd::simd_fp(cpu, insn)?,
         _ => return Err(unimpl(insn)),
     }
-    cpu.pc = cpu.pc.wrapping_add(4);
+    cpu.set_pc(cpu.pc().wrapping_add(4));
     Ok(())
 }
 

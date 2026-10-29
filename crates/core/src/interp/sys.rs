@@ -22,7 +22,7 @@ pub fn counter_ticks() -> u64 {
 }
 
 pub(crate) fn branch_sys(cpu: &mut Cpu, insn: u32) -> R {
-    let pc = cpu.pc;
+    let pc = cpu.pc();
     let next = pc.wrapping_add(4);
     // B / BL
     if insn & 0x7C00_0000 == 0x1400_0000 {
@@ -30,13 +30,13 @@ pub(crate) fn branch_sys(cpu: &mut Cpu, insn: u32) -> R {
         if insn & 0x8000_0000 != 0 {
             cpu.x[30] = next;
         }
-        cpu.pc = pc.wrapping_add(off);
+        cpu.set_pc(pc.wrapping_add(off));
         return Ok(());
     }
     // B.cond / BC.cond
     if insn & 0xFF00_0000 == 0x5400_0000 {
         let off = sext(bits(insn, 23, 5) as u64, 19) << 2;
-        cpu.pc = if cpu.cond(bits(insn, 3, 0)) { pc.wrapping_add(off) } else { next };
+        cpu.set_pc(if cpu.cond(bits(insn, 3, 0)) { pc.wrapping_add(off) } else { next });
         return Ok(());
     }
     // CBZ / CBNZ
@@ -48,7 +48,7 @@ pub(crate) fn branch_sys(cpu: &mut Cpu, insn: u32) -> R {
         }
         let nz = bit(insn, 24) != 0;
         let off = sext(bits(insn, 23, 5) as u64, 19) << 2;
-        cpu.pc = if (v != 0) == nz { pc.wrapping_add(off) } else { next };
+        cpu.set_pc(if (v != 0) == nz { pc.wrapping_add(off) } else { next });
         return Ok(());
     }
     // TBZ / TBNZ
@@ -57,7 +57,7 @@ pub(crate) fn branch_sys(cpu: &mut Cpu, insn: u32) -> R {
         let v = (cpu.xr(bits(insn, 4, 0)) >> b) & 1;
         let nz = bit(insn, 24) != 0;
         let off = sext(bits(insn, 18, 5) as u64, 14) << 2;
-        cpu.pc = if (v != 0) == nz { pc.wrapping_add(off) } else { next };
+        cpu.set_pc(if (v != 0) == nz { pc.wrapping_add(off) } else { next });
         return Ok(());
     }
     // Unconditional branch (register)
@@ -91,7 +91,7 @@ pub(crate) fn branch_sys(cpu: &mut Cpu, insn: u32) -> R {
         if opc & 1 != 0 {
             cpu.x[30] = next;
         }
-        cpu.pc = target;
+        cpu.set_pc(target);
         return Ok(());
     }
     // Exception generation
@@ -101,7 +101,7 @@ pub(crate) fn branch_sys(cpu: &mut Cpu, insn: u32) -> R {
         let imm = bits(insn, 20, 5) as u16;
         return match (opc, ll) {
             (0, 1) => {
-                cpu.pc = next;
+                cpu.set_pc(next);
                 Err(Exit::Svc(imm))
             }
             (1, 0) => Err(Exit::Brk(imm)),
@@ -112,7 +112,7 @@ pub(crate) fn branch_sys(cpu: &mut Cpu, insn: u32) -> R {
     if insn & 0xFFC0_0000 == 0xD500_0000 {
         let r = system(cpu, insn);
         if matches!(r, Ok(()) | Err(Exit::IcInvalidate(_))) {
-            cpu.pc = next;
+            cpu.set_pc(next);
         }
         return r;
     }

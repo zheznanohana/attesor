@@ -22,6 +22,7 @@ pub fn invalidate_range(_addr: u64, _len: u64) {
 }
 
 pub fn flush_profile() {
+    crate::profile::flush();
     crate::jit::flush_profile();
 }
 
@@ -47,7 +48,7 @@ extern "C" fn dump_current(_: i32) {
             buf.len(),
             b"[usr2] pid %d pc=%llx lr=%llx sp=%llx x0=%llx x1=%llx x2=%llx x3=%llx x8=%llx x16=%llx x19=%llx x20=%llx x21=%llx x22=%llx\n\0".as_ptr() as *const libc::c_char,
             libc::getpid(),
-            cpu.pc,
+            cpu.pc(),
             cpu.x[30],
             cpu.x[31],
             cpu.x[0],
@@ -82,6 +83,7 @@ pub fn run_thread(cpu: &mut Cpu) {
     CURRENT_CPU.with(|c| c.set(cpu as *mut Cpu as usize));
     EXIT_REQUESTED.with(|f| f.set(false));
     let key = cpu as *mut Cpu as usize;
+    crate::profile::register(cpu);
     CPUS.lock().unwrap().push(key);
     static DEBUGGED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
     if crate::gdb::enabled() && !DEBUGGED.swap(true, std::sync::atomic::Ordering::SeqCst) {
@@ -90,6 +92,25 @@ pub fn run_thread(cpu: &mut Cpu) {
         crate::jit::run(cpu);
     }
     CPUS.lock().unwrap().retain(|&k| k != key);
+    crate::profile::unregister();
+}
+
+/// Keep CPU lifetime protected while taking only atomic reads of published snapshots.
+pub fn profile_samples() -> Vec<(u64, u8)> {
+    CPUS.lock().unwrap().iter().map(|&cpu| {
+        // Registry guard keeps the CPU alive; never create a shared reference to
+        // the concurrently mutated Cpu. Only its UnsafeCell-backed atomics are read.
+        let pc = unsafe { &*std::ptr::addr_of!((*(cpu as *const Cpu)).pc) };
+        let state = unsafe { &*std::ptr::addr_of!((*(cpu as *const Cpu)).profile_state) };
+        (pc.load(std::sync::atomic::Ordering::Relaxed), state.load(std::sync::atomic::Ordering::Relaxed))
+    }).collect()
+}
+
+pub fn fork_guard() -> impl FnOnce(bool) {
+    let mut cpus = CPUS.lock().unwrap();
+    move |child| {
+        if child { cpus.retain(|&p| CURRENT_CPU.with(|c| c.get()) == p); }
+    }
 }
 
 extern "C" fn dump_threads(_: i32) {
@@ -99,13 +120,13 @@ extern "C" fn dump_threads(_: i32) {
     for (i, &p) in list.iter().enumerate() {
         let cpu = unsafe { &*(p as *const Cpu) };
         let me = CURRENT_CPU.with(|c| c.get()) == p;
-        eprintln!("=== guest thread {i}{}: pc {:#x} {}  lr {}", if me { " (THIS THREAD)" } else { "" }, cpu.pc, crate::symbols::describe(cpu.pc), crate::symbols::describe(cpu.x[30]));
+        eprintln!("=== guest thread {i}{}: pc {:#x} {}  lr {}", if me { " (THIS THREAD)" } else { "" }, cpu.pc(), crate::symbols::describe(cpu.pc()), crate::symbols::describe(cpu.x[30]));
         eprintln!("{}", cpu.dump());
         for i in 0..14u64 {
-            let a = cpu.pc.wrapping_sub(10 * 4) + i * 4;
+            let a = cpu.pc().wrapping_sub(10 * 4) + i * 4;
             if let Some(w) = crate::guestmem::read_u64(a & !7) {
                 let insn = if a & 4 != 0 { (w >> 32) as u32 } else { w as u32 };
-                eprintln!("  {} {:#x}: {:08x}  {}", if a == cpu.pc { "=>" } else { "  " }, a, insn, disasm(insn));
+                eprintln!("  {} {:#x}: {:08x}  {}", if a == cpu.pc() { "=>" } else { "  " }, a, insn, disasm(insn));
             }
         }
         crate::symbols::backtrace(cpu);
@@ -171,22 +192,22 @@ pub fn handle_exit(cpu: &mut Cpu, e: Exit) -> bool {
 
 pub fn crash(cpu: &Cpu, why: &str) -> ! {
     eprintln!("\nattesor: {why}");
-    eprintln!("  at pc {:#x} {}", cpu.pc, crate::symbols::describe(cpu.pc));
+    eprintln!("  at pc {:#x} {}", cpu.pc(), crate::symbols::describe(cpu.pc()));
     eprintln!("{}", cpu.dump());
     eprintln!("  lr {}", crate::symbols::describe(cpu.x[30]));
     let n: u64 = std::env::var("ATTESOR_DISAS").ok().and_then(|v| v.parse().ok()).unwrap_or(12);
-    let start = cpu.pc.wrapping_sub(n * 4);
+    let start = cpu.pc().wrapping_sub(n * 4);
     for i in 0..(n + 4) {
         let a = start + i * 4;
         if let Some(w) = crate::guestmem::read_u64(a & !7) {
             let insn = if a & 4 != 0 { (w >> 32) as u32 } else { w as u32 };
-            eprintln!("  {} {:#x}: {:08x}  {}", if a == cpu.pc { "=>" } else { "  " }, a, insn, disasm(insn));
+            eprintln!("  {} {:#x}: {:08x}  {}", if a == cpu.pc() { "=>" } else { "  " }, a, insn, disasm(insn));
         }
     }
     crate::symbols::backtrace(cpu);
     // Strings materialised by ADRP+ADD just before the crash (crash messages).
     for i in 1..24u64 {
-        let a = cpu.pc.wrapping_sub(i * 4);
+        let a = cpu.pc().wrapping_sub(i * 4);
         let (Some(w1), Some(w2)) = (read_insn(a), read_insn(a + 4)) else { continue };
         if w1 & 0x9F00_0000 == 0x9000_0000 && w2 & 0xFFC0_0000 == 0x9100_0000 && (w1 & 31) == ((w2 >> 5) & 31) {
             let immlo = ((w1 >> 29) & 3) as u64;
@@ -223,6 +244,7 @@ fn read_insn(a: u64) -> Option<u32> {
 
 /// Plain interpreter loop (used by `--interp` and as the reference path).
 pub fn interp_loop(cpu: &mut Cpu) {
+    let _profile = crate::profile::enter(crate::profile::State::Interp);
     loop {
         match interp::step(cpu) {
             Ok(()) => {}

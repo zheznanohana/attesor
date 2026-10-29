@@ -216,7 +216,7 @@ fn hex_bytes(h: &str) -> Option<Vec<u8>> {
 fn reg_hex(cpu: &Cpu, n: usize) -> Option<String> {
     Some(match n {
         0..=31 => hex_le(cpu.x[n], 8),
-        32 => hex_le(cpu.pc, 8),
+        32 => hex_le(cpu.pc(), 8),
         33 => hex_le((cpu.nzcv() as u64) << 28, 4),
         34..=65 => format!("{}{}", hex_le(cpu.v[n - 34][0], 8), hex_le(cpu.v[n - 34][1], 8)),
         66 => hex_le(cpu.fpsr, 4),
@@ -237,7 +237,7 @@ fn set_reg(cpu: &mut Cpu, n: usize, h: &str) -> bool {
     if n >= 68 || h.len() != reg_size(n) * 2 || !valid_hex(h) { return false; }
     match n {
         0..=31 => cpu.x[n] = parse_le(h),
-        32 => cpu.pc = parse_le(h),
+        32 => cpu.set_pc(parse_le(h)),
         33 => cpu.set_nzcv((parse_le(h) >> 28) as u32 & 15),
         34..=65 => {
             if h.len() < 32 {
@@ -351,7 +351,7 @@ pub fn run(cpu: &mut Cpu) {
             std::process::exit(1);
         }
         unsafe { libc::fcntl(fd, libc::F_SETFD, libc::FD_CLOEXEC) };
-        eprintln!("attesor: debugger connected on inherited fd {fd}; stopped at {:#x}", cpu.pc);
+        eprintln!("attesor: debugger connected on inherited fd {fd}; stopped at {:#x}", cpu.pc());
         symbol_hint(None);
         Box::new(unsafe { UnixStream::from_raw_fd(fd) })
     } else {
@@ -362,7 +362,7 @@ pub fn run(cpu: &mut Cpu) {
                 std::process::exit(1);
             }
         };
-        eprintln!("attesor: waiting for a debugger on 127.0.0.1:{port} (lldb: gdb-remote {port}); stopped at {:#x}", cpu.pc);
+        eprintln!("attesor: waiting for a debugger on 127.0.0.1:{port} (lldb: gdb-remote {port}); stopped at {:#x}", cpu.pc());
         symbol_hint(Some(port));
         let (s, _) = match listener.accept() {
             Ok(v) => v,
@@ -507,7 +507,7 @@ pub fn run(cpu: &mut Cpu) {
             "c" | "s" => {
                 if !rest.is_empty() {
                     match u64::from_str_radix(rest, 16) {
-                        Ok(a) => cpu.pc = a,
+                        Ok(a) => cpu.set_pc(a),
                         Err(_) => { c.send("E01"); continue; }
                     }
                 }
@@ -620,11 +620,12 @@ fn resume(cpu: &mut Cpu, c: &mut Conn, bps: &HashSet<u64>, step: bool) -> bool {
     let mut n = 0u64;
     loop {
         // the instruction at the resume pc runs even if it has a breakpoint (the debugger stepped over it)
-        if n > 0 && (step || bps.contains(&cpu.pc)) {
+        if n > 0 && (step || bps.contains(&cpu.pc())) {
             c.stop(STOP);
             return true;
         }
         n += 1;
+        crate::profile::set(crate::profile::State::Interp);
         match interp::step(cpu) {
             Ok(()) => {}
             // traps stop in the debugger (pc stays on the instruction) instead of ending the program
@@ -633,7 +634,7 @@ fn resume(cpu: &mut Cpu, c: &mut Conn, bps: &HashSet<u64>, step: bool) -> bool {
                 return true;
             }
             Err(e @ (interp::Exit::Udf(_) | interp::Exit::Unimplemented(_))) => {
-                if log() { eprintln!("[gdb] illegal guest instruction at {:#x}: {e:?}", cpu.pc); }
+                if log() { eprintln!("[gdb] illegal guest instruction at {:#x}: {e:?}", cpu.pc()); }
                 c.stop("T04thread:1;");
                 return true;
             }

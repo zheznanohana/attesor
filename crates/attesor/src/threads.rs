@@ -110,7 +110,7 @@ pub fn bsdthread_create(a: &[u64; 8]) -> Result<u64, u64> {
     let tsd_off = TSD_OFFSET.load(Ordering::SeqCst) as u64;
     let mts_off = MACH_THREAD_SELF_OFFSET.load(Ordering::SeqCst) as u64;
     let mut cpu = Cpu::new();
-    cpu.pc = start;
+    cpu.set_pc(start);
     cpu.x[0] = pthread;
     cpu.x[2] = func;
     cpu.x[3] = arg;

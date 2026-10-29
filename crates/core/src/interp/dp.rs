@@ -22,9 +22,9 @@ pub(crate) fn dp_imm(cpu: &mut Cpu, insn: u32) -> R {
             let immhi = bits(insn, 23, 5) as u64;
             let imm = sext((immhi << 2) | immlo, 21);
             let v = if bit(insn, 31) != 0 {
-                (cpu.pc & !0xfff).wrapping_add(imm << 12)
+                (cpu.pc() & !0xfff).wrapping_add(imm << 12)
             } else {
-                cpu.pc.wrapping_add(imm)
+                cpu.pc().wrapping_add(imm)
             };
             cpu.setx(rd, v);
         }

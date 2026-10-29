@@ -169,7 +169,7 @@ pub fn load(exe: &str, dyld_path: &str, argv: &[String], envp: &[String]) -> std
     put(0);
 
     let mut cpu = Cpu::new();
-    cpu.pc = entry;
+    cpu.set_pc(entry);
     cpu.x[31] = sp;
     Ok((Loaded { main, dyld, entry, sp, stack_lo, stack_hi }, cpu))
 }

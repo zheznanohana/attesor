@@ -72,3 +72,25 @@ Prints `ok= mismatch= skipped= native=`. **Always check `native=`**: an instruct
 back to the interpreter trivially matches it (that hid four bugs for a while). Masks must leave
 the U bit (29) and Q bit (30) free when testing both variants. Known accepted mismatch: the sNaN
 case above.
+
+## Guest sampling profiler
+
+Set `ATTESOR_PROFILE=/path/to/run` to sample all guest threads at approximately 1 kHz.
+Each process writes `<name>-<pid>.txt` on exit, before exec, and every 10 seconds;
+use a fresh directory for each run. Snapshots are cumulative and atomically replaced.
+Children inherit the setting. Merge the run with `python3 tools/profile-report.py /path/to/run`;
+the merger also groups Electron/Chromium processes by name, `--type` and utility subtype.
+
+Reports include thread-time shares for JIT, interpreter, translation, BSD/Mach syscalls,
+Metal bridge calls, waits (`idle`), and dispatcher overhead, plus translation totals.
+Image and symbol tables count only JIT/interpreter samples; image percentages use that
+execution total, and each image shows its JIT/interpreter split. The full aggregate tables
+are retained below the top 40 images / top 60 symbols for lossless merging.
+
+Sampling reads the atomic guest PC and a state word updated at Rust transitions, without
+stopping or signalling guest threads or modifying generated code. The JIT publishes PC
+at its existing block/exit points, so attribution within a chained block remains approximate.
+Symbol lookup uses Mach-O symbols and shared-cache exports; stripped/internal routines may
+appear as a nearest exported symbol or image offset. `idle` classifies waiting syscall
+entries, including their setup and return time; it is sampled thread time, not CPU usage.
+Force-killed processes retain the last 10-second snapshot (shorter runs need a normal exit).

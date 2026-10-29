@@ -230,7 +230,7 @@ fn spawn_worker_thread(w: Worker, job: Job, rx: Receiver<Job>) {
             let mut job = job;
             loop {
                 *cpu = Cpu::default();
-                cpu.pc = start;
+                cpu.set_pc(start);
                 cpu.x[0] = pthread;
                 cpu.x[1] = port;
                 cpu.x[2] = stack_low;

@@ -279,7 +279,7 @@ fn to_cpu(st: &State, pc: u64) -> Box<Cpu> {
     for i in 0..32 {
         c.set_vq(i as u32, st.v[i]);
     }
-    c.pc = pc;
+    c.set_pc(pc);
     c
 }
 
@@ -434,7 +434,7 @@ pub fn main() {
                 }
             }
             let interp_state = from_cpu(&cpu, 0);
-            let interp_pc = cpu.pc;
+            let interp_pc = cpu.pc();
             let mem_interp: Vec<u8> = if is_mem { buf[0x30000..0xB0000].to_vec() } else { vec![] };
             if is_mem {
                 buf[0x30000..0xB0000].copy_from_slice(&mem_before);

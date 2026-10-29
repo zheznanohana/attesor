@@ -30,7 +30,7 @@ pub(crate) fn ldst(cpu: &mut Cpu, insn: u32) -> R {
         0b011000 | 0b011100 => {
             // load literal
             let opc = bits(insn, 31, 30);
-            let addr = cpu.pc.wrapping_add(sext(bits(insn, 23, 5) as u64, 19) << 2);
+            let addr = cpu.pc().wrapping_add(sext(bits(insn, 23, 5) as u64, 19) << 2);
             unsafe {
                 if v {
                     match opc {

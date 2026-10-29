@@ -529,6 +529,8 @@ pub fn start_checkpoints() {
 // locks before opening a file lock. Drop every guard in BOTH fork branches
 // before running guest code or starting a new checkpoint worker.
 fn fork_safely() -> libc::pid_t {
+    let mut profile = crate::profile::fork_guard();
+    let cpus = crate::engine::fork_guard();
     let (pid, error) = {
         let registry = PENDING_THREADS.lock().unwrap();
         let batches: Vec<_> = registry.iter().filter_map(Weak::upgrade).collect();
@@ -544,6 +546,9 @@ fn fork_safely() -> libc::pid_t {
         let pid = unsafe { libc::fork() };
         (pid, if pid < 0 { unsafe { *libc::__error() } } else { 0 })
     };
+    if pid == 0 { profile.child(); }
+    cpus(pid == 0);
+    drop(profile);
     if pid < 0 {
         unsafe { *libc::__error() = error };
     }
@@ -560,6 +565,7 @@ pub fn fork_guest() -> libc::pid_t {
         SAVED.store(false, Ordering::SeqCst);
         CHECKPOINT_STARTED.store(false, Ordering::SeqCst);
         start_checkpoints();
+        crate::profile::after_fork();
     }
     pid
 }

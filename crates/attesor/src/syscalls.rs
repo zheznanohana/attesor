@@ -123,8 +123,35 @@ fn tee_stderr(n: u64, args: &[u64; 8], written: u64) {
     }
 }
 
-/// Handle SVC. `cpu.pc` already points after the SVC.
+// Classify waiting operations, not all syscalls as idle. Nonblocking variants
+// return quickly, so their incidental idle samples are negligible.
+fn svc_state(cpu: &Cpu) -> crate::profile::State {
+    use crate::profile::State;
+    let num = cpu.x[16] as u32 as i32;
+    if num == PLATFORM_SYSCALL { return State::Bsd; }
+    if num < 0 {
+        let n = num.wrapping_neg() as u32;
+        // mach_msg[_overwrite]/mach_msg2: MACH_RCV_MSG = 2 in options (x1).
+        return if (matches!(n, 31 | 32 | 47) && cpu.x[1] & 2 != 0)
+            || matches!(n, 36 | 37 | 38 | 39 | 61 | 62 | 90) {
+            State::Idle
+        } else { State::Mach };
+    }
+    let (n, a) = if num == 0 { (cpu.x[0], &cpu.x[1..]) } else { (num as u64, &cpu.x[..]) };
+    if n == crate::gpu::SYS_MCL_HOSTCALL { return State::Gpu; }
+    // wait4, select/poll (+ nocancel), psynch waits, semwait, kevent,
+    // ulock_wait/ulock_wait2, workqueue park/return, sigsuspend.
+    if matches!(n, 7 | 93 | 111 | 230 | 297 | 298 | 300 | 301 | 305 | 306 | 307 | 334 | 363 | 369 | 374 | 375 | 394 | 395 | 400 | 407 | 410 | 417 | 423 | 515 | 544)
+        || (n == SYS_WORKQ_KERNRETURN && matches!(a[0], 4 | 0x40 | 0x100)) {
+        State::Idle
+    } else { State::Bsd }
+}
+
+/// Handle SVC. `cpu.pc()` already points after the SVC.
 pub fn handle_svc(cpu: &mut Cpu) {
+    let _profile = if crate::profile::ENABLED.load(Ordering::Relaxed) {
+        Some(crate::profile::enter(svc_state(cpu)))
+    } else { None };
     let num = cpu.x[16] as u32 as i32;
     if num == PLATFORM_SYSCALL {
         match cpu.x[3] {
@@ -146,7 +173,7 @@ pub fn handle_svc(cpu: &mut Cpu) {
     }
     let trace = TRACE.load(Ordering::Relaxed);
     if trace {
-        eprintln!("[sys] {}#{}({:#x}, {:#x}, {:#x}, {:#x}, {:#x}, {:#x}) pc={:#x}", syscall_name(n), n, args[0], args[1], args[2], args[3], args[4], args[5], cpu.pc - 4);
+        eprintln!("[sys] {}#{}({:#x}, {:#x}, {:#x}, {:#x}, {:#x}, {:#x}) pc={:#x}", syscall_name(n), n, args[0], args[1], args[2], args[3], args[4], args[5], cpu.pc() - 4);
     }
     bsd(cpu, n, args);
     if matches!(n, 4 | 397 | 121 | 412) && cpu.cf == 0 {
@@ -273,6 +300,7 @@ fn bsd_inner(cpu: &mut Cpu, n: u64, mut args: [u64; 8]) {
             // dyld maps a library's __TEXT (file offset 0, executable) at its final address:
             // register it with the AOT cache so translations persist across runs.
             if !r.carry && was_exec && args[5] == 0 && (args[4] as i64) >= 0 && args[1] >= 0x1000 {
+                crate::symbols::register_mapped_file(r.rax, args[4] as i32);
                 crate::aot::register_image_at(r.rax);
             }
             set_res(cpu, r);
@@ -386,6 +414,7 @@ fn bsd_inner(cpu: &mut Cpu, n: u64, mut args: [u64; 8]) {
         },
         SYS_EXECVE | SYS_POSIX_SPAWN => {
             if n == SYS_EXECVE {
+                crate::profile::flush();
                 crate::aot::save_before_exec();
             }
             let r = crate::spawn::exec_like(n, &args);
@@ -737,5 +766,41 @@ pub fn syscall_name(n: u64) -> &'static str {
         536 => "shared_region_map_and_slide_2_np",
         550 => "map_with_linking_np",
         _ => "?",
+    }
+}
+
+#[cfg(test)]
+mod profile_state_tests {
+    use super::*;
+    #[test]
+    fn wait_classification_and_indirect_syscalls() {
+        use crate::profile::State;
+        let mut cpu = Cpu::default();
+        for n in [31, 32, 47] {
+            cpu.x[16] = (-n as i64) as u64;
+            cpu.x[1] = 1;
+            assert!(matches!(svc_state(&cpu), State::Mach));
+            cpu.x[1] = 3;
+            assert!(matches!(svc_state(&cpu), State::Idle));
+        }
+        for n in [36, 37, 38, 39, 61, 62, 90] {
+            cpu.x[16] = (-n as i64) as u64;
+            assert!(matches!(svc_state(&cpu), State::Idle));
+        }
+        for n in [33, 34, 35, 91, 92] {
+            cpu.x[16] = (-n as i64) as u64;
+            assert!(matches!(svc_state(&cpu), State::Mach));
+        }
+        for n in [93, 230, 301, 305, 334, 363, 369, 374, 375, 407, 417, 423, 515, 544] {
+            cpu.x[16] = n;
+            assert!(matches!(svc_state(&cpu), State::Idle));
+            cpu.x[16] = 0;
+            cpu.x[0] = n;
+            assert!(matches!(svc_state(&cpu), State::Idle));
+        }
+        cpu.x[16] = crate::gpu::SYS_MCL_HOSTCALL;
+        assert!(matches!(svc_state(&cpu), State::Gpu));
+        cpu.x[16] = 4;
+        assert!(matches!(svc_state(&cpu), State::Bsd));
     }
 }

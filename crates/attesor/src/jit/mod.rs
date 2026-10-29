@@ -210,7 +210,8 @@ extern "C" fn helper_interp(cpu: *mut Cpu, insn: u32, pc: u64) -> u64 {
         note_fallback_exec(insn);
     }
     let cpu = unsafe { &mut *cpu };
-    cpu.pc = pc;
+    cpu.set_pc(pc);
+    let _profile = crate::profile::enter(crate::profile::State::Interp);
     match interp::exec(cpu, insn) {
         Ok(()) => 0,
         Err(e) => {
@@ -273,6 +274,7 @@ fn emit_unit(pc: u64, slot_padding: usize) -> Unit {
 }
 
 fn translate(pc: u64) -> u64 {
+    let _profile = crate::profile::enter(crate::profile::State::Translate);
     let t0 = std::time::Instant::now();
     let r = translate_inner(pc);
     STATS_TRANSLATE_NS.fetch_add(t0.elapsed().as_nanos() as u64, Ordering::Relaxed);
@@ -482,7 +484,7 @@ fn ibtc_clear() {
 fn cpu_clone(c: &Cpu) -> Box<Cpu> {
     let mut n = Cpu::new();
     n.x = c.x;
-    n.pc = c.pc;
+    n.set_pc(c.pc());
     n.set_nzcv(c.nzcv());
     n.v = c.v;
     n.fpcr = c.fpcr;
@@ -501,14 +503,15 @@ fn cpu_clone(c: &Cpu) -> Box<Cpu> {
 fn verify_block(cpu: &mut Cpu, host: u64) {
     use attesor_core::mem;
     mem::LOGGING_ENABLED.store(true, Ordering::Relaxed);
-    let start_pc = cpu.pc;
+    let start_pc = cpu.pc();
     let mut r = cpu_clone(cpu);
     mem::log_start();
     let mut ref_exit = None;
     let mut executed = Vec::new();
     for _ in 0..emit::MAX_BLOCK_INSNS {
-        let insn = unsafe { mem::r32(r.pc) };
-        executed.push((r.pc, insn));
+        crate::profile::set(crate::profile::State::Interp);
+        let insn = unsafe { mem::r32(r.pc()) };
+        executed.push((r.pc(), insn));
         let term = emit::is_terminator(insn);
         if let Err(e) = interp::exec(&mut r, insn) {
             ref_exit = Some(e);
@@ -528,6 +531,7 @@ fn verify_block(cpu: &mut Cpu, host: u64) {
     for (a, old, n) in log.iter().rev() {
         unsafe { std::ptr::copy_nonoverlapping(old.as_ptr(), mem::host(*a), *n) };
     }
+    crate::profile::set(crate::profile::State::Jit);
     unsafe { attesor_jit_enter(cpu, host) };
     // Blocks with atomics race with other threads between the two runs.
     let racy = executed.iter().any(|&(_, i)| {
@@ -549,8 +553,8 @@ fn verify_block(cpu: &mut Cpu, host: u64) {
     if r.nzcv() != cpu.nzcv() {
         diffs.push(format!("nzcv: ref={:x} jit={:x}", r.nzcv(), cpu.nzcv()));
     }
-    if r.pc != cpu.pc && ref_exit.is_none() {
-        diffs.push(format!("pc: ref={:#x} jit={:#x}", r.pc, cpu.pc));
+    if r.pc() != cpu.pc() && ref_exit.is_none() {
+        diffs.push(format!("pc: ref={:#x} jit={:#x}", r.pc(), cpu.pc()));
     }
     for i in 0..32 {
         if r.v[i] != cpu.v[i] {
@@ -581,8 +585,9 @@ fn verify_block(cpu: &mut Cpu, host: u64) {
 
 /// Interpret one basic block. Returns false when the thread should stop.
 fn interp_block(cpu: &mut Cpu) -> bool {
+    let _profile = crate::profile::enter(crate::profile::State::Interp);
     for _ in 0..emit::MAX_BLOCK_INSNS {
-        let insn = unsafe { attesor_core::mem::r32(cpu.pc) };
+        let insn = unsafe { attesor_core::mem::r32(cpu.pc()) };
         let term = emit::is_terminator(insn);
         if let Err(e) = interp::exec(cpu, insn) {
             return crate::engine::handle_exit(cpu, e);
@@ -599,16 +604,20 @@ pub fn run(cpu: &mut Cpu) {
         crate::engine::interp_loop(cpu);
         return;
     }
-    crate::aot::ensure_loaded();
+    {
+        let _profile = crate::profile::enter(crate::profile::State::Translate);
+        crate::aot::ensure_loaded();
+    }
     setup_cpu(cpu);
     let (mut last_pc, mut repeats) = (u64::MAX, 0u64);
     loop {
-        if cpu.pc == last_pc {
+        crate::profile::set(crate::profile::State::Dispatch);
+        if cpu.pc() == last_pc {
             repeats += 1;
             if repeats == 20000 && std::env::var_os("ATTESOR_SPIN_DEBUG").is_some() {
-                let found = lookup(cpu.pc);
-                let hot = HOT.with(|h| h.borrow().get(&cpu.pc).copied());
-                let msg = format!("[spin] pc={:#x} lookup={:?} hot={:?} exit_reason={} exit_data={:#x} epoch={} my_epoch={}\n", cpu.pc, found, hot, cpu.exit_reason, cpu.exit_data, EPOCH.load(Ordering::Relaxed), MY_EPOCH.with(|e| e.get()));
+                let found = lookup(cpu.pc());
+                let hot = HOT.with(|h| h.borrow().get(&cpu.pc()).copied());
+                let msg = format!("[spin] pc={:#x} lookup={:?} hot={:?} exit_reason={} exit_data={:#x} epoch={} my_epoch={}\n", cpu.pc(), found, hot, cpu.exit_reason, cpu.exit_data, EPOCH.load(Ordering::Relaxed), MY_EPOCH.with(|e| e.get()));
                 unsafe { libc::write(2, msg.as_ptr() as *const libc::c_void, msg.len()) };
                 if let Some(h) = found {
                     let bytes = unsafe { std::slice::from_raw_parts(h as *const u8, 160) };
@@ -618,7 +627,7 @@ pub fn run(cpu: &mut Cpu) {
                 }
             }
         } else {
-            last_pc = cpu.pc;
+            last_pc = cpu.pc();
             repeats = 0;
         }
         let epoch = EPOCH.load(Ordering::Relaxed);
@@ -626,7 +635,7 @@ pub fn run(cpu: &mut Cpu) {
             ibtc_clear();
             MY_EPOCH.with(|e| e.set(epoch));
         }
-        let pc = cpu.pc;
+        let pc = cpu.pc();
         let host = match lookup(pc) {
             Some(h) => h,
             None => {
@@ -651,19 +660,21 @@ pub fn run(cpu: &mut Cpu) {
             }
         };
         STATS_JIT_ENTRIES.fetch_add(1, Ordering::Relaxed);
+        crate::profile::set(crate::profile::State::Jit);
         if verify_mode() {
             verify_block(cpu, host);
         } else {
             ibtc_insert(pc, host);
             unsafe { attesor_jit_enter(cpu, host) };
         }
+        crate::profile::set(crate::profile::State::Dispatch);
         match cpu.exit_reason {
             EXIT_CONTINUE => {
                 let slot = cpu.exit_data;
                 if slot != 0 && !verify_mode() {
                     // Chain: point the exit slot straight at the target block.
-                    let target = lookup_or_translate(cpu.pc);
-                    chain_slot(slot, cpu.pc, target);
+                    let target = lookup_or_translate(cpu.pc());
+                    chain_slot(slot, cpu.pc(), target);
                 }
             }
             EXIT_SVC => {

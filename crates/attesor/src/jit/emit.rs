@@ -6142,7 +6142,7 @@ mod direct_branch_tests {
                                     cpu.x[rt as usize] = value;
                                     let original = cpu.x;
                                     cpu.set_nzcv(flags);
-                                    cpu.pc = PC;
+                                    cpu.set_pc(PC);
                                     cpu.exit_reason = 0;
                                     let input = if rt == 31 { 0 } else { value };
                                     let nonzero = if tb { (input >> width_or_bit) & 1 != 0 }
@@ -6151,7 +6151,7 @@ mod direct_branch_tests {
                                         PC.wrapping_add((displacement as i64 * 4) as u64)
                                     } else { PC + 4 };
                                     unsafe { crate::jit::attesor_jit_enter(&mut *cpu, host); }
-                                    assert_eq!(cpu.pc, expected, "word={word:08x} value={value:x}");
+                                    assert_eq!(cpu.pc(), expected, "word={word:08x} value={value:x}");
                                     assert_eq!(cpu.nzcv(), flags, "word={word:08x}");
                                     assert_eq!(cpu.x, original, "word={word:08x}");
                                 }
@@ -6182,7 +6182,7 @@ mod direct_branch_tests {
                 let nonzero = if let Some(b) = tested_bit { value & (1 << b) != 0 } else { value != 0 };
                 let expected = if nonzero == nz { PC - 32 } else { PC + 4 };
                 unsafe { crate::jit::attesor_jit_enter(&mut *cpu, host); }
-                assert_eq!(cpu.pc, expected);
+                assert_eq!(cpu.pc(), expected);
                 assert_eq!(cpu.x[9], expected);
                 assert_eq!(cpu.nzcv(), 0b1011);
             }
@@ -6337,7 +6337,7 @@ mod context_sync_tests {
                 cpu.set_nzcv(0b1011);
                 cpu.exit_data = 0xfeed;
                 unsafe { crate::jit::attesor_jit_enter(&mut *cpu, host); }
-                assert_eq!(cpu.pc, PC + 4);
+                assert_eq!(cpu.pc(), PC + 4);
                 assert_eq!(cpu.x[0], 42, "must not execute the already-emitted internal successor");
                 assert_eq!(cpu.nzcv(), 0b1011);
                 assert_eq!(cpu.exit_reason, EXIT_CONTINUE);
@@ -6374,7 +6374,7 @@ mod region_cache_tests {
 
     fn reference(cpu: &mut Cpu, words: &[u32]) {
         for _ in 0..10000 {
-            let w = words[((cpu.pc - PC) / 4) as usize];
+            let w = words[((cpu.pc() - PC) / 4) as usize];
             match interp::exec(cpu, w) {
                 Ok(()) => {},
                 Err(interp::Exit::Svc(_)) => return,
@@ -6401,8 +6401,8 @@ mod region_cache_tests {
                     let mut c = Cpu::new(); crate::jit::setup_cpu(&mut c);
                     for x in &mut c.x { seed ^= seed << 13; seed ^= seed >> 7; seed ^= seed << 17; *x = seed; }
                     c.x[3] = seed % 35 + 1; c.set_nzcv((seed % 16) as u32);
-                    c.pc = PC + if entry == 0 { 0 } else { 28 };
-                    let mut r = Cpu::new(); r.x = c.x; r.set_nzcv(c.nzcv()); r.pc = c.pc;
+                    c.set_pc(PC + if entry == 0 { 0 } else { 28 });
+                    let mut r = Cpu::new(); r.x = c.x; r.set_nzcv(c.nzcv()); r.set_pc(c.pc());
                     reference(&mut r, &words);
                     unsafe { crate::jit::attesor_jit_enter(&mut *c, hosts[entry]); }
                     assert_eq!(c.exit_reason, EXIT_SVC); assert_eq!(c.x, r.x); assert_eq!(c.nzcv(), r.nzcv());
@@ -6420,8 +6420,8 @@ mod region_cache_tests {
             for count in 1..64 {
                 let mut c = Cpu::new(); crate::jit::setup_cpu(&mut c);
                 c.x[0] = u64::MAX - count; c.x[1] = 17; c.x[3] = count;
-                c.x[31] = 0x123456789abcdef0; c.set_nzcv(11); c.pc = PC;
-                let mut r = Cpu::new(); r.x = c.x; r.set_nzcv(c.nzcv()); r.pc = PC;
+                c.x[31] = 0x123456789abcdef0; c.set_nzcv(11); c.set_pc(PC);
+                let mut r = Cpu::new(); r.x = c.x; r.set_nzcv(c.nzcv()); r.set_pc(PC);
                 reference(&mut r, &words);
                 unsafe { crate::jit::attesor_jit_enter(&mut *c, hosts[0]); }
                 assert_eq!(c.x, r.x); assert_eq!(c.nzcv(), r.nzcv()); assert_eq!(c.exit_reason, EXIT_SVC);
@@ -6468,7 +6468,7 @@ mod region_cache_tests {
         c.v[0][0] = 2f64.to_bits(); c.v[1][0] = 3f64.to_bits();
         c.helpers[HELPER_INTERP] = change_fpcr as *const () as usize as u64;
         unsafe { crate::jit::attesor_jit_enter(&mut *c, hosts[0]); }
-        assert_eq!(c.exit_reason, EXIT_INTERP); assert_eq!(c.pc, PC);
+        assert_eq!(c.exit_reason, EXIT_INTERP); assert_eq!(c.pc(), PC);
         assert_eq!(c.v[0][0], 5f64.to_bits());
     }
 
@@ -6478,8 +6478,8 @@ mod region_cache_tests {
         let words = [0xb4000040, 0x91000421, 0x91000442, 0xd4001001];
         let (hosts, found) = compile(&words, &[0, 1, 2], StubKind::Plain, true); assert!(!found);
         for entry in 0..3 { for x in [0, 1] {
-            let mut c = Cpu::new(); crate::jit::setup_cpu(&mut c); c.x[0] = x; c.pc = PC + entry as u64 * 4;
-            let mut r = Cpu::new(); r.x = c.x; r.pc = c.pc;
+            let mut c = Cpu::new(); crate::jit::setup_cpu(&mut c); c.x[0] = x; c.set_pc(PC + entry as u64 * 4);
+            let mut r = Cpu::new(); r.x = c.x; r.set_pc(c.pc());
             reference(&mut r, &words);
             unsafe { crate::jit::attesor_jit_enter(&mut *c, hosts[entry]); }
             assert_eq!(c.x, r.x); assert_eq!(c.exit_reason, EXIT_SVC);
@@ -6491,9 +6491,9 @@ mod region_cache_tests {
         let (hosts, found) = compile(&words, &[0, 4], StubKind::Plain, true); assert!(found);
         for count in 1..40 {
             let mut c = Cpu::new(); crate::jit::setup_cpu(&mut c);
-            c.x[3] = count; c.pc = PC;
+            c.x[3] = count; c.set_pc(PC);
             c.v[0] = [0.125f64.to_bits(), u64::MAX]; c.v[1] = [0.75f64.to_bits(), u64::MAX];
-            let mut r = Cpu::new(); r.x = c.x; r.v = c.v; r.pc = PC;
+            let mut r = Cpu::new(); r.x = c.x; r.v = c.v; r.set_pc(PC);
             reference(&mut r, &words);
             unsafe { crate::jit::attesor_jit_enter(&mut *c, hosts[0]); }
             assert_eq!(c.x, r.x); assert_eq!(c.v, r.v); assert_eq!(c.nzcv(), r.nzcv());
@@ -6588,11 +6588,11 @@ mod flags_liveness_tests {
         if insn != 0 {
             // The debug dpreg switch routes CSEL here. It still must receive
             // the same architectural flags as its native implementation.
-            cpu.pc = pc;
+            cpu.set_pc(pc);
             return if attesor_core::interp::exec(cpu, insn).is_ok() { 0 } else { 1 };
         }
         cpu.x[10] = cpu.nzcv() as u64;
-        cpu.pc = pc;
+        cpu.set_pc(pc);
         cpu.exit_reason = EXIT_PENDING;
         1
     }
@@ -6629,7 +6629,7 @@ mod flags_liveness_tests {
             assert_eq!(cpu.x[10], expected as u64, "value={value:x}");
             assert_eq!(cpu.nzcv(), expected);
             assert_eq!(cpu.x[2], if value == 1 { 77 } else { 88 });
-            assert_eq!(cpu.pc, PC + 8);
+            assert_eq!(cpu.pc(), PC + 8);
             assert_eq!(cpu.exit_reason, EXIT_PENDING);
         }
     }
@@ -6669,12 +6669,12 @@ mod fsqrt_dn_tests {
                 let expected = if dn { dnan } else { input | quiet };
                 let (mut source, mut want) = (0u128, 0u128);
                 for lane in 0..lanes { source |= (input as u128) << (lane*width); want |= (expected as u128) << (lane*width); }
-                let mut c = Cpu::new(); crate::jit::setup_cpu(&mut c); c.pc = PC;
+                let mut c = Cpu::new(); crate::jit::setup_cpu(&mut c); c.set_pc(PC);
                 c.fpcr = if dn { 1 << 25 } else { 0 }; let mode = c.fpcr;
                 c.set_vq(1, source); c.set_vq(0, u128::MAX);
                 unsafe { crate::jit::attesor_jit_enter(&mut *c, entry); }
                 if dn {
-                    assert_eq!(c.exit_reason, EXIT_INTERP); assert_eq!(c.pc, PC);
+                    assert_eq!(c.exit_reason, EXIT_INTERP); assert_eq!(c.pc(), PC);
                     assert_eq!(c.vq(0), u128::MAX); assert_eq!(c.vq(1), source);
                     interp::exec(&mut c, word).unwrap();
                     unsafe { crate::jit::attesor_jit_enter(&mut *c, next); }
@@ -6720,18 +6720,18 @@ mod fpcr_boundary_tests {
                     unsafe { std::ptr::copy_nonoverlapping(result.inner.code_buffer.as_ptr(),host as *mut u8,result.inner.code_buffer.len()); }
                     for mode in [0, 1<<25, 1<<26, 1<<19] { for initial in [0, 1<<25] {
                         let mut c = Cpu::new(); crate::jit::setup_cpu(&mut c);
-                        c.pc = PC; c.fpcr = initial; c.x[9] = 42; c.set_nzcv(11);
+                        c.set_pc(PC); c.fpcr = initial; c.x[9] = 42; c.set_nzcv(11);
                         if rt != 31 { c.x[rt as usize] = mode; }
                         c.v[0] = [0xfff8000000001234, 17]; c.v[1] = [0xfff8000000004321, 19];
                         let original = c.v; let expected_mode = if rt == 31 { 0 } else { mode };
                         unsafe { crate::jit::attesor_jit_enter(&mut *c, first); }
                         assert_eq!(c.exit_reason, EXIT_CONTINUE, "fp={fp:08x} mode={mode:x} initial={initial:x}");
                         assert_eq!(end, PC+8); assert!(unchainable);
-                        assert_eq!(c.pc, PC+8); assert_eq!(c.fpcr, expected_mode);
+                        assert_eq!(c.pc(), PC+8); assert_eq!(c.fpcr, expected_mode);
                         assert_eq!(c.x[9],43); assert_eq!(c.v, original); assert_eq!(c.nzcv(),11);
                         unsafe { crate::jit::attesor_jit_enter(&mut *c, second); }
                         if expected_mode & FPCR_NONDEFAULT as u64 != 0 {
-                            assert_eq!(c.exit_reason, EXIT_INTERP); assert_eq!(c.pc,PC+8);
+                            assert_eq!(c.exit_reason, EXIT_INTERP); assert_eq!(c.pc(),PC+8);
                             assert_eq!(c.x[9],43); assert_eq!(c.v,original);
                         } else {
                             assert_eq!(c.exit_reason,EXIT_SVC); assert_eq!(c.x[9],44);
