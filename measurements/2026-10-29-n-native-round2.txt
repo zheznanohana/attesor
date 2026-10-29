@@ -1,0 +1,1349 @@
+Track N Round 2 evidence, 2026-10-29
+Baseline d54e1c2; no translator-core edits; all caches private.
+
+## Final build/test summary
+
+### target/n-native-r2-build.log
+warning: `attesor` (bin "attesor") generated 26 warnings (run `cargo fix --bin "attesor" -p attesor` to apply 10 suggestions)
+    Finished `release` profile [optimized + debuginfo] target(s) in 13.86s
+
+### target/n-native-r2-tests.log
+warning: `attesor` (bin "attesor" test) generated 27 warnings (run `cargo fix --bin "attesor" -p attesor --tests` to apply 11 suggestions)
+    Finished `release` profile [optimized + debuginfo] target(s) in 20.13s
+test result: ok. 71 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.15s
+test result: ok. 9 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+## target/n-native-r2-check.log
+/Users/zhez/attesor-p2n/target/native-round2-check/native/libattesornative.dylib: replacing existing signature
+/Users/zhez/attesor-p2n/target/native-round2-check/native/libattesorvimage.dylib: replacing existing signature
+/Users/zhez/attesor-p2n/target/native-round2-check/native/libattesorvdsp.dylib: replacing existing signature
+/Users/zhez/attesor-p2n/target/native-round2-check/native/libattesorcompression.dylib: replacing existing signature
+/Users/zhez/attesor-p2n/target/native-round2-check/native/libattesorcrypto.dylib: replacing existing signature
+/Users/zhez/attesor-p2n/target/native-round2-check/native/libattesorimageio.dylib: replacing existing signature
+PASS numeric-native-1: {'attesor_native_vdsp_calls': '0', 'attesor_native_vimage_calls': '0', 'attesor_native_compression_calls': '0', 'attesor_native_crypto_calls': '0'}
+PASS numeric-off-1: {'attesor_native_vdsp_calls': '0', 'attesor_native_vimage_calls': '0', 'attesor_native_compression_calls': '0', 'attesor_native_crypto_calls': '0'}
+PASS numeric-on-1: {'attesor_native_vdsp_calls': '269', 'attesor_native_vimage_calls': '18', 'attesor_native_compression_calls': '0', 'attesor_native_crypto_calls': '0'}
+PASS independent double DFT numeric-native-1.bin: 20 transforms; all FFT inverse identities
+PASS independent double DFT numeric-off-1.bin: 20 transforms; all FFT inverse identities
+PASS independent double DFT numeric-on-1.bin: 20 transforms; all FFT inverse identities
+ERROR vadd: max_abs=0 max_rel=0 finite_values=2570
+ERROR vmul: max_abs=0 max_rel=0 finite_values=2570
+ERROR vsmul: max_abs=0 max_rel=0 finite_values=2570
+ERROR vsadd: max_abs=0 max_rel=0 finite_values=2570
+ERROR dot: max_abs=1048576 max_rel=5.21546884e-07 finite_values=10
+ERROR sum: max_abs=2.15239444e-41 max_rel=2.54496055e-06 finite_values=10
+ERROR negative-stride: max_abs=0 max_rel=0 finite_values=2570
+ERROR inplace: max_abs=0 max_rel=0 finite_values=5120
+ERROR special-add: max_abs=0 max_rel=0 finite_values=6
+ERROR special-mul: max_abs=0 max_rel=0 finite_values=6
+ERROR fft-input-real: max_abs=0 max_rel=0 finite_values=6800
+ERROR fft-input-imag: max_abs=0 max_rel=0 finite_values=6800
+ERROR fft-real: max_abs=1.14440918e-05 max_rel=2.69916933e-05 finite_values=6800
+ERROR fft-imag: max_abs=7.62939453e-06 max_rel=0.000100440791 finite_values=6800
+ERROR ifft-real: max_abs=0.000305175781 max_rel=1 finite_values=6800
+ERROR ifft-imag: max_abs=0.000244140625 max_rel=1.99538891 finite_values=6800
+ERROR rfft-real: max_abs=0.0131835938 max_rel=0.015625 finite_values=3400
+ERROR rfft-imag: max_abs=0.01171875 max_rel=1.40613167 finite_values=3400
+ERROR irfft-real: max_abs=0.5 max_rel=1 finite_values=3400
+ERROR irfft-imag: max_abs=0.6875 max_rel=1.99966971 finite_values=3400
+ERROR guest-zop: max_abs=0 max_rel=0 finite_values=16
+ERROR scale-f: max_abs=4.76837158e-07 max_rel=0.00136720073 finite_values=35960
+ERROR scratch-scale: max_abs=0 max_rel=0 finite_values=35960
+ERROR convert-f: max_abs=0 max_rel=0 finite_values=1273
+PASS compare numeric-off-1.bin / numeric-on-1.bin: 513 complete records
+ERROR vadd: max_abs=0 max_rel=0 finite_values=2570
+ERROR vmul: max_abs=0 max_rel=0 finite_values=2570
+ERROR vsmul: max_abs=0 max_rel=0 finite_values=2570
+ERROR vsadd: max_abs=0 max_rel=0 finite_values=2570
+ERROR dot: max_abs=786432 max_rel=2.310467e-07 finite_values=10
+ERROR sum: max_abs=1.90734863e-06 max_rel=5.93825286e-07 finite_values=10
+ERROR negative-stride: max_abs=0 max_rel=0 finite_values=2570
+ERROR inplace: max_abs=0 max_rel=0 finite_values=5120
+ERROR special-add: max_abs=0 max_rel=0 finite_values=6
+ERROR special-mul: max_abs=0 max_rel=0 finite_values=6
+ERROR fft-input-real: max_abs=5.96046448e-08 max_rel=1.12656572e-07 finite_values=6800
+ERROR fft-input-imag: max_abs=0 max_rel=0 finite_values=6800
+ERROR fft-real: max_abs=3.81469727e-06 max_rel=9.98252201e-06 finite_values=6800
+ERROR fft-imag: max_abs=9.53674316e-07 max_rel=2.13841929e-05 finite_values=6800
+ERROR ifft-real: max_abs=7.62939453e-05 max_rel=1 finite_values=6800
+ERROR ifft-imag: max_abs=5.45252105e-05 max_rel=1.98825891 finite_values=6800
+ERROR rfft-real: max_abs=0.00428771973 max_rel=4.74678579e-05 finite_values=3400
+ERROR rfft-imag: max_abs=0.015625 max_rel=0.313121143 finite_values=3400
+ERROR irfft-real: max_abs=0.15625 max_rel=1.33333333 finite_values=3400
+ERROR irfft-imag: max_abs=0.113057977 max_rel=1.99226334 finite_values=3400
+ERROR guest-zop: max_abs=0 max_rel=0 finite_values=16
+ERROR scale-f: max_abs=0 max_rel=0 finite_values=35960
+ERROR scratch-scale: max_abs=4.76837158e-07 max_rel=0.00136720073 finite_values=35960
+ERROR convert-f: max_abs=0 max_rel=0 finite_values=1273
+PASS compare numeric-native-1.bin / numeric-on-1.bin: 513 complete records
+PASS numeric-vdsp-1: {'attesor_native_vdsp_calls': '269', 'attesor_native_vimage_calls': '0', 'attesor_native_compression_calls': '0', 'attesor_native_crypto_calls': '0'}
+ERROR vadd: max_abs=0 max_rel=0 finite_values=2570
+ERROR vmul: max_abs=0 max_rel=0 finite_values=2570
+ERROR vsmul: max_abs=0 max_rel=0 finite_values=2570
+ERROR vsadd: max_abs=0 max_rel=0 finite_values=2570
+ERROR dot: max_abs=1048576 max_rel=5.21546884e-07 finite_values=10
+ERROR sum: max_abs=9.53674316e-07 max_rel=8.48320182e-07 finite_values=10
+ERROR negative-stride: max_abs=0 max_rel=0 finite_values=2570
+ERROR inplace: max_abs=0 max_rel=0 finite_values=5120
+ERROR special-add: max_abs=0 max_rel=0 finite_values=6
+ERROR special-mul: max_abs=0 max_rel=0 finite_values=6
+ERROR fft-input-real: max_abs=0 max_rel=0 finite_values=6800
+ERROR fft-input-imag: max_abs=0 max_rel=0 finite_values=6800
+ERROR fft-real: max_abs=1.14440918e-05 max_rel=2.69916933e-05 finite_values=6800
+ERROR fft-imag: max_abs=7.62939453e-06 max_rel=0.000100440791 finite_values=6800
+ERROR ifft-real: max_abs=0.000305175781 max_rel=1 finite_values=6800
+ERROR ifft-imag: max_abs=0.000244140625 max_rel=1.99538891 finite_values=6800
+ERROR rfft-real: max_abs=0.0131835938 max_rel=0.015625 finite_values=3400
+ERROR rfft-imag: max_abs=0.01171875 max_rel=1.40613167 finite_values=3400
+ERROR irfft-real: max_abs=0.5 max_rel=1 finite_values=3400
+ERROR irfft-imag: max_abs=0.6875 max_rel=1.99966971 finite_values=3400
+ERROR guest-zop: max_abs=0 max_rel=0 finite_values=16
+ERROR scale-f: max_abs=0 max_rel=0 finite_values=35960
+ERROR scratch-scale: max_abs=0 max_rel=0 finite_values=35960
+ERROR convert-f: max_abs=0 max_rel=0 finite_values=1273
+PASS compare numeric-off-1.bin / numeric-vdsp-1.bin: 513 complete records
+PASS numeric-vimage-1: {'attesor_native_vdsp_calls': '0', 'attesor_native_vimage_calls': '18', 'attesor_native_compression_calls': '0', 'attesor_native_crypto_calls': '0'}
+ERROR vadd: max_abs=0 max_rel=0 finite_values=2570
+ERROR vmul: max_abs=0 max_rel=0 finite_values=2570
+ERROR vsmul: max_abs=0 max_rel=0 finite_values=2570
+ERROR vsadd: max_abs=0 max_rel=0 finite_values=2570
+ERROR dot: max_abs=0 max_rel=0 finite_values=10
+ERROR sum: max_abs=0 max_rel=0 finite_values=10
+ERROR negative-stride: max_abs=0 max_rel=0 finite_values=2570
+ERROR inplace: max_abs=0 max_rel=0 finite_values=5120
+ERROR special-add: max_abs=0 max_rel=0 finite_values=6
+ERROR special-mul: max_abs=0 max_rel=0 finite_values=6
+ERROR fft-input-real: max_abs=0 max_rel=0 finite_values=6800
+ERROR fft-input-imag: max_abs=0 max_rel=0 finite_values=6800
+ERROR fft-real: max_abs=0 max_rel=0 finite_values=6800
+ERROR fft-imag: max_abs=0 max_rel=0 finite_values=6800
+ERROR ifft-real: max_abs=0 max_rel=0 finite_values=6800
+ERROR ifft-imag: max_abs=0 max_rel=0 finite_values=6800
+ERROR rfft-real: max_abs=0 max_rel=0 finite_values=3400
+ERROR rfft-imag: max_abs=0 max_rel=0 finite_values=3400
+ERROR irfft-real: max_abs=0 max_rel=0 finite_values=3400
+ERROR irfft-imag: max_abs=0 max_rel=0 finite_values=3400
+ERROR guest-zop: max_abs=0 max_rel=0 finite_values=16
+ERROR scale-f: max_abs=4.76837158e-07 max_rel=0.00136720073 finite_values=35960
+ERROR scratch-scale: max_abs=0 max_rel=0 finite_values=35960
+ERROR convert-f: max_abs=0 max_rel=0 finite_values=1273
+PASS compare numeric-off-1.bin / numeric-vimage-1.bin: 513 complete records
+PASS crypto-native-1: {'attesor_native_vdsp_calls': '0', 'attesor_native_vimage_calls': '0', 'attesor_native_compression_calls': '0', 'attesor_native_crypto_calls': '0'}
+PASS crypto-off-1: {'attesor_native_vdsp_calls': '0', 'attesor_native_vimage_calls': '0', 'attesor_native_compression_calls': '0', 'attesor_native_crypto_calls': '0'}
+PASS compare crypto-native-1.bin / crypto-off-1.bin: 276 complete records
+PASS crypto-on-1: {'attesor_native_vdsp_calls': '0', 'attesor_native_vimage_calls': '0', 'attesor_native_compression_calls': '0', 'attesor_native_crypto_calls': '177'}
+PASS compare crypto-native-1.bin / crypto-on-1.bin: 276 complete records
+PASS crypto-crypto-1: {'attesor_native_vdsp_calls': '0', 'attesor_native_vimage_calls': '0', 'attesor_native_compression_calls': '0', 'attesor_native_crypto_calls': '177'}
+PASS compare crypto-native-1.bin / crypto-crypto-1.bin: 276 complete records
+PASS numeric-native-42: {'attesor_native_vdsp_calls': '0', 'attesor_native_vimage_calls': '0', 'attesor_native_compression_calls': '0', 'attesor_native_crypto_calls': '0'}
+PASS numeric-off-42: {'attesor_native_vdsp_calls': '0', 'attesor_native_vimage_calls': '0', 'attesor_native_compression_calls': '0', 'attesor_native_crypto_calls': '0'}
+PASS numeric-on-42: {'attesor_native_vdsp_calls': '269', 'attesor_native_vimage_calls': '18', 'attesor_native_compression_calls': '0', 'attesor_native_crypto_calls': '0'}
+PASS independent double DFT numeric-native-42.bin: 20 transforms; all FFT inverse identities
+PASS independent double DFT numeric-off-42.bin: 20 transforms; all FFT inverse identities
+PASS independent double DFT numeric-on-42.bin: 20 transforms; all FFT inverse identities
+ERROR vadd: max_abs=0 max_rel=0 finite_values=2570
+ERROR vmul: max_abs=0 max_rel=0 finite_values=2570
+ERROR vsmul: max_abs=0 max_rel=0 finite_values=2570
+ERROR vsadd: max_abs=0 max_rel=0 finite_values=2570
+ERROR dot: max_abs=1048576 max_rel=4.83246989e-06 finite_values=10
+ERROR sum: max_abs=131072 max_rel=1.03954102e-06 finite_values=10
+ERROR negative-stride: max_abs=0 max_rel=0 finite_values=2570
+ERROR inplace: max_abs=0 max_rel=0 finite_values=5120
+ERROR special-add: max_abs=0 max_rel=0 finite_values=6
+ERROR special-mul: max_abs=0 max_rel=0 finite_values=6
+ERROR fft-input-real: max_abs=0 max_rel=0 finite_values=6800
+ERROR fft-input-imag: max_abs=0 max_rel=0 finite_values=6800
+ERROR fft-real: max_abs=7.62939453e-06 max_rel=2.69916933e-05 finite_values=6800
+ERROR fft-imag: max_abs=9.53674316e-06 max_rel=0.000100440791 finite_values=6800
+ERROR ifft-real: max_abs=0.000335693359 max_rel=1 finite_values=6800
+ERROR ifft-imag: max_abs=0.000305175781 max_rel=2 finite_values=6800
+ERROR rfft-real: max_abs=0.015625 max_rel=0.015625 finite_values=3400
+ERROR rfft-imag: max_abs=0.013671875 max_rel=1.64557113 finite_values=3400
+ERROR irfft-real: max_abs=0.5 max_rel=1 finite_values=3400
+ERROR irfft-imag: max_abs=0.5 max_rel=1.99993665 finite_values=3400
+ERROR guest-zop: max_abs=0 max_rel=0 finite_values=16
+ERROR scale-f: max_abs=7.15255737e-07 max_rel=0.000621037449 finite_values=35960
+ERROR scratch-scale: max_abs=0 max_rel=0 finite_values=35960
+ERROR convert-f: max_abs=0 max_rel=0 finite_values=1273
+PASS compare numeric-off-42.bin / numeric-on-42.bin: 513 complete records
+ERROR vadd: max_abs=0 max_rel=0 finite_values=2570
+ERROR vmul: max_abs=0 max_rel=0 finite_values=2570
+ERROR vsmul: max_abs=0 max_rel=0 finite_values=2570
+ERROR vsadd: max_abs=0 max_rel=0 finite_values=2570
+ERROR dot: max_abs=1572864 max_rel=2.01620586e-07 finite_values=10
+ERROR sum: max_abs=917504 max_rel=2.07908204e-06 finite_values=10
+ERROR negative-stride: max_abs=0 max_rel=0 finite_values=2570
+ERROR inplace: max_abs=0 max_rel=0 finite_values=5120
+ERROR special-add: max_abs=0 max_rel=0 finite_values=6
+ERROR special-mul: max_abs=0 max_rel=0 finite_values=6
+ERROR fft-input-real: max_abs=5.96046448e-08 max_rel=1.12656572e-07 finite_values=6800
+ERROR fft-input-imag: max_abs=0 max_rel=0 finite_values=6800
+ERROR fft-real: max_abs=3.81469727e-06 max_rel=9.98252201e-06 finite_values=6800
+ERROR fft-imag: max_abs=9.53674316e-07 max_rel=2.13841929e-05 finite_values=6800
+ERROR ifft-real: max_abs=7.62939453e-05 max_rel=1 finite_values=6800
+ERROR ifft-imag: max_abs=5.45252105e-05 max_rel=1.98825891 finite_values=6800
+ERROR rfft-real: max_abs=0.00428771973 max_rel=4.74678579e-05 finite_values=3400
+ERROR rfft-imag: max_abs=0.015625 max_rel=0.313121143 finite_values=3400
+ERROR irfft-real: max_abs=0.15625 max_rel=1.33333333 finite_values=3400
+ERROR irfft-imag: max_abs=0.113057977 max_rel=1.99226334 finite_values=3400
+ERROR guest-zop: max_abs=0 max_rel=0 finite_values=16
+ERROR scale-f: max_abs=0 max_rel=0 finite_values=35960
+ERROR scratch-scale: max_abs=7.15255737e-07 max_rel=0.000621037449 finite_values=35960
+ERROR convert-f: max_abs=0 max_rel=0 finite_values=1273
+PASS compare numeric-native-42.bin / numeric-on-42.bin: 513 complete records
+PASS numeric-vdsp-42: {'attesor_native_vdsp_calls': '269', 'attesor_native_vimage_calls': '0', 'attesor_native_compression_calls': '0', 'attesor_native_crypto_calls': '0'}
+ERROR vadd: max_abs=0 max_rel=0 finite_values=2570
+ERROR vmul: max_abs=0 max_rel=0 finite_values=2570
+ERROR vsmul: max_abs=0 max_rel=0 finite_values=2570
+ERROR vsadd: max_abs=0 max_rel=0 finite_values=2570
+ERROR dot: max_abs=1048576 max_rel=4.83246989e-06 finite_values=10
+ERROR sum: max_abs=1179648 max_rel=1.59693615e-06 finite_values=10
+ERROR negative-stride: max_abs=0 max_rel=0 finite_values=2570
+ERROR inplace: max_abs=0 max_rel=0 finite_values=5120
+ERROR special-add: max_abs=0 max_rel=0 finite_values=6
+ERROR special-mul: max_abs=0 max_rel=0 finite_values=6
+ERROR fft-input-real: max_abs=0 max_rel=0 finite_values=6800
+ERROR fft-input-imag: max_abs=0 max_rel=0 finite_values=6800
+ERROR fft-real: max_abs=7.62939453e-06 max_rel=2.69916933e-05 finite_values=6800
+ERROR fft-imag: max_abs=9.53674316e-06 max_rel=0.000100440791 finite_values=6800
+ERROR ifft-real: max_abs=0.000335693359 max_rel=1 finite_values=6800
+ERROR ifft-imag: max_abs=0.000305175781 max_rel=2 finite_values=6800
+ERROR rfft-real: max_abs=0.015625 max_rel=0.015625 finite_values=3400
+ERROR rfft-imag: max_abs=0.013671875 max_rel=1.64557113 finite_values=3400
+ERROR irfft-real: max_abs=0.5 max_rel=1 finite_values=3400
+ERROR irfft-imag: max_abs=0.5 max_rel=1.99993665 finite_values=3400
+ERROR guest-zop: max_abs=0 max_rel=0 finite_values=16
+ERROR scale-f: max_abs=0 max_rel=0 finite_values=35960
+ERROR scratch-scale: max_abs=0 max_rel=0 finite_values=35960
+ERROR convert-f: max_abs=0 max_rel=0 finite_values=1273
+PASS compare numeric-off-42.bin / numeric-vdsp-42.bin: 513 complete records
+PASS numeric-vimage-42: {'attesor_native_vdsp_calls': '0', 'attesor_native_vimage_calls': '18', 'attesor_native_compression_calls': '0', 'attesor_native_crypto_calls': '0'}
+ERROR vadd: max_abs=0 max_rel=0 finite_values=2570
+ERROR vmul: max_abs=0 max_rel=0 finite_values=2570
+ERROR vsmul: max_abs=0 max_rel=0 finite_values=2570
+ERROR vsadd: max_abs=0 max_rel=0 finite_values=2570
+ERROR dot: max_abs=0 max_rel=0 finite_values=10
+ERROR sum: max_abs=0 max_rel=0 finite_values=10
+ERROR negative-stride: max_abs=0 max_rel=0 finite_values=2570
+ERROR inplace: max_abs=0 max_rel=0 finite_values=5120
+ERROR special-add: max_abs=0 max_rel=0 finite_values=6
+ERROR special-mul: max_abs=0 max_rel=0 finite_values=6
+ERROR fft-input-real: max_abs=0 max_rel=0 finite_values=6800
+ERROR fft-input-imag: max_abs=0 max_rel=0 finite_values=6800
+ERROR fft-real: max_abs=0 max_rel=0 finite_values=6800
+ERROR fft-imag: max_abs=0 max_rel=0 finite_values=6800
+ERROR ifft-real: max_abs=0 max_rel=0 finite_values=6800
+ERROR ifft-imag: max_abs=0 max_rel=0 finite_values=6800
+ERROR rfft-real: max_abs=0 max_rel=0 finite_values=3400
+ERROR rfft-imag: max_abs=0 max_rel=0 finite_values=3400
+ERROR irfft-real: max_abs=0 max_rel=0 finite_values=3400
+ERROR irfft-imag: max_abs=0 max_rel=0 finite_values=3400
+ERROR guest-zop: max_abs=0 max_rel=0 finite_values=16
+ERROR scale-f: max_abs=7.15255737e-07 max_rel=0.000621037449 finite_values=35960
+ERROR scratch-scale: max_abs=0 max_rel=0 finite_values=35960
+ERROR convert-f: max_abs=0 max_rel=0 finite_values=1273
+PASS compare numeric-off-42.bin / numeric-vimage-42.bin: 513 complete records
+PASS crypto-native-42: {'attesor_native_vdsp_calls': '0', 'attesor_native_vimage_calls': '0', 'attesor_native_compression_calls': '0', 'attesor_native_crypto_calls': '0'}
+PASS crypto-off-42: {'attesor_native_vdsp_calls': '0', 'attesor_native_vimage_calls': '0', 'attesor_native_compression_calls': '0', 'attesor_native_crypto_calls': '0'}
+PASS compare crypto-native-42.bin / crypto-off-42.bin: 276 complete records
+PASS crypto-on-42: {'attesor_native_vdsp_calls': '0', 'attesor_native_vimage_calls': '0', 'attesor_native_compression_calls': '0', 'attesor_native_crypto_calls': '177'}
+PASS compare crypto-native-42.bin / crypto-on-42.bin: 276 complete records
+PASS crypto-crypto-42: {'attesor_native_vdsp_calls': '0', 'attesor_native_vimage_calls': '0', 'attesor_native_compression_calls': '0', 'attesor_native_crypto_calls': '177'}
+PASS compare crypto-native-42.bin / crypto-crypto-42.bin: 276 complete records
+PASS numeric-native-3735928559: {'attesor_native_vdsp_calls': '0', 'attesor_native_vimage_calls': '0', 'attesor_native_compression_calls': '0', 'attesor_native_crypto_calls': '0'}
+PASS numeric-off-3735928559: {'attesor_native_vdsp_calls': '0', 'attesor_native_vimage_calls': '0', 'attesor_native_compression_calls': '0', 'attesor_native_crypto_calls': '0'}
+PASS numeric-on-3735928559: {'attesor_native_vdsp_calls': '269', 'attesor_native_vimage_calls': '18', 'attesor_native_compression_calls': '0', 'attesor_native_crypto_calls': '0'}
+PASS independent double DFT numeric-native-3735928559.bin: 20 transforms; all FFT inverse identities
+PASS independent double DFT numeric-off-3735928559.bin: 20 transforms; all FFT inverse identities
+PASS independent double DFT numeric-on-3735928559.bin: 20 transforms; all FFT inverse identities
+ERROR vadd: max_abs=0 max_rel=0 finite_values=2570
+ERROR vmul: max_abs=0 max_rel=0 finite_values=2570
+ERROR vsmul: max_abs=0 max_rel=0 finite_values=2570
+ERROR vsadd: max_abs=0 max_rel=0 finite_values=2570
+ERROR dot: max_abs=524288 max_rel=4.54804348e-07 finite_values=10
+ERROR sum: max_abs=2.38418579e-07 max_rel=2.32052104e-07 finite_values=10
+ERROR negative-stride: max_abs=0 max_rel=0 finite_values=2570
+ERROR inplace: max_abs=0 max_rel=0 finite_values=5120
+ERROR special-add: max_abs=0 max_rel=0 finite_values=6
+ERROR special-mul: max_abs=0 max_rel=0 finite_values=6
+ERROR fft-input-real: max_abs=0 max_rel=0 finite_values=6800
+ERROR fft-input-imag: max_abs=0 max_rel=0 finite_values=6800
+ERROR fft-real: max_abs=1.14440918e-05 max_rel=0.000119395412 finite_values=6800
+ERROR fft-imag: max_abs=7.62939453e-06 max_rel=0.000100440791 finite_values=6800
+ERROR ifft-real: max_abs=0.000366210938 max_rel=1 finite_values=6800
+ERROR ifft-imag: max_abs=0.000305175781 max_rel=2 finite_values=6800
+ERROR rfft-real: max_abs=0.013671875 max_rel=0.015625 finite_values=3400
+ERROR rfft-imag: max_abs=0.0133056641 max_rel=1.40613167 finite_values=3400
+ERROR irfft-real: max_abs=0.5625 max_rel=1 finite_values=3400
+ERROR irfft-imag: max_abs=0.5 max_rel=1.99984836 finite_values=3400
+ERROR guest-zop: max_abs=0 max_rel=0 finite_values=16
+ERROR scale-f: max_abs=5.96046448e-07 max_rel=0.00094008632 finite_values=35960
+ERROR scratch-scale: max_abs=0 max_rel=0 finite_values=35960
+ERROR convert-f: max_abs=0 max_rel=0 finite_values=1273
+PASS compare numeric-off-3735928559.bin / numeric-on-3735928559.bin: 513 complete records
+ERROR vadd: max_abs=0 max_rel=0 finite_values=2570
+ERROR vmul: max_abs=0 max_rel=0 finite_values=2570
+ERROR vsmul: max_abs=0 max_rel=0 finite_values=2570
+ERROR vsadd: max_abs=0 max_rel=0 finite_values=2570
+ERROR dot: max_abs=1.43051147e-06 max_rel=2.08595135e-07 finite_values=10
+ERROR sum: max_abs=4.76837158e-07 max_rel=1.50822761e-07 finite_values=10
+ERROR negative-stride: max_abs=0 max_rel=0 finite_values=2570
+ERROR inplace: max_abs=0 max_rel=0 finite_values=5120
+ERROR special-add: max_abs=0 max_rel=0 finite_values=6
+ERROR special-mul: max_abs=0 max_rel=0 finite_values=6
+ERROR fft-input-real: max_abs=5.96046448e-08 max_rel=1.12656572e-07 finite_values=6800
+ERROR fft-input-imag: max_abs=0 max_rel=0 finite_values=6800
+ERROR fft-real: max_abs=3.81469727e-06 max_rel=9.98252201e-06 finite_values=6800
+ERROR fft-imag: max_abs=9.53674316e-07 max_rel=2.13841929e-05 finite_values=6800
+ERROR ifft-real: max_abs=7.62939453e-05 max_rel=1 finite_values=6800
+ERROR ifft-imag: max_abs=5.45252105e-05 max_rel=1.98825891 finite_values=6800
+ERROR rfft-real: max_abs=0.00428771973 max_rel=4.74678579e-05 finite_values=3400
+ERROR rfft-imag: max_abs=0.015625 max_rel=0.313121143 finite_values=3400
+ERROR irfft-real: max_abs=0.15625 max_rel=1.33333333 finite_values=3400
+ERROR irfft-imag: max_abs=0.113057977 max_rel=1.99226334 finite_values=3400
+ERROR guest-zop: max_abs=0 max_rel=0 finite_values=16
+ERROR scale-f: max_abs=0 max_rel=0 finite_values=35960
+ERROR scratch-scale: max_abs=5.96046448e-07 max_rel=0.00094008632 finite_values=35960
+ERROR convert-f: max_abs=0 max_rel=0 finite_values=1273
+PASS compare numeric-native-3735928559.bin / numeric-on-3735928559.bin: 513 complete records
+PASS numeric-vdsp-3735928559: {'attesor_native_vdsp_calls': '269', 'attesor_native_vimage_calls': '0', 'attesor_native_compression_calls': '0', 'attesor_native_crypto_calls': '0'}
+ERROR vadd: max_abs=0 max_rel=0 finite_values=2570
+ERROR vmul: max_abs=0 max_rel=0 finite_values=2570
+ERROR vsmul: max_abs=0 max_rel=0 finite_values=2570
+ERROR vsadd: max_abs=0 max_rel=0 finite_values=2570
+ERROR dot: max_abs=524288 max_rel=4.54804348e-07 finite_values=10
+ERROR sum: max_abs=7.15255737e-07 max_rel=2.26234141e-07 finite_values=10
+ERROR negative-stride: max_abs=0 max_rel=0 finite_values=2570
+ERROR inplace: max_abs=0 max_rel=0 finite_values=5120
+ERROR special-add: max_abs=0 max_rel=0 finite_values=6
+ERROR special-mul: max_abs=0 max_rel=0 finite_values=6
+ERROR fft-input-real: max_abs=0 max_rel=0 finite_values=6800
+ERROR fft-input-imag: max_abs=0 max_rel=0 finite_values=6800
+ERROR fft-real: max_abs=1.14440918e-05 max_rel=0.000119395412 finite_values=6800
+ERROR fft-imag: max_abs=7.62939453e-06 max_rel=0.000100440791 finite_values=6800
+ERROR ifft-real: max_abs=0.000366210938 max_rel=1 finite_values=6800
+ERROR ifft-imag: max_abs=0.000305175781 max_rel=2 finite_values=6800
+ERROR rfft-real: max_abs=0.013671875 max_rel=0.015625 finite_values=3400
+ERROR rfft-imag: max_abs=0.0133056641 max_rel=1.40613167 finite_values=3400
+ERROR irfft-real: max_abs=0.5625 max_rel=1 finite_values=3400
+ERROR irfft-imag: max_abs=0.5 max_rel=1.99984836 finite_values=3400
+ERROR guest-zop: max_abs=0 max_rel=0 finite_values=16
+ERROR scale-f: max_abs=0 max_rel=0 finite_values=35960
+ERROR scratch-scale: max_abs=0 max_rel=0 finite_values=35960
+ERROR convert-f: max_abs=0 max_rel=0 finite_values=1273
+PASS compare numeric-off-3735928559.bin / numeric-vdsp-3735928559.bin: 513 complete records
+PASS numeric-vimage-3735928559: {'attesor_native_vdsp_calls': '0', 'attesor_native_vimage_calls': '18', 'attesor_native_compression_calls': '0', 'attesor_native_crypto_calls': '0'}
+ERROR vadd: max_abs=0 max_rel=0 finite_values=2570
+ERROR vmul: max_abs=0 max_rel=0 finite_values=2570
+ERROR vsmul: max_abs=0 max_rel=0 finite_values=2570
+ERROR vsadd: max_abs=0 max_rel=0 finite_values=2570
+ERROR dot: max_abs=0 max_rel=0 finite_values=10
+ERROR sum: max_abs=0 max_rel=0 finite_values=10
+ERROR negative-stride: max_abs=0 max_rel=0 finite_values=2570
+ERROR inplace: max_abs=0 max_rel=0 finite_values=5120
+ERROR special-add: max_abs=0 max_rel=0 finite_values=6
+ERROR special-mul: max_abs=0 max_rel=0 finite_values=6
+ERROR fft-input-real: max_abs=0 max_rel=0 finite_values=6800
+ERROR fft-input-imag: max_abs=0 max_rel=0 finite_values=6800
+ERROR fft-real: max_abs=0 max_rel=0 finite_values=6800
+ERROR fft-imag: max_abs=0 max_rel=0 finite_values=6800
+ERROR ifft-real: max_abs=0 max_rel=0 finite_values=6800
+ERROR ifft-imag: max_abs=0 max_rel=0 finite_values=6800
+ERROR rfft-real: max_abs=0 max_rel=0 finite_values=3400
+ERROR rfft-imag: max_abs=0 max_rel=0 finite_values=3400
+ERROR irfft-real: max_abs=0 max_rel=0 finite_values=3400
+ERROR irfft-imag: max_abs=0 max_rel=0 finite_values=3400
+ERROR guest-zop: max_abs=0 max_rel=0 finite_values=16
+ERROR scale-f: max_abs=5.96046448e-07 max_rel=0.00094008632 finite_values=35960
+ERROR scratch-scale: max_abs=0 max_rel=0 finite_values=35960
+ERROR convert-f: max_abs=0 max_rel=0 finite_values=1273
+PASS compare numeric-off-3735928559.bin / numeric-vimage-3735928559.bin: 513 complete records
+PASS crypto-native-3735928559: {'attesor_native_vdsp_calls': '0', 'attesor_native_vimage_calls': '0', 'attesor_native_compression_calls': '0', 'attesor_native_crypto_calls': '0'}
+PASS crypto-off-3735928559: {'attesor_native_vdsp_calls': '0', 'attesor_native_vimage_calls': '0', 'attesor_native_compression_calls': '0', 'attesor_native_crypto_calls': '0'}
+PASS compare crypto-native-3735928559.bin / crypto-off-3735928559.bin: 276 complete records
+PASS crypto-on-3735928559: {'attesor_native_vdsp_calls': '0', 'attesor_native_vimage_calls': '0', 'attesor_native_compression_calls': '0', 'attesor_native_crypto_calls': '177'}
+PASS compare crypto-native-3735928559.bin / crypto-on-3735928559.bin: 276 complete records
+PASS crypto-crypto-3735928559: {'attesor_native_vdsp_calls': '0', 'attesor_native_vimage_calls': '0', 'attesor_native_compression_calls': '0', 'attesor_native_crypto_calls': '177'}
+PASS compare crypto-native-3735928559.bin / crypto-crypto-3735928559.bin: 276 complete records
+PASS encode-native: {'attesor_native_vdsp_calls': '0', 'attesor_native_vimage_calls': '0', 'attesor_native_compression_calls': '0', 'attesor_native_crypto_calls': '0'}
+PASS decode-native-native: {'attesor_native_vdsp_calls': '0', 'attesor_native_vimage_calls': '0', 'attesor_native_compression_calls': '0', 'attesor_native_crypto_calls': '0'}
+PASS decode-native-off: {'attesor_native_vdsp_calls': '0', 'attesor_native_vimage_calls': '0', 'attesor_native_compression_calls': '0', 'attesor_native_crypto_calls': '0'}
+PASS decode-native-on: {'attesor_native_vdsp_calls': '0', 'attesor_native_vimage_calls': '0', 'attesor_native_compression_calls': '81', 'attesor_native_crypto_calls': '0'}
+PASS encode-off: {'attesor_native_vdsp_calls': '0', 'attesor_native_vimage_calls': '0', 'attesor_native_compression_calls': '0', 'attesor_native_crypto_calls': '0'}
+PASS decode-off-native: {'attesor_native_vdsp_calls': '0', 'attesor_native_vimage_calls': '0', 'attesor_native_compression_calls': '0', 'attesor_native_crypto_calls': '0'}
+PASS decode-off-off: {'attesor_native_vdsp_calls': '0', 'attesor_native_vimage_calls': '0', 'attesor_native_compression_calls': '0', 'attesor_native_crypto_calls': '0'}
+PASS decode-off-on: {'attesor_native_vdsp_calls': '0', 'attesor_native_vimage_calls': '0', 'attesor_native_compression_calls': '81', 'attesor_native_crypto_calls': '0'}
+PASS encode-on: {'attesor_native_vdsp_calls': '0', 'attesor_native_vimage_calls': '0', 'attesor_native_compression_calls': '147', 'attesor_native_crypto_calls': '0'}
+PASS decode-on-native: {'attesor_native_vdsp_calls': '0', 'attesor_native_vimage_calls': '0', 'attesor_native_compression_calls': '0', 'attesor_native_crypto_calls': '0'}
+PASS decode-on-off: {'attesor_native_vdsp_calls': '0', 'attesor_native_vimage_calls': '0', 'attesor_native_compression_calls': '0', 'attesor_native_crypto_calls': '0'}
+PASS decode-on-on: {'attesor_native_vdsp_calls': '0', 'attesor_native_vimage_calls': '0', 'attesor_native_compression_calls': '81', 'attesor_native_crypto_calls': '0'}
+PASS encode-compression: {'attesor_native_vdsp_calls': '0', 'attesor_native_vimage_calls': '0', 'attesor_native_compression_calls': '147', 'attesor_native_crypto_calls': '0'}
+PASS decode-compression-native: {'attesor_native_vdsp_calls': '0', 'attesor_native_vimage_calls': '0', 'attesor_native_compression_calls': '0', 'attesor_native_crypto_calls': '0'}
+PASS decode-compression-off: {'attesor_native_vdsp_calls': '0', 'attesor_native_vimage_calls': '0', 'attesor_native_compression_calls': '0', 'attesor_native_crypto_calls': '0'}
+PASS decode-compression-on: {'attesor_native_vdsp_calls': '0', 'attesor_native_vimage_calls': '0', 'attesor_native_compression_calls': '81', 'attesor_native_crypto_calls': '0'}
+PASS threads-native: {'attesor_native_vdsp_calls': '0', 'attesor_native_vimage_calls': '0', 'attesor_native_compression_calls': '0', 'attesor_native_crypto_calls': '0'}
+PASS threads-off: {'attesor_native_vdsp_calls': '0', 'attesor_native_vimage_calls': '0', 'attesor_native_compression_calls': '0', 'attesor_native_crypto_calls': '0'}
+PASS threads-on: {'attesor_native_vdsp_calls': '128', 'attesor_native_vimage_calls': '64', 'attesor_native_compression_calls': '384', 'attesor_native_crypto_calls': '64'}
+PASS threads-vdsp: {'attesor_native_vdsp_calls': '128', 'attesor_native_vimage_calls': '0', 'attesor_native_compression_calls': '0', 'attesor_native_crypto_calls': '0'}
+PASS threads-vimage: {'attesor_native_vdsp_calls': '0', 'attesor_native_vimage_calls': '64', 'attesor_native_compression_calls': '0', 'attesor_native_crypto_calls': '0'}
+PASS threads-compression: {'attesor_native_vdsp_calls': '0', 'attesor_native_vimage_calls': '0', 'attesor_native_compression_calls': '384', 'attesor_native_crypto_calls': '0'}
+PASS threads-crypto: {'attesor_native_vdsp_calls': '0', 'attesor_native_vimage_calls': '0', 'attesor_native_compression_calls': '0', 'attesor_native_crypto_calls': '64'}
+PASS fork-native: {'attesor_native_vdsp_calls': '0', 'attesor_native_vimage_calls': '0', 'attesor_native_compression_calls': '0', 'attesor_native_crypto_calls': '0'}
+PASS fork-off: {'attesor_native_vdsp_calls': '0', 'attesor_native_vimage_calls': '0', 'attesor_native_compression_calls': '0', 'attesor_native_crypto_calls': '0'}
+PASS fork-on: {'attesor_native_vdsp_calls': '1', 'attesor_native_vimage_calls': '0', 'attesor_native_compression_calls': '0', 'attesor_native_crypto_calls': '0'}
+PASS chain: {'attesor_native_vdsp_calls': '128', 'attesor_native_vimage_calls': '64', 'attesor_native_compression_calls': '384', 'attesor_native_crypto_calls': '64'}
+PASS chain-off: {'attesor_native_vdsp_calls': '0', 'attesor_native_vimage_calls': '0', 'attesor_native_compression_calls': '0', 'attesor_native_crypto_calls': '0'}
+native-round2 suite: PASS
+
+
+## target/n-native-r2-errors.json
+{
+  "vadd": {
+    "max_abs": 0,
+    "max_rel": 0,
+    "max_normalized_normal_range": 0,
+    "finite": 7710
+  },
+  "vmul": {
+    "max_abs": 0,
+    "max_rel": 0,
+    "max_normalized_normal_range": 0,
+    "finite": 7710
+  },
+  "vsmul": {
+    "max_abs": 0,
+    "max_rel": 0,
+    "max_normalized_normal_range": 0,
+    "finite": 7710
+  },
+  "vsadd": {
+    "max_abs": 0,
+    "max_rel": 0,
+    "max_normalized_normal_range": 0,
+    "finite": 7710
+  },
+  "dot": {
+    "max_abs": 1048576.0,
+    "max_rel": 4.8324698855810526e-06,
+    "max_normalized_normal_range": 4.8324698855810526e-06,
+    "finite": 30
+  },
+  "sum": {
+    "max_abs": 131072.0,
+    "max_rel": 2.5449605454766637e-06,
+    "max_normalized_normal_range": 2.5449605454766637e-06,
+    "finite": 30
+  },
+  "negative-stride": {
+    "max_abs": 0,
+    "max_rel": 0,
+    "max_normalized_normal_range": 0,
+    "finite": 7710
+  },
+  "inplace": {
+    "max_abs": 0,
+    "max_rel": 0,
+    "max_normalized_normal_range": 0,
+    "finite": 15360
+  },
+  "special-add": {
+    "max_abs": 0,
+    "max_rel": 0,
+    "max_normalized_normal_range": 0,
+    "finite": 18
+  },
+  "special-mul": {
+    "max_abs": 0,
+    "max_rel": 0,
+    "max_normalized_normal_range": 0,
+    "finite": 18
+  },
+  "FFT": {
+    "max_abs": 0.6875,
+    "max_rel": 2.0,
+    "max_normalized_normal_range": 6.112406941382684e-07,
+    "finite": 122400
+  },
+  "scale-f": {
+    "max_abs": 7.152557373046875e-07,
+    "max_rel": 0.0013672007320033532,
+    "max_normalized_normal_range": 3.973641406042812e-07,
+    "finite": 107880
+  },
+  "convert-f": {
+    "max_abs": 0,
+    "max_rel": 0,
+    "max_normalized_normal_range": 0,
+    "finite": 3819
+  }
+}
+
+## target/n-native-r2-sensitivity.log
+/private/tmp/attesor-r2-sensitivity-ye5ac_g1/libattesorvdsp.dylib: replacing existing signature
+PASS sensitivity: private vadd -> vmul rejected: ('vadd', 0.031620755791664124, 3.965214091294911e-06, 0.03161679057757283, 3.67083477973938e-06, PosixPath('/Users/zhez/attesor-p2n/target/native-round2-check/numeric-off-1.bin'), PosixPath('/private/tmp/attesor-r2-sensitivity-ye5ac_g1/mutant.bin'))
+
+
+## target/n-native-r2-imageio.log
+python3: warning: confstr() failed with code 5: couldn't get path of DARWIN_USER_TEMP_DIR; using /tmp instead
+/Users/zhez/attesor-p2n/target/native-imageio-check/native/libattesornative.dylib: replacing existing signature
+/Users/zhez/attesor-p2n/target/native-imageio-check/native/libattesorvimage.dylib: replacing existing signature
+/Users/zhez/attesor-p2n/target/native-imageio-check/native/libattesorvdsp.dylib: replacing existing signature
+/Users/zhez/attesor-p2n/target/native-imageio-check/native/libattesorcompression.dylib: replacing existing signature
+/Users/zhez/attesor-p2n/target/native-imageio-check/native/libattesorcrypto.dylib: replacing existing signature
+/Users/zhez/attesor-p2n/target/native-imageio-check/native/libattesorimageio.dylib: replacing existing signature
+PASS encode-native imageio-calls=0
+PASS decode-native-native imageio-calls=0
+JPEG reconstruction native/native/0-1: max_byte=0 PSNR=inf dB
+JPEG reconstruction native/native/0-0: max_byte=0 PSNR=inf dB
+JPEG reconstruction native/native/2-2: max_byte=233 PSNR=12.754132 dB
+JPEG reconstruction native/native/2-0: max_byte=129 PSNR=26.158110 dB
+JPEG reconstruction native/native/0-2: max_byte=1 PSNR=52.902016 dB
+JPEG reconstruction native/native/2-1: max_byte=0 PSNR=inf dB
+JPEG reconstruction native/native/1-2: max_byte=179 PSNR=12.952126 dB
+JPEG reconstruction native/native/1-1: max_byte=0 PSNR=inf dB
+JPEG reconstruction native/native/1-0: max_byte=2 PSNR=51.545869 dB
+PASS decode-native-off imageio-calls=0
+JPEG reconstruction native/off/0-1: max_byte=0 PSNR=inf dB
+JPEG reconstruction native/off/0-0: max_byte=0 PSNR=inf dB
+JPEG reconstruction native/off/2-2: max_byte=233 PSNR=12.754132 dB
+JPEG reconstruction native/off/2-0: max_byte=129 PSNR=26.158110 dB
+JPEG reconstruction native/off/0-2: max_byte=1 PSNR=52.902016 dB
+JPEG reconstruction native/off/2-1: max_byte=0 PSNR=inf dB
+JPEG reconstruction native/off/1-2: max_byte=179 PSNR=12.952126 dB
+JPEG reconstruction native/off/1-1: max_byte=0 PSNR=inf dB
+JPEG reconstruction native/off/1-0: max_byte=2 PSNR=51.545869 dB
+PASS decode-native-on imageio-calls=54
+JPEG reconstruction native/on/0-1: max_byte=0 PSNR=inf dB
+JPEG reconstruction native/on/0-0: max_byte=0 PSNR=inf dB
+JPEG reconstruction native/on/2-2: max_byte=233 PSNR=12.754132 dB
+JPEG reconstruction native/on/2-0: max_byte=129 PSNR=26.158110 dB
+JPEG reconstruction native/on/0-2: max_byte=1 PSNR=52.902016 dB
+JPEG reconstruction native/on/2-1: max_byte=0 PSNR=inf dB
+JPEG reconstruction native/on/1-2: max_byte=179 PSNR=12.952126 dB
+JPEG reconstruction native/on/1-1: max_byte=0 PSNR=inf dB
+JPEG reconstruction native/on/1-0: max_byte=2 PSNR=51.545869 dB
+JPEG decoder native/off/2-2.jpg.raw: max_byte=0 PSNR=inf dB
+JPEG decoder native/on/2-2.jpg.raw: max_byte=0 PSNR=inf dB
+JPEG decoder native/off/2-1.jpg.raw: max_byte=0 PSNR=inf dB
+JPEG decoder native/on/2-1.jpg.raw: max_byte=0 PSNR=inf dB
+JPEG decoder native/off/2-0.jpg.raw: max_byte=0 PSNR=inf dB
+JPEG decoder native/on/2-0.jpg.raw: max_byte=0 PSNR=inf dB
+JPEG decoder native/off/1-1.jpg.raw: max_byte=0 PSNR=inf dB
+JPEG decoder native/on/1-1.jpg.raw: max_byte=0 PSNR=inf dB
+JPEG decoder native/off/0-2.jpg.raw: max_byte=0 PSNR=inf dB
+JPEG decoder native/on/0-2.jpg.raw: max_byte=0 PSNR=inf dB
+JPEG decoder native/off/1-0.jpg.raw: max_byte=0 PSNR=inf dB
+JPEG decoder native/on/1-0.jpg.raw: max_byte=0 PSNR=inf dB
+JPEG decoder native/off/0-1.jpg.raw: max_byte=0 PSNR=inf dB
+JPEG decoder native/on/0-1.jpg.raw: max_byte=0 PSNR=inf dB
+JPEG decoder native/off/1-2.jpg.raw: max_byte=0 PSNR=inf dB
+JPEG decoder native/on/1-2.jpg.raw: max_byte=0 PSNR=inf dB
+JPEG decoder native/off/0-0.jpg.raw: max_byte=0 PSNR=inf dB
+JPEG decoder native/on/0-0.jpg.raw: max_byte=0 PSNR=inf dB
+PASS encode-off imageio-calls=0
+PASS decode-off-native imageio-calls=0
+JPEG reconstruction off/native/0-1: max_byte=0 PSNR=inf dB
+JPEG reconstruction off/native/0-0: max_byte=0 PSNR=inf dB
+JPEG reconstruction off/native/2-2: max_byte=233 PSNR=12.754132 dB
+JPEG reconstruction off/native/2-0: max_byte=129 PSNR=26.158110 dB
+JPEG reconstruction off/native/0-2: max_byte=1 PSNR=52.902016 dB
+JPEG reconstruction off/native/2-1: max_byte=0 PSNR=inf dB
+JPEG reconstruction off/native/1-2: max_byte=179 PSNR=12.952126 dB
+JPEG reconstruction off/native/1-1: max_byte=0 PSNR=inf dB
+JPEG reconstruction off/native/1-0: max_byte=2 PSNR=51.545869 dB
+PASS decode-off-off imageio-calls=0
+JPEG reconstruction off/off/0-1: max_byte=0 PSNR=inf dB
+JPEG reconstruction off/off/0-0: max_byte=0 PSNR=inf dB
+JPEG reconstruction off/off/2-2: max_byte=233 PSNR=12.754132 dB
+JPEG reconstruction off/off/2-0: max_byte=129 PSNR=26.158110 dB
+JPEG reconstruction off/off/0-2: max_byte=1 PSNR=52.902016 dB
+JPEG reconstruction off/off/2-1: max_byte=0 PSNR=inf dB
+JPEG reconstruction off/off/1-2: max_byte=179 PSNR=12.952126 dB
+JPEG reconstruction off/off/1-1: max_byte=0 PSNR=inf dB
+JPEG reconstruction off/off/1-0: max_byte=2 PSNR=51.545869 dB
+PASS decode-off-on imageio-calls=54
+JPEG reconstruction off/on/0-1: max_byte=0 PSNR=inf dB
+JPEG reconstruction off/on/0-0: max_byte=0 PSNR=inf dB
+JPEG reconstruction off/on/2-2: max_byte=233 PSNR=12.754132 dB
+JPEG reconstruction off/on/2-0: max_byte=129 PSNR=26.158110 dB
+JPEG reconstruction off/on/0-2: max_byte=1 PSNR=52.902016 dB
+JPEG reconstruction off/on/2-1: max_byte=0 PSNR=inf dB
+JPEG reconstruction off/on/1-2: max_byte=179 PSNR=12.952126 dB
+JPEG reconstruction off/on/1-1: max_byte=0 PSNR=inf dB
+JPEG reconstruction off/on/1-0: max_byte=2 PSNR=51.545869 dB
+JPEG decoder off/off/2-2.jpg.raw: max_byte=0 PSNR=inf dB
+JPEG decoder off/on/2-2.jpg.raw: max_byte=0 PSNR=inf dB
+JPEG decoder off/off/2-1.jpg.raw: max_byte=0 PSNR=inf dB
+JPEG decoder off/on/2-1.jpg.raw: max_byte=0 PSNR=inf dB
+JPEG decoder off/off/2-0.jpg.raw: max_byte=0 PSNR=inf dB
+JPEG decoder off/on/2-0.jpg.raw: max_byte=0 PSNR=inf dB
+JPEG decoder off/off/1-1.jpg.raw: max_byte=0 PSNR=inf dB
+JPEG decoder off/on/1-1.jpg.raw: max_byte=0 PSNR=inf dB
+JPEG decoder off/off/0-2.jpg.raw: max_byte=0 PSNR=inf dB
+JPEG decoder off/on/0-2.jpg.raw: max_byte=0 PSNR=inf dB
+JPEG decoder off/off/1-0.jpg.raw: max_byte=0 PSNR=inf dB
+JPEG decoder off/on/1-0.jpg.raw: max_byte=0 PSNR=inf dB
+JPEG decoder off/off/0-1.jpg.raw: max_byte=0 PSNR=inf dB
+JPEG decoder off/on/0-1.jpg.raw: max_byte=0 PSNR=inf dB
+JPEG decoder off/off/1-2.jpg.raw: max_byte=0 PSNR=inf dB
+JPEG decoder off/on/1-2.jpg.raw: max_byte=0 PSNR=inf dB
+JPEG decoder off/off/0-0.jpg.raw: max_byte=0 PSNR=inf dB
+JPEG decoder off/on/0-0.jpg.raw: max_byte=0 PSNR=inf dB
+PASS encode-on imageio-calls=63
+PASS decode-on-native imageio-calls=0
+JPEG reconstruction on/native/0-1: max_byte=0 PSNR=inf dB
+JPEG reconstruction on/native/0-0: max_byte=0 PSNR=inf dB
+JPEG reconstruction on/native/2-2: max_byte=233 PSNR=12.754132 dB
+JPEG reconstruction on/native/2-0: max_byte=129 PSNR=26.158110 dB
+JPEG reconstruction on/native/0-2: max_byte=1 PSNR=52.902016 dB
+JPEG reconstruction on/native/2-1: max_byte=0 PSNR=inf dB
+JPEG reconstruction on/native/1-2: max_byte=179 PSNR=12.952126 dB
+JPEG reconstruction on/native/1-1: max_byte=0 PSNR=inf dB
+JPEG reconstruction on/native/1-0: max_byte=2 PSNR=51.545869 dB
+PASS decode-on-off imageio-calls=0
+JPEG reconstruction on/off/0-1: max_byte=0 PSNR=inf dB
+JPEG reconstruction on/off/0-0: max_byte=0 PSNR=inf dB
+JPEG reconstruction on/off/2-2: max_byte=233 PSNR=12.754132 dB
+JPEG reconstruction on/off/2-0: max_byte=129 PSNR=26.158110 dB
+JPEG reconstruction on/off/0-2: max_byte=1 PSNR=52.902016 dB
+JPEG reconstruction on/off/2-1: max_byte=0 PSNR=inf dB
+JPEG reconstruction on/off/1-2: max_byte=179 PSNR=12.952126 dB
+JPEG reconstruction on/off/1-1: max_byte=0 PSNR=inf dB
+JPEG reconstruction on/off/1-0: max_byte=2 PSNR=51.545869 dB
+PASS decode-on-on imageio-calls=54
+JPEG reconstruction on/on/0-1: max_byte=0 PSNR=inf dB
+JPEG reconstruction on/on/0-0: max_byte=0 PSNR=inf dB
+JPEG reconstruction on/on/2-2: max_byte=233 PSNR=12.754132 dB
+JPEG reconstruction on/on/2-0: max_byte=129 PSNR=26.158110 dB
+JPEG reconstruction on/on/0-2: max_byte=1 PSNR=52.902016 dB
+JPEG reconstruction on/on/2-1: max_byte=0 PSNR=inf dB
+JPEG reconstruction on/on/1-2: max_byte=179 PSNR=12.952126 dB
+JPEG reconstruction on/on/1-1: max_byte=0 PSNR=inf dB
+JPEG reconstruction on/on/1-0: max_byte=2 PSNR=51.545869 dB
+JPEG decoder on/off/2-2.jpg.raw: max_byte=0 PSNR=inf dB
+JPEG decoder on/on/2-2.jpg.raw: max_byte=0 PSNR=inf dB
+JPEG decoder on/off/2-1.jpg.raw: max_byte=0 PSNR=inf dB
+JPEG decoder on/on/2-1.jpg.raw: max_byte=0 PSNR=inf dB
+JPEG decoder on/off/2-0.jpg.raw: max_byte=0 PSNR=inf dB
+JPEG decoder on/on/2-0.jpg.raw: max_byte=0 PSNR=inf dB
+JPEG decoder on/off/1-1.jpg.raw: max_byte=0 PSNR=inf dB
+JPEG decoder on/on/1-1.jpg.raw: max_byte=0 PSNR=inf dB
+JPEG decoder on/off/0-2.jpg.raw: max_byte=0 PSNR=inf dB
+JPEG decoder on/on/0-2.jpg.raw: max_byte=0 PSNR=inf dB
+JPEG decoder on/off/1-0.jpg.raw: max_byte=0 PSNR=inf dB
+JPEG decoder on/on/1-0.jpg.raw: max_byte=0 PSNR=inf dB
+JPEG decoder on/off/0-1.jpg.raw: max_byte=0 PSNR=inf dB
+JPEG decoder on/on/0-1.jpg.raw: max_byte=0 PSNR=inf dB
+JPEG decoder on/off/1-2.jpg.raw: max_byte=0 PSNR=inf dB
+JPEG decoder on/on/1-2.jpg.raw: max_byte=0 PSNR=inf dB
+JPEG decoder on/off/0-0.jpg.raw: max_byte=0 PSNR=inf dB
+JPEG decoder on/on/0-0.jpg.raw: max_byte=0 PSNR=inf dB
+JPEG encoder off/on 2-2.jpg.raw: max_byte=0 PSNR=inf dB
+JPEG encoder off/on 2-1.jpg.raw: max_byte=0 PSNR=inf dB
+JPEG encoder off/on 2-0.jpg.raw: max_byte=0 PSNR=inf dB
+JPEG encoder off/on 1-1.jpg.raw: max_byte=0 PSNR=inf dB
+JPEG encoder off/on 0-2.jpg.raw: max_byte=0 PSNR=inf dB
+JPEG encoder off/on 1-0.jpg.raw: max_byte=0 PSNR=inf dB
+JPEG encoder off/on 0-1.jpg.raw: max_byte=0 PSNR=inf dB
+JPEG encoder off/on 1-2.jpg.raw: max_byte=0 PSNR=inf dB
+JPEG encoder off/on 0-0.jpg.raw: max_byte=0 PSNR=inf dB
+PASS threads-native imageio-calls=0
+PASS threads-off imageio-calls=0
+PASS threads-on imageio-calls=32
+native-imageio buffer suite: PASS
+
+
+## target/n-native-r2-vimage.log
+/private/tmp/attesor-vimage.WTRF0k/native/libattesornative.dylib: replacing existing signature
+/private/tmp/attesor-vimage.WTRF0k/native/libattesorvimage.dylib: replacing existing signature
+/private/tmp/attesor-vimage.WTRF0k/native/libattesorvdsp.dylib: replacing existing signature
+/private/tmp/attesor-vimage.WTRF0k/native/libattesorcompression.dylib: replacing existing signature
+/private/tmp/attesor-vimage.WTRF0k/native/libattesorcrypto.dylib: replacing existing signature
+/private/tmp/attesor-vimage.WTRF0k/native/libattesorimageio.dylib: replacing existing signature
+native-vimage: PASS seed=1 bridge-calls=0
+native-vimage: PASS seed=1 bridge-calls=0
+PASS bytes seed=1 libraries=0
+native-vimage: PASS seed=1 bridge-calls=136
+PASS bytes seed=1 libraries=vimage
+native-vimage: PASS seed=1 bridge-calls=0
+PASS bytes seed=1 libraries=zlib
+native-vimage: PASS seed=1 bridge-calls=136
+PASS bytes seed=1 libraries=zlib,vimage
+native-vimage: PASS seed=42 bridge-calls=0
+native-vimage: PASS seed=42 bridge-calls=0
+PASS bytes seed=42 libraries=0
+native-vimage: PASS seed=42 bridge-calls=136
+PASS bytes seed=42 libraries=vimage
+native-vimage: PASS seed=42 bridge-calls=0
+PASS bytes seed=42 libraries=zlib
+native-vimage: PASS seed=42 bridge-calls=136
+PASS bytes seed=42 libraries=zlib,vimage
+native-vimage: PASS seed=3735928559 bridge-calls=0
+native-vimage: PASS seed=3735928559 bridge-calls=0
+PASS bytes seed=0xdeadbeef libraries=0
+native-vimage: PASS seed=3735928559 bridge-calls=136
+PASS bytes seed=0xdeadbeef libraries=vimage
+native-vimage: PASS seed=3735928559 bridge-calls=0
+PASS bytes seed=0xdeadbeef libraries=zlib
+native-vimage: PASS seed=3735928559 bridge-calls=136
+PASS bytes seed=0xdeadbeef libraries=zlib,vimage
+native-vimage: PASS seed=1 bridge-calls=0
+native-vimage: PASS seed=1 bridge-calls=136
+PASS --chain
+native-vimage: PASS seed=1 bridge-calls=0
+PASS --chain-off
+native-vimage suite: PASS
+
+
+## target/n-native-r2-zlib.log
+/tmp/attesor-native-check.gxxjBv/native/libattesornative.dylib: replacing existing signature
+/tmp/attesor-native-check.gxxjBv/native/libattesorvimage.dylib: replacing existing signature
+/tmp/attesor-native-check.gxxjBv/native/libattesorvdsp.dylib: replacing existing signature
+/tmp/attesor-native-check.gxxjBv/native/libattesorcompression.dylib: replacing existing signature
+/tmp/attesor-native-check.gxxjBv/native/libattesorcrypto.dylib: replacing existing signature
+/tmp/attesor-native-check.gxxjBv/native/libattesorimageio.dylib: replacing existing signature
+bridge-calls=0
+native-zlib: PASS
+bridge-calls=4332
+native-zlib: PASS
+bridge-calls=4332
+native-zlib: PASS
+native-chain: PASS
+bridge-calls=0
+native-zlib: PASS
+native-chain: PASS
+native-zlib suite: PASS
+
+
+## Exploratory measurement BEFORE final FPCR/MXCSR guards; not final candidate acceptance
+
+### target/native-round2-measure/native-1.txt
+22:37  2 users, load averages: 7.11 7.45 8.21
+vDSP-dot-64 2.589000 ms
+vDSP-add-64 4.381000 ms
+vDSP-FFT-64 0.236000 ms
+vDSP-rFFT-64 0.136000 ms
+vImage-scaleF-16 5.547000 ms
+vImage-convertF-16 1.014000 ms
+compression-LZ4-encode-16 1.405000 ms
+compression-LZ4-decode-16 0.681000 ms
+compression-LZFSE-encode-16 42.573000 ms
+compression-LZFSE-decode-16 0.783000 ms
+compression-zlib-encode-16 67.033000 ms
+compression-zlib-decode-16 1.327000 ms
+AES-CBC-16 13.727000 ms
+ImageIO-buffer-PNG-encode-8 17.169000 ms
+ImageIO-buffer-PNG-decode-8 7.398000 ms
+ImageIO-buffer-JPEG-encode-8 4.631000 ms
+ImageIO-buffer-JPEG-decode-8 7.820000 ms
+
+
+### target/native-round2-measure/native-1.err
+vdsp=0
+vimage=0
+compression=0
+crypto=0
+imageio=0
+
+
+### target/native-round2-measure/off-1.txt
+22:37  2 users, load averages: 7.11 7.45 8.21
+vDSP-dot-64 6.584961 ms
+vDSP-add-64 8.463867 ms
+vDSP-FFT-64 9.992920 ms
+vDSP-rFFT-64 3.206055 ms
+vImage-scaleF-16 147.351074 ms
+vImage-convertF-16 27.805908 ms
+compression-LZ4-encode-16 5.333008 ms
+compression-LZ4-decode-16 2.252930 ms
+compression-LZFSE-encode-16 214.332031 ms
+compression-LZFSE-decode-16 5.513916 ms
+compression-zlib-encode-16 199.914062 ms
+compression-zlib-decode-16 6.015869 ms
+AES-CBC-16 51.461914 ms
+ImageIO-buffer-PNG-encode-8 148.875977 ms
+ImageIO-buffer-PNG-decode-8 88.196045 ms
+ImageIO-buffer-JPEG-encode-8 116.345215 ms
+ImageIO-buffer-JPEG-decode-8 118.564941 ms
+
+
+### target/native-round2-measure/off-1.err
+vdsp=0
+vimage=0
+compression=0
+crypto=0
+imageio=0
+
+
+### target/native-round2-measure/on-1.txt
+22:37  2 users, load averages: 7.11 7.45 8.21
+vDSP-dot-64 3.137939 ms
+vDSP-add-64 4.930908 ms
+vDSP-FFT-64 0.569092 ms
+vDSP-rFFT-64 0.273926 ms
+vImage-scaleF-16 4.872070 ms
+vImage-convertF-16 1.114990 ms
+compression-LZ4-encode-16 1.290039 ms
+compression-LZ4-decode-16 0.631836 ms
+compression-LZFSE-encode-16 46.806885 ms
+compression-LZFSE-decode-16 1.195801 ms
+compression-zlib-encode-16 69.424072 ms
+compression-zlib-decode-16 1.431152 ms
+AES-CBC-16 14.807129 ms
+ImageIO-buffer-PNG-encode-8 19.896973 ms
+ImageIO-buffer-PNG-decode-8 8.053955 ms
+ImageIO-buffer-JPEG-encode-8 4.957031 ms
+ImageIO-buffer-JPEG-decode-8 8.241943 ms
+
+
+### target/native-round2-measure/on-1.err
+vdsp=260
+vimage=34
+compression=102
+crypto=18
+imageio=36
+
+
+### target/native-round2-measure/native-2.txt
+22:37  2 users, load averages: 7.11 7.45 8.21
+vDSP-dot-64 2.955000 ms
+vDSP-add-64 4.285000 ms
+vDSP-FFT-64 0.218000 ms
+vDSP-rFFT-64 0.127000 ms
+vImage-scaleF-16 5.179000 ms
+vImage-convertF-16 1.051000 ms
+compression-LZ4-encode-16 1.185000 ms
+compression-LZ4-decode-16 0.562000 ms
+compression-LZFSE-encode-16 38.245000 ms
+compression-LZFSE-decode-16 0.797000 ms
+compression-zlib-encode-16 67.282000 ms
+compression-zlib-decode-16 1.303000 ms
+AES-CBC-16 12.856000 ms
+ImageIO-buffer-PNG-encode-8 15.968000 ms
+ImageIO-buffer-PNG-decode-8 8.148000 ms
+ImageIO-buffer-JPEG-encode-8 4.688000 ms
+ImageIO-buffer-JPEG-decode-8 8.134000 ms
+
+
+### target/native-round2-measure/native-2.err
+vdsp=0
+vimage=0
+compression=0
+crypto=0
+imageio=0
+
+
+### target/native-round2-measure/off-2.txt
+22:37  2 users, load averages: 6.86 7.39 8.18
+vDSP-dot-64 6.818115 ms
+vDSP-add-64 8.349121 ms
+vDSP-FFT-64 10.213867 ms
+vDSP-rFFT-64 3.202148 ms
+vImage-scaleF-16 148.161865 ms
+vImage-convertF-16 34.256836 ms
+compression-LZ4-encode-16 5.822021 ms
+compression-LZ4-decode-16 2.525146 ms
+compression-LZFSE-encode-16 215.704834 ms
+compression-LZFSE-decode-16 5.634033 ms
+compression-zlib-encode-16 211.641113 ms
+compression-zlib-decode-16 5.749023 ms
+AES-CBC-16 48.766846 ms
+ImageIO-buffer-PNG-encode-8 161.410156 ms
+ImageIO-buffer-PNG-decode-8 87.044922 ms
+ImageIO-buffer-JPEG-encode-8 104.654053 ms
+ImageIO-buffer-JPEG-decode-8 118.280029 ms
+
+
+### target/native-round2-measure/off-2.err
+vdsp=0
+vimage=0
+compression=0
+crypto=0
+imageio=0
+
+
+### target/native-round2-measure/on-2.txt
+22:37  2 users, load averages: 6.86 7.39 8.18
+vDSP-dot-64 3.100830 ms
+vDSP-add-64 5.203857 ms
+vDSP-FFT-64 0.567871 ms
+vDSP-rFFT-64 0.273926 ms
+vImage-scaleF-16 5.062988 ms
+vImage-convertF-16 1.277100 ms
+compression-LZ4-encode-16 1.376953 ms
+compression-LZ4-decode-16 0.632812 ms
+compression-LZFSE-encode-16 41.269043 ms
+compression-LZFSE-decode-16 1.285156 ms
+compression-zlib-encode-16 61.148193 ms
+compression-zlib-decode-16 1.394043 ms
+AES-CBC-16 14.190186 ms
+ImageIO-buffer-PNG-encode-8 17.442139 ms
+ImageIO-buffer-PNG-decode-8 6.756836 ms
+ImageIO-buffer-JPEG-encode-8 4.314941 ms
+ImageIO-buffer-JPEG-decode-8 7.093018 ms
+
+
+### target/native-round2-measure/on-2.err
+vdsp=260
+vimage=34
+compression=102
+crypto=18
+imageio=36
+
+
+### target/native-round2-measure/native-3.txt
+22:37  2 users, load averages: 6.86 7.39 8.18
+vDSP-dot-64 2.726000 ms
+vDSP-add-64 3.753000 ms
+vDSP-FFT-64 0.222000 ms
+vDSP-rFFT-64 0.131000 ms
+vImage-scaleF-16 5.410000 ms
+vImage-convertF-16 1.071000 ms
+compression-LZ4-encode-16 1.193000 ms
+compression-LZ4-decode-16 0.559000 ms
+compression-LZFSE-encode-16 40.759000 ms
+compression-LZFSE-decode-16 0.772000 ms
+compression-zlib-encode-16 64.962000 ms
+compression-zlib-decode-16 1.373000 ms
+AES-CBC-16 13.884000 ms
+ImageIO-buffer-PNG-encode-8 16.392000 ms
+ImageIO-buffer-PNG-decode-8 7.288000 ms
+ImageIO-buffer-JPEG-encode-8 4.592000 ms
+ImageIO-buffer-JPEG-decode-8 7.714000 ms
+
+
+### target/native-round2-measure/native-3.err
+vdsp=0
+vimage=0
+compression=0
+crypto=0
+imageio=0
+
+
+### target/native-round2-measure/off-3.txt
+22:37  2 users, load averages: 6.86 7.39 8.18
+vDSP-dot-64 6.312988 ms
+vDSP-add-64 8.379883 ms
+vDSP-FFT-64 9.851074 ms
+vDSP-rFFT-64 3.147949 ms
+vImage-scaleF-16 142.842041 ms
+vImage-convertF-16 27.278809 ms
+compression-LZ4-encode-16 6.143066 ms
+compression-LZ4-decode-16 2.679932 ms
+compression-LZFSE-encode-16 213.348145 ms
+compression-LZFSE-decode-16 5.671875 ms
+compression-zlib-encode-16 205.239014 ms
+compression-zlib-decode-16 5.526123 ms
+AES-CBC-16 49.626953 ms
+ImageIO-buffer-PNG-encode-8 151.860840 ms
+ImageIO-buffer-PNG-decode-8 89.235107 ms
+ImageIO-buffer-JPEG-encode-8 114.830078 ms
+ImageIO-buffer-JPEG-decode-8 114.111084 ms
+
+
+### target/native-round2-measure/off-3.err
+vdsp=0
+vimage=0
+compression=0
+crypto=0
+imageio=0
+
+
+### target/native-round2-measure/on-3.txt
+22:37  2 users, load averages: 6.86 7.39 8.18
+vDSP-dot-64 3.419189 ms
+vDSP-add-64 5.381836 ms
+vDSP-FFT-64 0.615967 ms
+vDSP-rFFT-64 0.292969 ms
+vImage-scaleF-16 5.873047 ms
+vImage-convertF-16 1.598145 ms
+compression-LZ4-encode-16 1.504883 ms
+compression-LZ4-decode-16 0.717041 ms
+compression-LZFSE-encode-16 49.302002 ms
+compression-LZFSE-decode-16 1.113037 ms
+compression-zlib-encode-16 62.698975 ms
+compression-zlib-decode-16 1.494141 ms
+AES-CBC-16 14.727051 ms
+ImageIO-buffer-PNG-encode-8 17.632080 ms
+ImageIO-buffer-PNG-decode-8 8.014893 ms
+ImageIO-buffer-JPEG-encode-8 4.267822 ms
+ImageIO-buffer-JPEG-decode-8 7.273926 ms
+
+
+### target/native-round2-measure/on-3.err
+vdsp=260
+vimage=34
+compression=102
+crypto=18
+imageio=36
+
+
+### summary
+API | native ms (3) | off ms (3) | on ms (3) | median paired off/on
+vDSP-dot-64 | [2.589, 2.955, 2.726] | [6.584961, 6.818115, 6.312988] | [3.137939, 3.10083, 3.419189] | 2.098x
+vDSP-add-64 | [4.381, 4.285, 3.753] | [8.463867, 8.349121, 8.379883] | [4.930908, 5.203857, 5.381836] | 1.604x
+vDSP-FFT-64 | [0.236, 0.218, 0.222] | [9.99292, 10.213867, 9.851074] | [0.569092, 0.567871, 0.615967] | 17.559x
+vDSP-rFFT-64 | [0.136, 0.127, 0.131] | [3.206055, 3.202148, 3.147949] | [0.273926, 0.273926, 0.292969] | 11.690x
+vImage-scaleF-16 | [5.547, 5.179, 5.41] | [147.351074, 148.161865, 142.842041] | [4.87207, 5.062988, 5.873047] | 29.264x
+vImage-convertF-16 | [1.014, 1.051, 1.071] | [27.805908, 34.256836, 27.278809] | [1.11499, 1.2771, 1.598145] | 24.938x
+compression-LZ4-encode-16 | [1.405, 1.185, 1.193] | [5.333008, 5.822021, 6.143066] | [1.290039, 1.376953, 1.504883] | 4.134x
+compression-LZ4-decode-16 | [0.681, 0.562, 0.559] | [2.25293, 2.525146, 2.679932] | [0.631836, 0.632812, 0.717041] | 3.737x
+compression-LZFSE-encode-16 | [42.573, 38.245, 40.759] | [214.332031, 215.704834, 213.348145] | [46.806885, 41.269043, 49.302002] | 4.579x
+compression-LZFSE-decode-16 | [0.783, 0.797, 0.772] | [5.513916, 5.634033, 5.671875] | [1.195801, 1.285156, 1.113037] | 4.611x
+compression-zlib-encode-16 | [67.033, 67.282, 64.962] | [199.914062, 211.641113, 205.239014] | [69.424072, 61.148193, 62.698975] | 3.273x
+compression-zlib-decode-16 | [1.327, 1.303, 1.373] | [6.015869, 5.749023, 5.526123] | [1.431152, 1.394043, 1.494141] | 4.124x
+AES-CBC-16 | [13.727, 12.856, 13.884] | [51.461914, 48.766846, 49.626953] | [14.807129, 14.190186, 14.727051] | 3.437x
+ImageIO-buffer-PNG-encode-8 | [17.169, 15.968, 16.392] | [148.875977, 161.410156, 151.86084] | [19.896973, 17.442139, 17.63208] | 8.613x
+ImageIO-buffer-PNG-decode-8 | [7.398, 8.148, 7.288] | [88.196045, 87.044922, 89.235107] | [8.053955, 6.756836, 8.014893] | 11.134x
+ImageIO-buffer-JPEG-encode-8 | [4.631, 4.688, 4.592] | [116.345215, 104.654053, 114.830078] | [4.957031, 4.314941, 4.267822] | 24.254x
+ImageIO-buffer-JPEG-decode-8 | [7.82, 8.134, 7.714] | [118.564941, 118.280029, 114.111084] | [8.241943, 7.093018, 7.273926] | 15.688x
+
+
+## FINAL candidate: three serial native/off/on rounds, after QA/headless; no concurrent own tests
+
+### target/native-round2-measure-final/native-1.txt
+22:45  2 users, load averages: 18.67 11.41 9.45
+vDSP-dot-64 4.610000 ms
+vDSP-add-64 7.728000 ms
+vDSP-FFT-64 0.381000 ms
+vDSP-rFFT-64 0.473000 ms
+vImage-scaleF-16 8.948000 ms
+vImage-convertF-16 1.396000 ms
+compression-LZ4-encode-16 2.127000 ms
+compression-LZ4-decode-16 1.422000 ms
+compression-LZFSE-encode-16 73.936000 ms
+compression-LZFSE-decode-16 1.495000 ms
+compression-zlib-encode-16 118.604000 ms
+compression-zlib-decode-16 2.488000 ms
+AES-CBC-16 17.638000 ms
+ImageIO-buffer-PNG-encode-8 40.980000 ms
+ImageIO-buffer-PNG-decode-8 23.095000 ms
+ImageIO-buffer-JPEG-encode-8 11.930000 ms
+ImageIO-buffer-JPEG-decode-8 21.997000 ms
+
+
+### target/native-round2-measure-final/native-1.err
+vdsp=0
+vimage=0
+compression=0
+crypto=0
+imageio=0
+
+
+### target/native-round2-measure-final/off-1.txt
+22:45  2 users, load averages: 18.67 11.41 9.45
+vDSP-dot-64 7.693848 ms
+vDSP-add-64 10.444092 ms
+vDSP-FFT-64 11.328125 ms
+vDSP-rFFT-64 4.367188 ms
+vImage-scaleF-16 352.027100 ms
+vImage-convertF-16 73.374023 ms
+compression-LZ4-encode-16 20.718018 ms
+compression-LZ4-decode-16 5.037109 ms
+compression-LZFSE-encode-16 613.873779 ms
+compression-LZFSE-decode-16 19.256104 ms
+compression-zlib-encode-16 655.208008 ms
+compression-zlib-decode-16 15.007080 ms
+AES-CBC-16 108.043945 ms
+ImageIO-buffer-PNG-encode-8 327.781982 ms
+ImageIO-buffer-PNG-decode-8 158.758057 ms
+ImageIO-buffer-JPEG-encode-8 157.384033 ms
+ImageIO-buffer-JPEG-decode-8 164.855957 ms
+
+
+### target/native-round2-measure-final/off-1.err
+vdsp=0
+vimage=0
+compression=0
+crypto=0
+imageio=0
+
+
+### target/native-round2-measure-final/on-1.txt
+22:45  2 users, load averages: 21.02 12.02 9.68
+vDSP-dot-64 3.628174 ms
+vDSP-add-64 5.927002 ms
+vDSP-FFT-64 0.705078 ms
+vDSP-rFFT-64 0.359863 ms
+vImage-scaleF-16 5.834961 ms
+vImage-convertF-16 1.357178 ms
+compression-LZ4-encode-16 1.503906 ms
+compression-LZ4-decode-16 0.755127 ms
+compression-LZFSE-encode-16 49.336914 ms
+compression-LZFSE-decode-16 1.222168 ms
+compression-zlib-encode-16 72.166016 ms
+compression-zlib-decode-16 1.661133 ms
+AES-CBC-16 17.109131 ms
+ImageIO-buffer-PNG-encode-8 21.932129 ms
+ImageIO-buffer-PNG-decode-8 12.481934 ms
+ImageIO-buffer-JPEG-encode-8 5.442871 ms
+ImageIO-buffer-JPEG-decode-8 10.331055 ms
+
+
+### target/native-round2-measure-final/on-1.err
+vdsp=260
+vimage=34
+compression=102
+crypto=18
+imageio=36
+
+
+### target/native-round2-measure-final/native-2.txt
+22:45  2 users, load averages: 19.90 11.93 9.66
+vDSP-dot-64 2.589000 ms
+vDSP-add-64 4.628000 ms
+vDSP-FFT-64 0.277000 ms
+vDSP-rFFT-64 0.196000 ms
+vImage-scaleF-16 5.821000 ms
+vImage-convertF-16 1.392000 ms
+compression-LZ4-encode-16 1.483000 ms
+compression-LZ4-decode-16 0.724000 ms
+compression-LZFSE-encode-16 55.487000 ms
+compression-LZFSE-decode-16 1.372000 ms
+compression-zlib-encode-16 77.190000 ms
+compression-zlib-decode-16 2.030000 ms
+AES-CBC-16 16.270000 ms
+ImageIO-buffer-PNG-encode-8 26.222000 ms
+ImageIO-buffer-PNG-decode-8 9.384000 ms
+ImageIO-buffer-JPEG-encode-8 5.997000 ms
+ImageIO-buffer-JPEG-decode-8 10.309000 ms
+
+
+### target/native-round2-measure-final/native-2.err
+vdsp=0
+vimage=0
+compression=0
+crypto=0
+imageio=0
+
+
+### target/native-round2-measure-final/off-2.txt
+22:45  2 users, load averages: 19.90 11.93 9.66
+vDSP-dot-64 7.952148 ms
+vDSP-add-64 10.927979 ms
+vDSP-FFT-64 12.980957 ms
+vDSP-rFFT-64 3.952148 ms
+vImage-scaleF-16 180.610840 ms
+vImage-convertF-16 33.517822 ms
+compression-LZ4-encode-16 7.357910 ms
+compression-LZ4-decode-16 2.689941 ms
+compression-LZFSE-encode-16 257.716064 ms
+compression-LZFSE-decode-16 6.492920 ms
+compression-zlib-encode-16 243.620850 ms
+compression-zlib-decode-16 6.291992 ms
+AES-CBC-16 61.453125 ms
+ImageIO-buffer-PNG-encode-8 188.200928 ms
+ImageIO-buffer-PNG-decode-8 129.652100 ms
+ImageIO-buffer-JPEG-encode-8 138.722900 ms
+ImageIO-buffer-JPEG-decode-8 160.004883 ms
+
+
+### target/native-round2-measure-final/off-2.err
+vdsp=0
+vimage=0
+compression=0
+crypto=0
+imageio=0
+
+
+### target/native-round2-measure-final/on-2.txt
+22:45  2 users, load averages: 19.90 11.93 9.66
+vDSP-dot-64 3.579834 ms
+vDSP-add-64 4.556152 ms
+vDSP-FFT-64 0.908936 ms
+vDSP-rFFT-64 0.348145 ms
+vImage-scaleF-16 5.470947 ms
+vImage-convertF-16 1.312988 ms
+compression-LZ4-encode-16 3.848877 ms
+compression-LZ4-decode-16 1.193115 ms
+compression-LZFSE-encode-16 47.875977 ms
+compression-LZFSE-decode-16 1.192139 ms
+compression-zlib-encode-16 76.302979 ms
+compression-zlib-decode-16 1.793945 ms
+AES-CBC-16 17.809814 ms
+ImageIO-buffer-PNG-encode-8 23.315918 ms
+ImageIO-buffer-PNG-decode-8 8.957764 ms
+ImageIO-buffer-JPEG-encode-8 5.620117 ms
+ImageIO-buffer-JPEG-decode-8 10.556152 ms
+
+
+### target/native-round2-measure-final/on-2.err
+vdsp=260
+vimage=34
+compression=102
+crypto=18
+imageio=36
+
+
+### target/native-round2-measure-final/native-3.txt
+22:45  2 users, load averages: 19.90 11.93 9.66
+vDSP-dot-64 2.558000 ms
+vDSP-add-64 4.621000 ms
+vDSP-FFT-64 0.762000 ms
+vDSP-rFFT-64 0.200000 ms
+vImage-scaleF-16 7.019000 ms
+vImage-convertF-16 1.309000 ms
+compression-LZ4-encode-16 1.600000 ms
+compression-LZ4-decode-16 0.914000 ms
+compression-LZFSE-encode-16 59.244000 ms
+compression-LZFSE-decode-16 1.824000 ms
+compression-zlib-encode-16 73.119000 ms
+compression-zlib-decode-16 1.822000 ms
+AES-CBC-16 16.165000 ms
+ImageIO-buffer-PNG-encode-8 31.371000 ms
+ImageIO-buffer-PNG-decode-8 10.091000 ms
+ImageIO-buffer-JPEG-encode-8 6.525000 ms
+ImageIO-buffer-JPEG-decode-8 11.830000 ms
+
+
+### target/native-round2-measure-final/native-3.err
+vdsp=0
+vimage=0
+compression=0
+crypto=0
+imageio=0
+
+
+### target/native-round2-measure-final/off-3.txt
+22:45  2 users, load averages: 19.90 11.93 9.66
+vDSP-dot-64 9.275879 ms
+vDSP-add-64 17.583008 ms
+vDSP-FFT-64 16.846191 ms
+vDSP-rFFT-64 5.037842 ms
+vImage-scaleF-16 237.466064 ms
+vImage-convertF-16 31.360107 ms
+compression-LZ4-encode-16 6.320068 ms
+compression-LZ4-decode-16 2.645020 ms
+compression-LZFSE-encode-16 291.035889 ms
+compression-LZFSE-decode-16 9.512939 ms
+compression-zlib-encode-16 269.973877 ms
+compression-zlib-decode-16 9.784912 ms
+AES-CBC-16 66.364990 ms
+ImageIO-buffer-PNG-encode-8 208.895020 ms
+ImageIO-buffer-PNG-decode-8 173.910889 ms
+ImageIO-buffer-JPEG-encode-8 218.041992 ms
+ImageIO-buffer-JPEG-decode-8 247.343018 ms
+
+
+### target/native-round2-measure-final/off-3.err
+vdsp=0
+vimage=0
+compression=0
+crypto=0
+imageio=0
+
+
+### target/native-round2-measure-final/on-3.txt
+22:45  2 users, load averages: 21.67 12.43 9.85
+vDSP-dot-64 4.636963 ms
+vDSP-add-64 7.307129 ms
+vDSP-FFT-64 1.282959 ms
+vDSP-rFFT-64 0.703125 ms
+vImage-scaleF-16 25.281982 ms
+vImage-convertF-16 11.887939 ms
+compression-LZ4-encode-16 2.105957 ms
+compression-LZ4-decode-16 1.178955 ms
+compression-LZFSE-encode-16 80.224121 ms
+compression-LZFSE-decode-16 2.195801 ms
+compression-zlib-encode-16 104.927002 ms
+compression-zlib-decode-16 2.614990 ms
+AES-CBC-16 17.912842 ms
+ImageIO-buffer-PNG-encode-8 34.057129 ms
+ImageIO-buffer-PNG-decode-8 13.557129 ms
+ImageIO-buffer-JPEG-encode-8 9.141113 ms
+ImageIO-buffer-JPEG-decode-8 14.811035 ms
+
+
+### target/native-round2-measure-final/on-3.err
+vdsp=260
+vimage=34
+compression=102
+crypto=18
+imageio=36
+
+
+### summary
+API | native ms (3) | off ms (3) | on ms (3) | median paired off/on
+vDSP-dot-64 | [4.61, 2.589, 2.558] | [7.693848, 7.952148, 9.275879] | [3.628174, 3.579834, 4.636963] | 2.121x
+vDSP-add-64 | [7.728, 4.628, 4.621] | [10.444092, 10.927979, 17.583008] | [5.927002, 4.556152, 7.307129] | 2.399x
+vDSP-FFT-64 | [0.381, 0.277, 0.762] | [11.328125, 12.980957, 16.846191] | [0.705078, 0.908936, 1.282959] | 14.281x
+vDSP-rFFT-64 | [0.473, 0.196, 0.2] | [4.367188, 3.952148, 5.037842] | [0.359863, 0.348145, 0.703125] | 11.352x
+vImage-scaleF-16 | [8.948, 5.821, 7.019] | [352.0271, 180.61084, 237.466064] | [5.834961, 5.470947, 25.281982] | 33.013x
+vImage-convertF-16 | [1.396, 1.392, 1.309] | [73.374023, 33.517822, 31.360107] | [1.357178, 1.312988, 11.887939] | 25.528x
+compression-LZ4-encode-16 | [2.127, 1.483, 1.6] | [20.718018, 7.35791, 6.320068] | [1.503906, 3.848877, 2.105957] | 3.001x
+compression-LZ4-decode-16 | [1.422, 0.724, 0.914] | [5.037109, 2.689941, 2.64502] | [0.755127, 1.193115, 1.178955] | 2.255x
+compression-LZFSE-encode-16 | [73.936, 55.487, 59.244] | [613.873779, 257.716064, 291.035889] | [49.336914, 47.875977, 80.224121] | 5.383x
+compression-LZFSE-decode-16 | [1.495, 1.372, 1.824] | [19.256104, 6.49292, 9.512939] | [1.222168, 1.192139, 2.195801] | 5.446x
+compression-zlib-encode-16 | [118.604, 77.19, 73.119] | [655.208008, 243.62085, 269.973877] | [72.166016, 76.302979, 104.927002] | 3.193x
+compression-zlib-decode-16 | [2.488, 2.03, 1.822] | [15.00708, 6.291992, 9.784912] | [1.661133, 1.793945, 2.61499] | 3.742x
+AES-CBC-16 | [17.638, 16.27, 16.165] | [108.043945, 61.453125, 66.36499] | [17.109131, 17.809814, 17.912842] | 3.705x
+ImageIO-buffer-PNG-encode-8 | [40.98, 26.222, 31.371] | [327.781982, 188.200928, 208.89502] | [21.932129, 23.315918, 34.057129] | 8.072x
+ImageIO-buffer-PNG-decode-8 | [23.095, 9.384, 10.091] | [158.758057, 129.6521, 173.910889] | [12.481934, 8.957764, 13.557129] | 12.828x
+ImageIO-buffer-JPEG-encode-8 | [11.93, 5.997, 6.525] | [157.384033, 138.7229, 218.041992] | [5.442871, 5.620117, 9.141113] | 24.683x
+ImageIO-buffer-JPEG-decode-8 | [21.997, 10.309, 11.83] | [164.855957, 160.004883, 247.343018] | [10.331055, 10.556152, 14.811035] | 15.957x
+
+
+## Headless real workload: ELECTRON_RUN_AS_NODE=1; exit 0 in all four runs
+
+### target/n-native-r2-headless/js-off.out
+loops         840 ms 28665
+objects       692 ms -259384288
+json          220 ms 80000
+regex         217 ms 400000
+strings       108 ms 2025151008
+closures      304 ms 19360
+sort          625 ms 6448448
+
+
+### target/n-native-r2-headless/js-off.err
+[1029/224438.000270:ERROR:electron/shell/common/mac/codesign_util.cc:79] task_name_for_pid: (os/kern) failure (5)
+
+
+### target/n-native-r2-headless/tls-off.out
+sha256 ca6073392ee71dbd
+sha512 fcf47d64f5ceadd9
+gcm 89788ae8c19a5009 tag de047988105bcc38
+ecdsa verify true
+ecdh true
+string 13 e5b7a6e4b88ae8a792e9a1b6e6a08f
+https error ENOTFOUND
+
+
+### target/n-native-r2-headless/tls-off.err
+[1029/224445.224583:ERROR:electron/shell/common/mac/codesign_util.cc:79] task_name_for_pid: (os/kern) failure (5)
+
+
+### target/n-native-r2-headless/js-on.out
+loops         794 ms 28665
+objects      1643 ms -259384288
+json          698 ms 80000
+regex         443 ms 400000
+strings       189 ms 2025151008
+closures      618 ms 19360
+sort         2117 ms 6448448
+
+
+### target/n-native-r2-headless/js-on.err
+[1029/224452.208910:ERROR:electron/shell/common/mac/codesign_util.cc:79] task_name_for_pid: (os/kern) failure (5)
+
+
+### target/n-native-r2-headless/tls-on.out
+sha256 ca6073392ee71dbd
+sha512 fcf47d64f5ceadd9
+gcm 89788ae8c19a5009 tag de047988105bcc38
+ecdsa verify true
+ecdh true
+string 13 e5b7a6e4b88ae8a792e9a1b6e6a08f
+https error ENOTFOUND
+
+
+### target/n-native-r2-headless/tls-on.err
+[1029/224502.277131:ERROR:electron/shell/common/mac/codesign_util.cc:79] task_name_for_pid: (os/kern) failure (5)
+
+
+## Scope/QA notes
+TLS off/on: https error ENOTFOUND, NOT https status 401.
+L1/L2 and GUI/default-on acceptance NOT run.
+No git commit: index.lock Operation not permitted; patch/message saved under target/.

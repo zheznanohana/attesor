@@ -13,6 +13,7 @@ mod jit;
 mod loader;
 mod macho;
 mod native;
+mod native_dsp;
 mod paths;
 mod profile;
 mod sandbox;

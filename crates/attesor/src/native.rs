@@ -1,4 +1,4 @@
-//! Stateless native-library bridge. Guest and host share an address space and
+//! Native-library bridges with host-only FFT companion state. Guest and host share an address space and
 //! Darwin arm64/x86-64 use LP64 zlib/vImage APIs. No guest callbacks or library
 //! state crosses the boundary. Callers retain the libraries' valid-buffer contract.
 use attesor_core::cpu::Cpu;
@@ -8,6 +8,14 @@ pub const SYS_NATIVE_CALL: u64 = 0x4154;
 const SHIM: &str = "libattesornative.dylib";
 const VIMAGE_SHIM: &str = "libattesorvimage.dylib";
 static CALLS: AtomicU64 = AtomicU64::new(0);
+const VDSP_SHIM: &str = "libattesorvdsp.dylib";
+const COMPRESSION_SHIM: &str = "libattesorcompression.dylib";
+const CRYPTO_SHIM: &str = "libattesorcrypto.dylib";
+const IMAGEIO_SHIM: &str = "libattesorimageio.dylib";
+static IMAGEIO_CALLS: AtomicU64 = AtomicU64::new(0);
+static VDSP_CALLS: AtomicU64 = AtomicU64::new(0);
+static COMPRESSION_CALLS: AtomicU64 = AtomicU64::new(0);
+static CRYPTO_CALLS: AtomicU64 = AtomicU64::new(0);
 static VIMAGE_CALLS: AtomicU64 = AtomicU64::new(0);
 
 #[repr(C)]
@@ -20,6 +28,9 @@ struct ImageBuffer {
 
 #[link(name = "Accelerate", kind = "framework")]
 extern "C" {
+    fn vImageScale_PlanarF(src: *const ImageBuffer, dst: *const ImageBuffer, scratch: *mut libc::c_void, flags: u32) -> i64;
+    fn vImageScale_ARGBFFFF(src: *const ImageBuffer, dst: *const ImageBuffer, scratch: *mut libc::c_void, flags: u32) -> i64;
+    fn vImageConvert_Planar8toPlanarF(src: *const ImageBuffer, dst: *const ImageBuffer, max: f32, min: f32, flags: u32) -> i64;
     fn vImageConvolve_Planar8(src: *const ImageBuffer, dst: *const ImageBuffer, scratch: *mut libc::c_void, x: u64, y: u64,
         kernel: *const i16, kh: u32, kw: u32, divisor: i32, background: u8, flags: u32) -> i64;
 }
@@ -32,7 +43,36 @@ extern "C" {
     fn uncompress(dest: *mut u8, destlen: *mut libc::c_ulong, source: *const u8, sourcelen: libc::c_ulong) -> libc::c_int;
 }
 
-fn ptr(p: u64) -> u64 { p & 0x00ff_ffff_ffff_ffff }
+#[link(name = "compression")]
+extern "C" {
+    fn compression_encode_buffer(dst: *mut u8, capacity: usize, src: *const u8, size: usize, scratch: *mut libc::c_void, algorithm: u32) -> usize;
+    fn compression_decode_buffer(dst: *mut u8, capacity: usize, src: *const u8, size: usize, scratch: *mut libc::c_void, algorithm: u32) -> usize;
+}
+extern "C" {
+    fn attesor_buffer_imageio(op: u32, slots: *const u64) -> i32;
+    fn CCCrypt(op: u32, algorithm: u32, options: u32, key: *const u8, key_len: usize, iv: *const u8,
+        src: *const u8, size: usize, dst: *mut u8, capacity: usize, written: *mut usize) -> i32;
+}
+
+pub(crate) fn ptr(p: u64) -> u64 { p & 0x00ff_ffff_ffff_ffff }
+
+// The guest shims only accelerate default FPCR. Do not let an unrelated host
+// MXCSR rounding/FTZ/DAZ setting leak into that contract, or leak status out.
+pub(crate) struct FloatEnv(u32);
+impl FloatEnv {
+    pub(crate) unsafe fn new() -> Self {
+        let mut old = 0u32;
+        std::arch::asm!("stmxcsr [{}]", in(reg) &mut old, options(nostack, preserves_flags));
+        let ieee = 0x1f80u32;
+        std::arch::asm!("ldmxcsr [{}]", in(reg) &ieee, options(nostack, preserves_flags));
+        Self(old)
+    }
+}
+impl Drop for FloatEnv {
+    fn drop(&mut self) { unsafe {
+        std::arch::asm!("ldmxcsr [{}]", in(reg) &self.0, options(nostack, preserves_flags));
+    } }
+}
 
 unsafe fn image_buffer(p: u64) -> ImageBuffer {
     let mut b = std::ptr::read_unaligned(ptr(p) as *const ImageBuffer);
@@ -50,10 +90,24 @@ unsafe fn vimage_call(a: &[u64; 6]) -> i64 {
 
 pub fn hostcall(cpu: &mut Cpu) {
     let a = [cpu.x[0], cpu.x[1], cpu.x[2], cpu.x[3], cpu.x[4], cpu.x[5]];
-    if a[0] == 0 || a[0] == 18 {
-        cpu.x[0] = if a[0] == 0 { &CALLS } else { &VIMAGE_CALLS }.load(Ordering::Relaxed);
+    let counter = match a[0] {
+        0..=4 => &CALLS,
+        17..=21 => &VIMAGE_CALLS,
+        32..=42 => &VDSP_CALLS,
+        48..=50 => &COMPRESSION_CALLS,
+        56..=57 => &CRYPTO_CALLS,
+        64..=66 => &IMAGEIO_CALLS,
+        _ => { cpu.x[0] = libc::ENOSYS as u64; cpu.cf = 1; return; }
+    };
+    if matches!(a[0], 0 | 18 | 32 | 48 | 56 | 64) {
+        cpu.x[0] = counter.load(Ordering::Relaxed);
         cpu.cf = 0;
         return;
+    }
+    if (33..=42).contains(&a[0]) {
+        let (r, work) = unsafe { crate::native_dsp::call(&a) };
+        if work { counter.fetch_add(1, Ordering::Relaxed); }
+        cpu.x[0] = r; cpu.cf = 0; return;
     }
     let r = unsafe {
         match a[0] {
@@ -62,10 +116,35 @@ pub fn hostcall(cpu: &mut Cpu) {
             3 => compress2(ptr(a[1]) as *mut u8, ptr(a[2]) as *mut u64, ptr(a[3]) as *const u8, a[4], a[5] as i32) as i64 as u64,
             4 => uncompress(ptr(a[1]) as *mut u8, ptr(a[2]) as *mut u64, ptr(a[3]) as *const u8, a[4]) as i64 as u64,
             17 => vimage_call(&a) as u64,
+            19..=21 => {
+                let _env = FloatEnv::new();
+                let src = image_buffer(a[1]);
+                let dst = image_buffer(a[2]);
+                (match a[0] {
+                    19 => vImageScale_PlanarF(&src, &dst, std::ptr::null_mut(), a[3] as u32),
+                    20 => vImageScale_ARGBFFFF(&src, &dst, std::ptr::null_mut(), a[3] as u32),
+                    _ => vImageConvert_Planar8toPlanarF(&src, &dst, f32::from_bits(a[3] as u32), f32::from_bits(a[4] as u32), a[5] as u32),
+                }) as u64
+            }
+            49 | 50 => {
+                let f = if a[0] == 49 { compression_encode_buffer } else { compression_decode_buffer };
+                f(ptr(a[1]) as *mut u8, a[2] as usize, ptr(a[3]) as *const u8, a[4] as usize, std::ptr::null_mut(), a[5] as u32) as u64
+            }
+            65 | 66 => {
+                let _env = FloatEnv::new();
+                let mut v = std::ptr::read_unaligned(ptr(a[1]) as *const [u64; 7]);
+                for i in if a[0] == 65 { &[0, 2, 4][..] } else { &[0, 1, 4, 6][..] } { v[*i] = ptr(v[*i]); }
+                attesor_buffer_imageio(a[0] as u32, v.as_ptr()) as i64 as u64
+            }
+            57 => {
+                let v = std::ptr::read_unaligned(ptr(a[1]) as *const [u64; 11]);
+                CCCrypt(v[0] as u32, v[1] as u32, v[2] as u32, ptr(v[3]) as *const u8, v[4] as usize, ptr(v[5]) as *const u8,
+                    ptr(v[6]) as *const u8, v[7] as usize, ptr(v[8]) as *mut u8, v[9] as usize, ptr(v[10]) as *mut usize) as i64 as u64
+            }
             _ => { cpu.x[0] = libc::ENOSYS as u64; cpu.cf = 1; return; }
         }
     };
-    if a[0] == 17 { &VIMAGE_CALLS } else { &CALLS }.fetch_add(1, Ordering::Relaxed);
+    counter.fetch_add(1, Ordering::Relaxed);
     cpu.x[0] = r;
     cpu.cf = 0;
 }
@@ -84,7 +163,7 @@ fn shim_path(name: &str) -> Option<std::path::PathBuf> {
 }
 
 pub fn is_shim(path: &str) -> bool {
-    std::path::Path::new(path).file_name().is_some_and(|n| n == SHIM || n == VIMAGE_SHIM)
+    std::path::Path::new(path).file_name().is_some_and(|n| [SHIM, VIMAGE_SHIM, VDSP_SHIM, COMPRESSION_SHIM, CRYPTO_SHIM, IMAGEIO_SHIM].iter().any(|s| n == *s))
 }
 
 fn libraries(value: &str) -> Result<Vec<&'static str>, &'static str> {
@@ -95,7 +174,11 @@ fn libraries(value: &str) -> Result<Vec<&'static str>, &'static str> {
         let name = match item.trim() {
             "zlib" => SHIM,
             "vimage" => VIMAGE_SHIM,
-            _ => return Err("ATTESOR_NATIVE_LIBS: expected 0, 1 (zlib), or comma-separated zlib,vimage"),
+            "vdsp" => VDSP_SHIM,
+            "compression" => COMPRESSION_SHIM,
+            "crypto" => CRYPTO_SHIM,
+            "imageio" => IMAGEIO_SHIM,
+            _ => return Err("ATTESOR_NATIVE_LIBS: expected 0, 1 (zlib), or comma-separated zlib,vimage,vdsp,compression,crypto,imageio"),
         };
         if !names.contains(&name) { names.push(name); }
     }
@@ -112,10 +195,13 @@ pub fn inject(envp: &mut Vec<String>) -> Result<(), &'static str> {
         *e = format!("DYLD_INSERT_LIBRARIES={}", kept.join(":")); true
     });
     for name in libraries(&std::env::var("ATTESOR_NATIVE_LIBS").unwrap_or_default())? {
-        let shim = shim_path(name).ok_or(if name == SHIM {
-            "ATTESOR_NATIVE_LIBS: libattesornative.dylib missing; run native/build.sh and set ATTESOR_NATIVE_DIR"
-        } else {
-            "ATTESOR_NATIVE_LIBS: libattesorvimage.dylib missing; run native/build.sh and set ATTESOR_NATIVE_DIR"
+        let shim = shim_path(name).ok_or(match name {
+            SHIM => "ATTESOR_NATIVE_LIBS: libattesornative.dylib missing; run native/build.sh and set ATTESOR_NATIVE_DIR",
+            VIMAGE_SHIM => "ATTESOR_NATIVE_LIBS: libattesorvimage.dylib missing; run native/build.sh and set ATTESOR_NATIVE_DIR",
+            VDSP_SHIM => "ATTESOR_NATIVE_LIBS: libattesorvdsp.dylib missing; run native/build.sh and set ATTESOR_NATIVE_DIR",
+            COMPRESSION_SHIM => "ATTESOR_NATIVE_LIBS: libattesorcompression.dylib missing; run native/build.sh and set ATTESOR_NATIVE_DIR",
+            CRYPTO_SHIM => "ATTESOR_NATIVE_LIBS: libattesorcrypto.dylib missing; run native/build.sh and set ATTESOR_NATIVE_DIR",
+            _ => "ATTESOR_NATIVE_LIBS: libattesorimageio.dylib missing; run native/build.sh and set ATTESOR_NATIVE_DIR",
         })?;
         let shim = shim.to_string_lossy();
         if let Some(e) = envp.iter_mut().find(|e| e.starts_with("DYLD_INSERT_LIBRARIES=")) {
@@ -135,7 +221,28 @@ mod tests {
         assert_eq!(libraries("1").unwrap(), [SHIM]);
         assert_eq!(libraries("vimage").unwrap(), [VIMAGE_SHIM]);
         assert_eq!(libraries(" zlib ,vimage,zlib").unwrap(), [SHIM, VIMAGE_SHIM]);
+        assert_eq!(libraries("vdsp,compression,crypto,imageio").unwrap(), [VDSP_SHIM, COMPRESSION_SHIM, CRYPTO_SHIM, IMAGEIO_SHIM]);
+        for name in [VDSP_SHIM, COMPRESSION_SHIM, CRYPTO_SHIM, IMAGEIO_SHIM] { assert!(is_shim(name)); }
         for invalid in ["all", "2", "vimage,", "zlib,bogus"] { assert!(libraries(invalid).is_err()); }
+    }
+    #[test]
+    fn host_float_controls_are_scoped() {
+        unsafe {
+            let mut initial = 0u32;
+            std::arch::asm!("stmxcsr [{}]", in(reg) &mut initial, options(nostack, preserves_flags));
+            let altered = initial | (1 << 15) | (1 << 6) | (1 << 13);
+            std::arch::asm!("ldmxcsr [{}]", in(reg) &altered, options(nostack, preserves_flags));
+            {
+                let _guard = FloatEnv::new();
+                let mut current = 0u32;
+                std::arch::asm!("stmxcsr [{}]", in(reg) &mut current, options(nostack, preserves_flags));
+                assert_eq!(current, 0x1f80);
+            }
+            let mut restored = 0u32;
+            std::arch::asm!("stmxcsr [{}]", in(reg) &mut restored, options(nostack, preserves_flags));
+            std::arch::asm!("ldmxcsr [{}]", in(reg) &initial, options(nostack, preserves_flags));
+            assert_eq!(restored, altered);
+        }
     }
     #[test]
     fn shim_names_and_layout() {

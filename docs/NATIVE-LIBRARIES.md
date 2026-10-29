@@ -1,10 +1,11 @@
 # Host-native library bridges
 
 All bridges are opt-in. `ATTESOR_NATIVE_LIBS=0` (or unset) disables them;
-`ATTESOR_NATIVE_LIBS=zlib`, `vimage`, or `zlib,vimage` selects libraries.
+`ATTESOR_NATIVE_LIBS=zlib`, `vimage`, `vdsp`, `compression`, `crypto`,
+`imageio`, or a comma-separated combination selects libraries.
 The legacy value `1` still means **zlib only**, not every available bridge.
-Unknown names fail before guest startup. `native/build.sh` builds both shims;
-`scripts/install.sh` installs both (do not run installation to test a worktree).
+Unknown names fail before guest startup. `native/build.sh` builds all six shims;
+`scripts/install.sh` installs all six (do not run installation to test a worktree).
 
 ## vImage integer convolution (phase N)
 
@@ -52,7 +53,7 @@ native-middleman exec/child-disable, unknown selection and missing-shim paths
 are included. The sensitivity script changes only a private shim copy to pass
 `divisor+1`; full-byte comparison must reject it.
 
-The survey deliberately does NOT bridge resampling, FFT, ImageIO/CF objects,
+The **Round 1** survey deliberately did NOT bridge resampling, FFT, ImageIO/CF objects,
 or opaque library state. In particular, ARM/x86 `vImageScale_Planar8` produced
 different bytes in a directed 60x12 -> 13x27 fixture, despite matching on the
 initial half-size fixture. Reproduce it with the survey binary's
@@ -159,3 +160,100 @@ It reports separate times for 512 MiB of CRC32, 512 MiB of Adler32, and one
 the same candidate emulator with the switch off/on in alternating serial runs;
 first ensure the native and both translated modes print identical checksums.
 No performance number was collected during parallel development.
+
+## Round 2: numeric, compression, AES and explicit image buffers
+
+Round 1's FFT/LZ4 rejection above was **byte-identity policy**, not a finding
+that host macOS produces invalid results. Round 2 uses format interoperability
+for encoders and measured numeric error for floating-point APIs. All bridges
+remain disabled unless selected. Supported names now are:
+
+| Selection | Additional host operations |
+|---|---|
+| `vdsp` | single-precision `vDSP_fft_zip`, `vDSP_fft_zrip`, `vDSP_vadd`, `vDSP_vmul`, `vDSP_vsmul`, `vDSP_vsadd`, `vDSP_dotpr`, `vDSP_sve` |
+| `vimage` | `vImageScale_PlanarF`, `vImageScale_ARGBFFFF`, `vImageConvert_Planar8toPlanarF`, plus the existing integer convolution |
+| `compression` | `compression_encode_buffer` / `compression_decode_buffer`: LZ4, LZFSE, zlib, NULL scratch only |
+| `crypto` | one-shot `CCCrypt` AES (CBC/ECB, PKCS7 or unpadded); no opaque `CCCryptorRef` |
+| `imageio` | **explicit** `attesor_imageio_decode` / `attesor_imageio_encode` RGBX8 buffer adapter; see below |
+
+Example: `ATTESOR_NATIVE_LIBS=vdsp,vimage,compression,crypto`. `1` still means
+zlib alone. All six shim filenames are removed before launching native children;
+ARM children reselect libraries from their own environment. Missing requested
+shims fail at startup. Build locally with `TMPDIR=/private/tmp native/build.sh`.
+Installation scripts were updated, but must not be run for worktree QA.
+
+### FFT ownership and floating-point limits
+
+Interposed setup creation returns an actual **guest** FFTSetup, so unbridged APIs
+such as `vDSP_fft_zop` still work. A host-only companion setup is keyed by guest
+identity (never dereferenced). Destroy removes the companion; an Arc keeps it
+alive during a host call. Uses of a single companion serialize through its own
+mutex, while distinct setups can execute independently. Missing companions,
+including host allocation failure, fall back to the original guest FFT. Both
+architectures' setup allocations are retained, a memory/setup-time tradeoff.
+Only the original single-precision create/destroy family is intercepted;
+double, DFT, 2D, out-of-place and other FFT APIs stay in the guest.
+
+All floating shims fall back on nonzero guest FPCR, rather than silently
+ignoring rounding/flush modes. Host numeric calls scope MXCSR to default IEEE
+controls and restore the previous host state. This is not full guest FPSR
+exception-state emulation. The SDK's `vDSP.h`, “Exactness, IEEE 754 conformance,”
+explicitly allows rearranged calculations, rounding differences and non-IEEE
+NaN/Inf behavior; it does **not** give a universal numeric error bound.
+The tests therefore report measured absolute/relative error, use scale-aware
+empirical regression budgets, and independently check small FFTs against a
+double-precision DFT. They do not invent a documented ulp guarantee.
+
+vImage float scaling retains guest scratch/query paths. Integer scaling remains
+unbridged: the known cross-architecture pixel mismatch is still disallowed by
+the Round 2 integer rule. No tolerance has been applied to integer operations.
+
+### ImageIO: explicit adapter, not transparent object interposition
+
+`native/imageio-buffer.h` defines an opt-in buffer API, discoverable with
+`dlsym(RTLD_DEFAULT, "attesor_imageio_decode")` / `attesor_imageio_encode` only
+when the imageio shim is injected. Apps must explicitly adopt this adapter;
+**existing CGImageSource/CGImageDestination calls are not accelerated by merely
+selecting imageio**. The test probe implements the same buffer operation with
+guest ImageIO for its bridge-off baseline.
+
+The host copies encoded input into a host CFData, creates only host-local
+CF/CG objects, and returns bytes into caller-owned storage. No guest CF objects,
+allocators, providers, callbacks, metadata dictionaries or opaque handles cross
+the trap. The supported subset is single PNG/JPEG images, opaque RGBX8 in sRGB,
+with explicit dimensions, row stride, lengths and integer JPEG quality 0..1000.
+Decode rejects images with alpha; it returns tightly packed RGBX8 with X=255.
+Encode accepts padded rows; it ignores X. Color conversion uses CoreGraphics.
+Metadata, EXIF orientation transforms, animation, alpha, HDR, HEIC and arbitrary
+source/destination options are not implemented. Invalid/unsupported data returns
+-1, insufficient capacity returns 1 with required dimensions/size, success 0.
+Do not treat this restricted adapter as an interchangeable general ImageIO API.
+
+The ordinary ImageIO object APIs were deliberately not interposed: guest source
+and image lifetimes, ownership, metadata and callback identity cannot safely be
+replaced by passing CF/CG pointers to the host. CoreFoundation dictionary/string
+hot paths similarly have no compatible pure-data replacement selected here.
+
+### Round 2 verification
+
+```
+TMPDIR=/private/tmp cargo build --release
+cargo test --release --workspace -- --test-threads=1
+python3 tests/attesor/native-round2-check.py
+python3 tests/attesor/native-round2-sensitivity.py
+python3 tests/attesor/native-imageio-check.py
+python3 tests/attesor/native-round2-measure.py
+```
+
+The first suite compares complete numeric/byte records for three seeds and
+independent library selections, FFT input/forward/inverse results, strides,
+padding, tagged nested pointers, denormals, selected NaN/Inf cases, nondefault
+FPCR fallback, scratch fallback, AES errors/known answers/in-place buffers,
+compression cross-decoders, four-thread shared FFT setups, single-thread fork,
+and native-middleman exec/child-disable. The ImageIO suite cross-decodes all
+three encoder modes with all three decoder modes, requires exact PNG pixels,
+and reports JPEG channel error and PSNR. Independent counters prove actual host
+work. Sensitivity mutates only a private vDSP shim from add to multiply and must
+be rejected by the numeric comparison. See
+[`tasks/phase2/N-NATIVE-ROUND2-REPORT.md`](tasks/phase2/N-NATIVE-ROUND2-REPORT.md)
+for actual measurements, acceptance limits and default-on recommendations.
