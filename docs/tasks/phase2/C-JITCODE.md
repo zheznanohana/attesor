@@ -12,3 +12,13 @@ loops 494 ms, closures 302 ms, sort 553 ms under attesor). V8's tiers help even 
    indirect calls (BLR) keyed by target; faster IBTC; avoid re-translation after W^X mprotect flips that did
    not change bytes (compare a hash of the guest bytes).
 3. Each change A/B on the JS benchmark (raw numbers), self-tests, the TLS check, seeds/sensitivity.
+
+## Addendum (Claude, after a review of prior art)
+Block chaining already exists (`chain_slot`, patched exit slots, unlinked on invalidation; IBTC for indirect
+branches): do not re-implement it. Candidates to evaluate only if your measurements point there:
+- Persistent cache for run-time generated code (FEX-Emu 2610 style: key by content hash + translator version,
+  size cap ~1 GB, automatic cleanup on version change). Measure the hit rate first: V8 code embeds absolute heap
+  addresses that change per run, so content hashes may rarely match (regexp/Wasm code may).
+- Page/region translation at mprotect(PROT_EXEC) time: only if most generated code becomes hot.
+- Direct rel32 patching of chain slots instead of `jmp [slot]` (small).
+Borrow architecture only: QEMU is GPL; do not copy code from it.
