@@ -1,0 +1,225 @@
+{
+  "source_commit": "791acf45c46de7653ca46af481f95599ffef155c",
+  "source_tree": "acc12d47f17583c7f2bd229b6b05517cec5d62d3",
+  "rustc": "rustc 1.99.1 (58cf8f9c3 2026-10-13)\nbinary: rustc\ncommit-hash: 58cf8f9c35b355199727627d07ae34a4e2846d67\ncommit-date: 2026-10-13\nhost: x86_64-apple-darwin\nrelease: 1.99.1\nLLVM version: 23.1.1\n",
+  "cargo_lock_sha256": "4b437df56a22a7dabb6989b9797a9260b1d21b3ca682c51e2629aad6ef513ab2",
+  "builds": [
+    {
+      "name": "default",
+      "command": [
+        "cargo",
+        "build",
+        "--release",
+        "-p",
+        "attesor",
+        "--target-dir",
+        "/tmp/attesor-release-candidates/default-target"
+      ],
+      "settings": {},
+      "returncode": 0,
+      "build_seconds": 61.377426236,
+      "binary": "/tmp/attesor-release-candidates/default-target/release/attesor",
+      "bytes": 2323936,
+      "sha256": "70b266a0f521247bd42cb581aa9e504d399fc94da6a12f75e8e262636c0cde88",
+      "correctness": [
+        {
+          "name": "nan",
+          "command": [
+            "/tmp/attesor-release-candidates/default-target/release/attesor",
+            "--selftest-jit",
+            "fpnan",
+            "62208"
+          ],
+          "settings": {},
+          "returncode": 0,
+          "log": "/tmp/attesor-release-candidates/default-nan.log"
+        },
+        {
+          "name": "nan-fpcr",
+          "command": [
+            "/tmp/attesor-release-candidates/default-target/release/attesor",
+            "--selftest-jit",
+            "fpnan",
+            "62208"
+          ],
+          "settings": {
+            "ATTESOR_SELFTEST_FPCR": "1"
+          },
+          "returncode": 0,
+          "log": "/tmp/attesor-release-candidates/default-nan-fpcr.log"
+        },
+        {
+          "name": "fpblocks",
+          "command": [
+            "/tmp/attesor-release-candidates/default-target/release/attesor",
+            "--selftest-jit",
+            "fpblocks",
+            "10000"
+          ],
+          "settings": {},
+          "returncode": 0,
+          "log": "/tmp/attesor-release-candidates/default-fpblocks.log"
+        },
+        {
+          "name": "half",
+          "command": [
+            "python3",
+            "tests/attesor/fp16-status-check.py",
+            "/tmp/attesor-release-candidates/default-target/release/attesor"
+          ],
+          "settings": {},
+          "returncode": 0,
+          "log": "/tmp/attesor-release-candidates/default-half.log"
+        },
+        {
+          "name": "thread",
+          "command": [
+            "python3",
+            "tests/attesor/thread-startup-check.py",
+            "/tmp/attesor-release-candidates/default-target/release/attesor",
+            "--runs",
+            "3",
+            "--rounds",
+            "30"
+          ],
+          "settings": {},
+          "returncode": 0,
+          "log": "/tmp/attesor-release-candidates/default-thread.log"
+        },
+        {
+          "name": "exec",
+          "command": [
+            "python3",
+            "tests/attesor/exec-modes-check.py",
+            "/tmp/attesor-release-candidates/default-target/release/attesor"
+          ],
+          "settings": {},
+          "returncode": 0,
+          "log": "/tmp/attesor-release-candidates/default-exec.log"
+        }
+      ]
+    },
+    {
+      "name": "thin-cgu1",
+      "command": [
+        "cargo",
+        "build",
+        "--release",
+        "-p",
+        "attesor",
+        "--target-dir",
+        "/tmp/attesor-release-candidates/thin-cgu1-target"
+      ],
+      "settings": {
+        "CARGO_PROFILE_RELEASE_LTO": "thin",
+        "CARGO_PROFILE_RELEASE_CODEGEN_UNITS": "1"
+      },
+      "returncode": 0,
+      "build_seconds": 96.762999651,
+      "binary": "/tmp/attesor-release-candidates/thin-cgu1-target/release/attesor",
+      "bytes": 2223160,
+      "sha256": "df6c3a34d7fdc6b58c1dc0478967cb02edec0c1e988951db557b3183263f9c6f",
+      "correctness": [
+        {
+          "name": "nan",
+          "command": [
+            "/tmp/attesor-release-candidates/thin-cgu1-target/release/attesor",
+            "--selftest-jit",
+            "fpnan",
+            "62208"
+          ],
+          "settings": {},
+          "returncode": 0,
+          "log": "/tmp/attesor-release-candidates/thin-cgu1-nan.log"
+        },
+        {
+          "name": "nan-fpcr",
+          "command": [
+            "/tmp/attesor-release-candidates/thin-cgu1-target/release/attesor",
+            "--selftest-jit",
+            "fpnan",
+            "62208"
+          ],
+          "settings": {
+            "ATTESOR_SELFTEST_FPCR": "1"
+          },
+          "returncode": 0,
+          "log": "/tmp/attesor-release-candidates/thin-cgu1-nan-fpcr.log"
+        },
+        {
+          "name": "fpblocks",
+          "command": [
+            "/tmp/attesor-release-candidates/thin-cgu1-target/release/attesor",
+            "--selftest-jit",
+            "fpblocks",
+            "10000"
+          ],
+          "settings": {},
+          "returncode": 0,
+          "log": "/tmp/attesor-release-candidates/thin-cgu1-fpblocks.log"
+        },
+        {
+          "name": "half",
+          "command": [
+            "python3",
+            "tests/attesor/fp16-status-check.py",
+            "/tmp/attesor-release-candidates/thin-cgu1-target/release/attesor"
+          ],
+          "settings": {},
+          "returncode": 0,
+          "log": "/tmp/attesor-release-candidates/thin-cgu1-half.log"
+        },
+        {
+          "name": "thread",
+          "command": [
+            "python3",
+            "tests/attesor/thread-startup-check.py",
+            "/tmp/attesor-release-candidates/thin-cgu1-target/release/attesor",
+            "--runs",
+            "3",
+            "--rounds",
+            "30"
+          ],
+          "settings": {},
+          "returncode": 0,
+          "log": "/tmp/attesor-release-candidates/thin-cgu1-thread.log"
+        },
+        {
+          "name": "exec",
+          "command": [
+            "python3",
+            "tests/attesor/exec-modes-check.py",
+            "/tmp/attesor-release-candidates/thin-cgu1-target/release/attesor"
+          ],
+          "settings": {},
+          "returncode": 0,
+          "log": "/tmp/attesor-release-candidates/thin-cgu1-exec.log"
+        }
+      ]
+    }
+  ],
+  "inherited_compiler_settings": {
+    "RUSTFLAGS": null,
+    "CARGO_ENCODED_RUSTFLAGS": null,
+    "CARGO_BUILD_TARGET": null,
+    "MACOSX_DEPLOYMENT_TARGET": null
+  },
+  "fixtures": {
+    "short-arm64": {
+      "sha256": "e5ccaeeb7fe4223ac377e3b55c6901d9a25993fbfa2d09a9af45934354094b6a",
+      "path": "/tmp/attesor-release-candidates/short-arm64"
+    },
+    "short-x86_64": {
+      "sha256": "1145580f794f53d66e7a0428d0d38c45451fde24b98a1ddf89d10b5dd11246e3",
+      "path": "/tmp/attesor-release-candidates/short-x86_64"
+    },
+    "default-interp": {
+      "sha256": "a66e6954fa877e15f4fff6c4dc819008db54e6648b90572ffc26856dd7d54f15",
+      "path": "/tmp/attesor-release-candidates/default-interp"
+    },
+    "thin-cgu1-interp": {
+      "sha256": "82eaa9d140c5def77f775513599ce0cc5e778115d51b3556011672290e711bc3",
+      "path": "/tmp/attesor-release-candidates/thin-cgu1-interp"
+    }
+  }
+}
