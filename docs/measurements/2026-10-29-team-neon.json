@@ -1,0 +1,187 @@
+{
+  "host": "zhezdeMacBook-Pro.local",
+  "sha256": {
+    "before": "f8d87bd8bf693b134c07b40d2b596a78cf6a1cba52c5348cda85f2a3f72b6df1",
+    "after": "c61c19536a77d3c759a41822cb9a152eaff45a8e7313f05d6e5bd279d5bb6824",
+    "guest": "8d5a610cbafbb0ee367e3cc634d4f57e1cbd34163d0efc4682a8edc722e56bb8"
+  },
+  "samples": [
+    {
+      "round": 0,
+      "build": "before",
+      "command": [
+        "/private/tmp/attesor-perf/baseline",
+        "--no-aot",
+        "/Users/zhez/attesor/tests/attesor/build/neon-qdmulh",
+        "--bench",
+        "1000000"
+      ],
+      "wall_ms": 640.492629,
+      "environment": {},
+      "cold_aot": false,
+      "metrics": {},
+      "stdout": "checksum 7fe03dbf80000001 01f3baaaf8a3900b\n",
+      "stderr": ""
+    },
+    {
+      "round": 0,
+      "build": "after",
+      "command": [
+        "/Users/zhez/attesor/target/release/attesor",
+        "--no-aot",
+        "/Users/zhez/attesor/tests/attesor/build/neon-qdmulh",
+        "--bench",
+        "1000000"
+      ],
+      "wall_ms": 584.0254349999999,
+      "environment": {},
+      "cold_aot": false,
+      "metrics": {},
+      "stdout": "checksum 7fe03dbf80000001 01f3baaaf8a3900b\n",
+      "stderr": ""
+    },
+    {
+      "round": 1,
+      "build": "after",
+      "command": [
+        "/Users/zhez/attesor/target/release/attesor",
+        "--no-aot",
+        "/Users/zhez/attesor/tests/attesor/build/neon-qdmulh",
+        "--bench",
+        "1000000"
+      ],
+      "wall_ms": 579.1155830000001,
+      "environment": {},
+      "cold_aot": false,
+      "metrics": {},
+      "stdout": "checksum 7fe03dbf80000001 01f3baaaf8a3900b\n",
+      "stderr": ""
+    },
+    {
+      "round": 1,
+      "build": "before",
+      "command": [
+        "/private/tmp/attesor-perf/baseline",
+        "--no-aot",
+        "/Users/zhez/attesor/tests/attesor/build/neon-qdmulh",
+        "--bench",
+        "1000000"
+      ],
+      "wall_ms": 627.4093209999997,
+      "environment": {},
+      "cold_aot": false,
+      "metrics": {},
+      "stdout": "checksum 7fe03dbf80000001 01f3baaaf8a3900b\n",
+      "stderr": ""
+    },
+    {
+      "round": 2,
+      "build": "before",
+      "command": [
+        "/private/tmp/attesor-perf/baseline",
+        "--no-aot",
+        "/Users/zhez/attesor/tests/attesor/build/neon-qdmulh",
+        "--bench",
+        "1000000"
+      ],
+      "wall_ms": 628.563572,
+      "environment": {},
+      "cold_aot": false,
+      "metrics": {},
+      "stdout": "checksum 7fe03dbf80000001 01f3baaaf8a3900b\n",
+      "stderr": ""
+    },
+    {
+      "round": 2,
+      "build": "after",
+      "command": [
+        "/Users/zhez/attesor/target/release/attesor",
+        "--no-aot",
+        "/Users/zhez/attesor/tests/attesor/build/neon-qdmulh",
+        "--bench",
+        "1000000"
+      ],
+      "wall_ms": 584.8661189999999,
+      "environment": {},
+      "cold_aot": false,
+      "metrics": {},
+      "stdout": "checksum 7fe03dbf80000001 01f3baaaf8a3900b\n",
+      "stderr": ""
+    },
+    {
+      "round": 3,
+      "build": "after",
+      "command": [
+        "/Users/zhez/attesor/target/release/attesor",
+        "--no-aot",
+        "/Users/zhez/attesor/tests/attesor/build/neon-qdmulh",
+        "--bench",
+        "1000000"
+      ],
+      "wall_ms": 591.5603599999995,
+      "environment": {},
+      "cold_aot": false,
+      "metrics": {},
+      "stdout": "checksum 7fe03dbf80000001 01f3baaaf8a3900b\n",
+      "stderr": ""
+    },
+    {
+      "round": 3,
+      "build": "before",
+      "command": [
+        "/private/tmp/attesor-perf/baseline",
+        "--no-aot",
+        "/Users/zhez/attesor/tests/attesor/build/neon-qdmulh",
+        "--bench",
+        "1000000"
+      ],
+      "wall_ms": 650.9961399999993,
+      "environment": {},
+      "cold_aot": false,
+      "metrics": {},
+      "stdout": "checksum 7fe03dbf80000001 01f3baaaf8a3900b\n",
+      "stderr": ""
+    },
+    {
+      "round": 4,
+      "build": "before",
+      "command": [
+        "/private/tmp/attesor-perf/baseline",
+        "--no-aot",
+        "/Users/zhez/attesor/tests/attesor/build/neon-qdmulh",
+        "--bench",
+        "1000000"
+      ],
+      "wall_ms": 653.1754300000001,
+      "environment": {},
+      "cold_aot": false,
+      "metrics": {},
+      "stdout": "checksum 7fe03dbf80000001 01f3baaaf8a3900b\n",
+      "stderr": ""
+    },
+    {
+      "round": 4,
+      "build": "after",
+      "command": [
+        "/Users/zhez/attesor/target/release/attesor",
+        "--no-aot",
+        "/Users/zhez/attesor/tests/attesor/build/neon-qdmulh",
+        "--bench",
+        "1000000"
+      ],
+      "wall_ms": 588.9733990000003,
+      "environment": {},
+      "cold_aot": false,
+      "metrics": {},
+      "stdout": "checksum 7fe03dbf80000001 01f3baaaf8a3900b\n",
+      "stderr": ""
+    }
+  ],
+  "medians": {
+    "wall_ms": {
+      "before": 640.492629,
+      "after": 584.8661189999999,
+      "time_reduction_percent": 8.68495709105187
+    }
+  }
+}

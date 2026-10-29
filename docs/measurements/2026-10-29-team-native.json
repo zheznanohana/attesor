@@ -1,0 +1,262 @@
+{
+  "host": "zhezdeMacBook-Pro.local",
+  "sha256": {
+    "before": "c61c19536a77d3c759a41822cb9a152eaff45a8e7313f05d6e5bd279d5bb6824",
+    "after": "c61c19536a77d3c759a41822cb9a152eaff45a8e7313f05d6e5bd279d5bb6824",
+    "guest": "28150013efc8f7a80a95714bf3b4ade52f4414c276b957a06429a9588fe648c7"
+  },
+  "samples": [
+    {
+      "round": 0,
+      "build": "before",
+      "command": [
+        "/Users/zhez/attesor/target/release/attesor",
+        "--no-aot",
+        "/Users/zhez/attesor/tests/attesor/build/native-zlib-bench"
+      ],
+      "wall_ms": 2435.525349,
+      "environment": {
+        "ATTESOR_NATIVE_LIBS": "0"
+      },
+      "cold_aot": false,
+      "metrics": {
+        "native-crc": 111.45,
+        "native-adler": 1352.967,
+        "native-deflate": 283.925,
+        "native-inflate": 61.593
+      },
+      "stdout": "native-crc 111.450 ms\nnative-adler 1352.967 ms\nnative-deflate 283.925 ms\nnative-inflate 61.593 ms\nchecksum a7d4e7e5 05241e02 e2df10d4\n",
+      "stderr": ""
+    },
+    {
+      "round": 0,
+      "build": "after",
+      "command": [
+        "/Users/zhez/attesor/target/release/attesor",
+        "--no-aot",
+        "/Users/zhez/attesor/tests/attesor/build/native-zlib-bench"
+      ],
+      "wall_ms": 943.5514890000003,
+      "environment": {
+        "ATTESOR_NATIVE_LIBS": "1",
+        "ATTESOR_NATIVE_DIR": "/Users/zhez/attesor/native/out"
+      },
+      "cold_aot": false,
+      "metrics": {
+        "native-crc": 32.175,
+        "native-adler": 35.097,
+        "native-deflate": 49.422,
+        "native-inflate": 15.176
+      },
+      "stdout": "native-crc 32.175 ms\nnative-adler 35.097 ms\nnative-deflate 49.422 ms\nnative-inflate 15.176 ms\nchecksum a7d4e7e5 05241e02 e2df10d4\n",
+      "stderr": ""
+    },
+    {
+      "round": 1,
+      "build": "after",
+      "command": [
+        "/Users/zhez/attesor/target/release/attesor",
+        "--no-aot",
+        "/Users/zhez/attesor/tests/attesor/build/native-zlib-bench"
+      ],
+      "wall_ms": 942.5204130000004,
+      "environment": {
+        "ATTESOR_NATIVE_LIBS": "1",
+        "ATTESOR_NATIVE_DIR": "/Users/zhez/attesor/native/out"
+      },
+      "cold_aot": false,
+      "metrics": {
+        "native-crc": 35.667,
+        "native-adler": 39.583,
+        "native-deflate": 49.242,
+        "native-inflate": 14.53
+      },
+      "stdout": "native-crc 35.667 ms\nnative-adler 39.583 ms\nnative-deflate 49.242 ms\nnative-inflate 14.530 ms\nchecksum a7d4e7e5 05241e02 e2df10d4\n",
+      "stderr": ""
+    },
+    {
+      "round": 1,
+      "build": "before",
+      "command": [
+        "/Users/zhez/attesor/target/release/attesor",
+        "--no-aot",
+        "/Users/zhez/attesor/tests/attesor/build/native-zlib-bench"
+      ],
+      "wall_ms": 2471.6718440000004,
+      "environment": {
+        "ATTESOR_NATIVE_LIBS": "0"
+      },
+      "cold_aot": false,
+      "metrics": {
+        "native-crc": 115.81,
+        "native-adler": 1391.838,
+        "native-deflate": 286.409,
+        "native-inflate": 66.852
+      },
+      "stdout": "native-crc 115.810 ms\nnative-adler 1391.838 ms\nnative-deflate 286.409 ms\nnative-inflate 66.852 ms\nchecksum a7d4e7e5 05241e02 e2df10d4\n",
+      "stderr": ""
+    },
+    {
+      "round": 2,
+      "build": "before",
+      "command": [
+        "/Users/zhez/attesor/target/release/attesor",
+        "--no-aot",
+        "/Users/zhez/attesor/tests/attesor/build/native-zlib-bench"
+      ],
+      "wall_ms": 2455.3810780000013,
+      "environment": {
+        "ATTESOR_NATIVE_LIBS": "0"
+      },
+      "cold_aot": false,
+      "metrics": {
+        "native-crc": 113.548,
+        "native-adler": 1362.223,
+        "native-deflate": 297.799,
+        "native-inflate": 61.477
+      },
+      "stdout": "native-crc 113.548 ms\nnative-adler 1362.223 ms\nnative-deflate 297.799 ms\nnative-inflate 61.477 ms\nchecksum a7d4e7e5 05241e02 e2df10d4\n",
+      "stderr": ""
+    },
+    {
+      "round": 2,
+      "build": "after",
+      "command": [
+        "/Users/zhez/attesor/target/release/attesor",
+        "--no-aot",
+        "/Users/zhez/attesor/tests/attesor/build/native-zlib-bench"
+      ],
+      "wall_ms": 935.101061000001,
+      "environment": {
+        "ATTESOR_NATIVE_LIBS": "1",
+        "ATTESOR_NATIVE_DIR": "/Users/zhez/attesor/native/out"
+      },
+      "cold_aot": false,
+      "metrics": {
+        "native-crc": 33.453,
+        "native-adler": 38.061,
+        "native-deflate": 52.578,
+        "native-inflate": 16.522
+      },
+      "stdout": "native-crc 33.453 ms\nnative-adler 38.061 ms\nnative-deflate 52.578 ms\nnative-inflate 16.522 ms\nchecksum a7d4e7e5 05241e02 e2df10d4\n",
+      "stderr": ""
+    },
+    {
+      "round": 3,
+      "build": "after",
+      "command": [
+        "/Users/zhez/attesor/target/release/attesor",
+        "--no-aot",
+        "/Users/zhez/attesor/tests/attesor/build/native-zlib-bench"
+      ],
+      "wall_ms": 969.6500090000004,
+      "environment": {
+        "ATTESOR_NATIVE_LIBS": "1",
+        "ATTESOR_NATIVE_DIR": "/Users/zhez/attesor/native/out"
+      },
+      "cold_aot": false,
+      "metrics": {
+        "native-crc": 33.804,
+        "native-adler": 35.686,
+        "native-deflate": 49.729,
+        "native-inflate": 14.899
+      },
+      "stdout": "native-crc 33.804 ms\nnative-adler 35.686 ms\nnative-deflate 49.729 ms\nnative-inflate 14.899 ms\nchecksum a7d4e7e5 05241e02 e2df10d4\n",
+      "stderr": ""
+    },
+    {
+      "round": 3,
+      "build": "before",
+      "command": [
+        "/Users/zhez/attesor/target/release/attesor",
+        "--no-aot",
+        "/Users/zhez/attesor/tests/attesor/build/native-zlib-bench"
+      ],
+      "wall_ms": 2460.049753,
+      "environment": {
+        "ATTESOR_NATIVE_LIBS": "0"
+      },
+      "cold_aot": false,
+      "metrics": {
+        "native-crc": 126.542,
+        "native-adler": 1379.961,
+        "native-deflate": 290.506,
+        "native-inflate": 59.436
+      },
+      "stdout": "native-crc 126.542 ms\nnative-adler 1379.961 ms\nnative-deflate 290.506 ms\nnative-inflate 59.436 ms\nchecksum a7d4e7e5 05241e02 e2df10d4\n",
+      "stderr": ""
+    },
+    {
+      "round": 4,
+      "build": "before",
+      "command": [
+        "/Users/zhez/attesor/target/release/attesor",
+        "--no-aot",
+        "/Users/zhez/attesor/tests/attesor/build/native-zlib-bench"
+      ],
+      "wall_ms": 2485.6256210000006,
+      "environment": {
+        "ATTESOR_NATIVE_LIBS": "0"
+      },
+      "cold_aot": false,
+      "metrics": {
+        "native-crc": 115.946,
+        "native-adler": 1408.423,
+        "native-deflate": 284.716,
+        "native-inflate": 64.008
+      },
+      "stdout": "native-crc 115.946 ms\nnative-adler 1408.423 ms\nnative-deflate 284.716 ms\nnative-inflate 64.008 ms\nchecksum a7d4e7e5 05241e02 e2df10d4\n",
+      "stderr": ""
+    },
+    {
+      "round": 4,
+      "build": "after",
+      "command": [
+        "/Users/zhez/attesor/target/release/attesor",
+        "--no-aot",
+        "/Users/zhez/attesor/tests/attesor/build/native-zlib-bench"
+      ],
+      "wall_ms": 919.2098840000007,
+      "environment": {
+        "ATTESOR_NATIVE_LIBS": "1",
+        "ATTESOR_NATIVE_DIR": "/Users/zhez/attesor/native/out"
+      },
+      "cold_aot": false,
+      "metrics": {
+        "native-crc": 30.752,
+        "native-adler": 34.734,
+        "native-deflate": 47.825,
+        "native-inflate": 14.281
+      },
+      "stdout": "native-crc 30.752 ms\nnative-adler 34.734 ms\nnative-deflate 47.825 ms\nnative-inflate 14.281 ms\nchecksum a7d4e7e5 05241e02 e2df10d4\n",
+      "stderr": ""
+    }
+  ],
+  "medians": {
+    "native-crc": {
+      "before": 115.81,
+      "after": 33.453,
+      "time_reduction_percent": 71.11389344616181
+    },
+    "native-adler": {
+      "before": 1379.961,
+      "after": 35.686,
+      "time_reduction_percent": 97.41398488797873
+    },
+    "native-deflate": {
+      "before": 286.409,
+      "after": 49.422,
+      "time_reduction_percent": 82.74425733828197
+    },
+    "native-inflate": {
+      "before": 61.593,
+      "after": 14.899,
+      "time_reduction_percent": 75.81056288863994
+    },
+    "wall_ms": {
+      "before": 2460.049753,
+      "after": 942.5204130000004,
+      "time_reduction_percent": 61.68693694708375
+    }
+  }
+}

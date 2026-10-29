@@ -1,0 +1,162 @@
+{
+  "host": "zhezdeMacBook-Pro.local",
+  "sha256": {
+    "before": "f8d87bd8bf693b134c07b40d2b596a78cf6a1cba52c5348cda85f2a3f72b6df1",
+    "after": "c61c19536a77d3c759a41822cb9a152eaff45a8e7313f05d6e5bd279d5bb6824",
+    "guest": "af8eff95d043b5e49fc5648675b9c2e59dcadaa9188ea25af48252faeca88484"
+  },
+  "samples": [
+    {
+      "round": 0,
+      "build": "before",
+      "command": [
+        "/private/tmp/attesor-perf/baseline",
+        "/Users/zhez/attesor/bench/native-ratio/k-arm64"
+      ],
+      "wall_ms": 3474.3151599999997,
+      "environment": {},
+      "cold_aot": true,
+      "metrics": {
+        "int-hash": 378.0,
+        "qsort": 1119.8,
+        "fp-nbody": 141.4,
+        "memcpy": 29.8,
+        "branchy": 1112.0
+      },
+      "stdout": "int-hash      378.0 ms\nqsort        1119.8 ms\nfp-nbody      141.4 ms\nmemcpy         29.8 ms\nbranchy      1112.0 ms\n",
+      "stderr": ""
+    },
+    {
+      "round": 0,
+      "build": "after",
+      "command": [
+        "/Users/zhez/attesor/target/release/attesor",
+        "/Users/zhez/attesor/bench/native-ratio/k-arm64"
+      ],
+      "wall_ms": 3439.91353,
+      "environment": {},
+      "cold_aot": true,
+      "metrics": {
+        "int-hash": 383.6,
+        "qsort": 1109.7,
+        "fp-nbody": 140.6,
+        "memcpy": 28.1,
+        "branchy": 1111.6
+      },
+      "stdout": "int-hash      383.6 ms\nqsort        1109.7 ms\nfp-nbody      140.6 ms\nmemcpy         28.1 ms\nbranchy      1111.6 ms\n",
+      "stderr": ""
+    },
+    {
+      "round": 1,
+      "build": "after",
+      "command": [
+        "/Users/zhez/attesor/target/release/attesor",
+        "/Users/zhez/attesor/bench/native-ratio/k-arm64"
+      ],
+      "wall_ms": 3448.4644120000007,
+      "environment": {},
+      "cold_aot": true,
+      "metrics": {
+        "int-hash": 385.5,
+        "qsort": 1125.3,
+        "fp-nbody": 130.0,
+        "memcpy": 27.3,
+        "branchy": 1107.0
+      },
+      "stdout": "int-hash      385.5 ms\nqsort        1125.3 ms\nfp-nbody      130.0 ms\nmemcpy         27.3 ms\nbranchy      1107.0 ms\n",
+      "stderr": ""
+    },
+    {
+      "round": 1,
+      "build": "before",
+      "command": [
+        "/private/tmp/attesor-perf/baseline",
+        "/Users/zhez/attesor/bench/native-ratio/k-arm64"
+      ],
+      "wall_ms": 3411.3652519999996,
+      "environment": {},
+      "cold_aot": true,
+      "metrics": {
+        "int-hash": 380.2,
+        "qsort": 1116.6,
+        "fp-nbody": 137.1,
+        "memcpy": 27.2,
+        "branchy": 1093.5
+      },
+      "stdout": "int-hash      380.2 ms\nqsort        1116.6 ms\nfp-nbody      137.1 ms\nmemcpy         27.2 ms\nbranchy      1093.5 ms\n",
+      "stderr": ""
+    },
+    {
+      "round": 2,
+      "build": "before",
+      "command": [
+        "/private/tmp/attesor-perf/baseline",
+        "/Users/zhez/attesor/bench/native-ratio/k-arm64"
+      ],
+      "wall_ms": 3434.114257000001,
+      "environment": {},
+      "cold_aot": true,
+      "metrics": {
+        "int-hash": 383.6,
+        "qsort": 1128.4,
+        "fp-nbody": 147.2,
+        "memcpy": 27.3,
+        "branchy": 1101.1
+      },
+      "stdout": "int-hash      383.6 ms\nqsort        1128.4 ms\nfp-nbody      147.2 ms\nmemcpy         27.3 ms\nbranchy      1101.1 ms\n",
+      "stderr": ""
+    },
+    {
+      "round": 2,
+      "build": "after",
+      "command": [
+        "/Users/zhez/attesor/target/release/attesor",
+        "/Users/zhez/attesor/bench/native-ratio/k-arm64"
+      ],
+      "wall_ms": 3431.071199000002,
+      "environment": {},
+      "cold_aot": true,
+      "metrics": {
+        "int-hash": 375.8,
+        "qsort": 1126.6,
+        "fp-nbody": 132.5,
+        "memcpy": 31.0,
+        "branchy": 1091.4
+      },
+      "stdout": "int-hash      375.8 ms\nqsort        1126.6 ms\nfp-nbody      132.5 ms\nmemcpy         31.0 ms\nbranchy      1091.4 ms\n",
+      "stderr": ""
+    }
+  ],
+  "medians": {
+    "int-hash": {
+      "before": 380.2,
+      "after": 383.6,
+      "time_reduction_percent": -0.8942661756970116
+    },
+    "qsort": {
+      "before": 1119.8,
+      "after": 1125.3,
+      "time_reduction_percent": -0.4911591355599265
+    },
+    "fp-nbody": {
+      "before": 141.4,
+      "after": 132.5,
+      "time_reduction_percent": 6.2942008486562955
+    },
+    "memcpy": {
+      "before": 27.3,
+      "after": 28.1,
+      "time_reduction_percent": -2.930402930402942
+    },
+    "branchy": {
+      "before": 1101.1,
+      "after": 1107.0,
+      "time_reduction_percent": -0.5358278085551005
+    },
+    "wall_ms": {
+      "before": 3434.114257000001,
+      "after": 3439.91353,
+      "time_reduction_percent": -0.16887245344785473
+    }
+  }
+}

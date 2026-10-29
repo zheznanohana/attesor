@@ -1,0 +1,260 @@
+{
+  "host": "zhezdeMacBook-Pro.local",
+  "sha256": {
+    "before": "f8d87bd8bf693b134c07b40d2b596a78cf6a1cba52c5348cda85f2a3f72b6df1",
+    "after": "c61c19536a77d3c759a41822cb9a152eaff45a8e7313f05d6e5bd279d5bb6824",
+    "guest": "62806f1b24bc428214e0ab35ee74970975b13b3b0c3a59de8cdd38dc79d80bbc"
+  },
+  "samples": [
+    {
+      "round": 0,
+      "build": "before",
+      "command": [
+        "/private/tmp/attesor-perf/baseline",
+        "--no-aot",
+        "/Users/zhez/attesor/tests/attesor/build/sha-schedule"
+      ],
+      "wall_ms": 611.759178,
+      "environment": {},
+      "cold_aot": false,
+      "metrics": {
+        "sha-sched": 19.852
+      },
+      "stdout": "sha-sched 19.852 ms\nchecksum 8e25178f14925848\n",
+      "stderr": ""
+    },
+    {
+      "round": 0,
+      "build": "after",
+      "command": [
+        "/Users/zhez/attesor/target/release/attesor",
+        "--no-aot",
+        "/Users/zhez/attesor/tests/attesor/build/sha-schedule"
+      ],
+      "wall_ms": 573.5643869999999,
+      "environment": {},
+      "cold_aot": false,
+      "metrics": {
+        "sha-sched": 6.951
+      },
+      "stdout": "sha-sched 6.951 ms\nchecksum 8e25178f14925848\n",
+      "stderr": ""
+    },
+    {
+      "round": 1,
+      "build": "after",
+      "command": [
+        "/Users/zhez/attesor/target/release/attesor",
+        "--no-aot",
+        "/Users/zhez/attesor/tests/attesor/build/sha-schedule"
+      ],
+      "wall_ms": 556.881542,
+      "environment": {},
+      "cold_aot": false,
+      "metrics": {
+        "sha-sched": 5.96
+      },
+      "stdout": "sha-sched 5.960 ms\nchecksum 8e25178f14925848\n",
+      "stderr": ""
+    },
+    {
+      "round": 1,
+      "build": "before",
+      "command": [
+        "/private/tmp/attesor-perf/baseline",
+        "--no-aot",
+        "/Users/zhez/attesor/tests/attesor/build/sha-schedule"
+      ],
+      "wall_ms": 581.51573,
+      "environment": {},
+      "cold_aot": false,
+      "metrics": {
+        "sha-sched": 17.014
+      },
+      "stdout": "sha-sched 17.014 ms\nchecksum 8e25178f14925848\n",
+      "stderr": ""
+    },
+    {
+      "round": 2,
+      "build": "before",
+      "command": [
+        "/private/tmp/attesor-perf/baseline",
+        "--no-aot",
+        "/Users/zhez/attesor/tests/attesor/build/sha-schedule"
+      ],
+      "wall_ms": 576.340568,
+      "environment": {},
+      "cold_aot": false,
+      "metrics": {
+        "sha-sched": 16.62
+      },
+      "stdout": "sha-sched 16.620 ms\nchecksum 8e25178f14925848\n",
+      "stderr": ""
+    },
+    {
+      "round": 2,
+      "build": "after",
+      "command": [
+        "/Users/zhez/attesor/target/release/attesor",
+        "--no-aot",
+        "/Users/zhez/attesor/tests/attesor/build/sha-schedule"
+      ],
+      "wall_ms": 575.3529310000002,
+      "environment": {},
+      "cold_aot": false,
+      "metrics": {
+        "sha-sched": 5.965
+      },
+      "stdout": "sha-sched 5.965 ms\nchecksum 8e25178f14925848\n",
+      "stderr": ""
+    },
+    {
+      "round": 3,
+      "build": "after",
+      "command": [
+        "/Users/zhez/attesor/target/release/attesor",
+        "--no-aot",
+        "/Users/zhez/attesor/tests/attesor/build/sha-schedule"
+      ],
+      "wall_ms": 609.7711200000005,
+      "environment": {},
+      "cold_aot": false,
+      "metrics": {
+        "sha-sched": 6.698
+      },
+      "stdout": "sha-sched 6.698 ms\nchecksum 8e25178f14925848\n",
+      "stderr": ""
+    },
+    {
+      "round": 3,
+      "build": "before",
+      "command": [
+        "/private/tmp/attesor-perf/baseline",
+        "--no-aot",
+        "/Users/zhez/attesor/tests/attesor/build/sha-schedule"
+      ],
+      "wall_ms": 594.893678,
+      "environment": {},
+      "cold_aot": false,
+      "metrics": {
+        "sha-sched": 19.574
+      },
+      "stdout": "sha-sched 19.574 ms\nchecksum 8e25178f14925848\n",
+      "stderr": ""
+    },
+    {
+      "round": 4,
+      "build": "before",
+      "command": [
+        "/private/tmp/attesor-perf/baseline",
+        "--no-aot",
+        "/Users/zhez/attesor/tests/attesor/build/sha-schedule"
+      ],
+      "wall_ms": 601.761592,
+      "environment": {},
+      "cold_aot": false,
+      "metrics": {
+        "sha-sched": 17.545
+      },
+      "stdout": "sha-sched 17.545 ms\nchecksum 8e25178f14925848\n",
+      "stderr": ""
+    },
+    {
+      "round": 4,
+      "build": "after",
+      "command": [
+        "/Users/zhez/attesor/target/release/attesor",
+        "--no-aot",
+        "/Users/zhez/attesor/tests/attesor/build/sha-schedule"
+      ],
+      "wall_ms": 593.913325,
+      "environment": {},
+      "cold_aot": false,
+      "metrics": {
+        "sha-sched": 6.364
+      },
+      "stdout": "sha-sched 6.364 ms\nchecksum 8e25178f14925848\n",
+      "stderr": ""
+    },
+    {
+      "round": 5,
+      "build": "after",
+      "command": [
+        "/Users/zhez/attesor/target/release/attesor",
+        "--no-aot",
+        "/Users/zhez/attesor/tests/attesor/build/sha-schedule"
+      ],
+      "wall_ms": 585.8068169999999,
+      "environment": {},
+      "cold_aot": false,
+      "metrics": {
+        "sha-sched": 6.839
+      },
+      "stdout": "sha-sched 6.839 ms\nchecksum 8e25178f14925848\n",
+      "stderr": ""
+    },
+    {
+      "round": 5,
+      "build": "before",
+      "command": [
+        "/private/tmp/attesor-perf/baseline",
+        "--no-aot",
+        "/Users/zhez/attesor/tests/attesor/build/sha-schedule"
+      ],
+      "wall_ms": 600.5477280000005,
+      "environment": {},
+      "cold_aot": false,
+      "metrics": {
+        "sha-sched": 18.404
+      },
+      "stdout": "sha-sched 18.404 ms\nchecksum 8e25178f14925848\n",
+      "stderr": ""
+    },
+    {
+      "round": 6,
+      "build": "before",
+      "command": [
+        "/private/tmp/attesor-perf/baseline",
+        "--no-aot",
+        "/Users/zhez/attesor/tests/attesor/build/sha-schedule"
+      ],
+      "wall_ms": 605.7921650000004,
+      "environment": {},
+      "cold_aot": false,
+      "metrics": {
+        "sha-sched": 18.449
+      },
+      "stdout": "sha-sched 18.449 ms\nchecksum 8e25178f14925848\n",
+      "stderr": ""
+    },
+    {
+      "round": 6,
+      "build": "after",
+      "command": [
+        "/Users/zhez/attesor/target/release/attesor",
+        "--no-aot",
+        "/Users/zhez/attesor/tests/attesor/build/sha-schedule"
+      ],
+      "wall_ms": 585.2665640000012,
+      "environment": {},
+      "cold_aot": false,
+      "metrics": {
+        "sha-sched": 7.343
+      },
+      "stdout": "sha-sched 7.343 ms\nchecksum 8e25178f14925848\n",
+      "stderr": ""
+    }
+  ],
+  "medians": {
+    "sha-sched": {
+      "before": 18.404,
+      "after": 6.698,
+      "time_reduction_percent": 63.60573788306889
+    },
+    "wall_ms": {
+      "before": 600.5477280000005,
+      "after": 585.2665640000012,
+      "time_reduction_percent": 2.544537808991476
+    }
+  }
+}

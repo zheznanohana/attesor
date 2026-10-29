@@ -12,7 +12,7 @@ for the files they need).
 
 | file | what |
 |---|---|
-| `compare-cpu.py` | Serial alternating comparison of two translator builds (`--before`, `--after`, `--guest`, `--runs`, `--output`). Disables AOT and writes raw timings and medians to JSON. Run correctness tests separately. |
+| `compare-cpu.py` | Serial alternating comparison of two translator builds (`--before`, `--after`, `--guest`, `--runs`, `--output`). Disables AOT by default; `--cold-aot` measures recording with a fresh private cache. Supports per-build `--before-env`/`--after-env`, repeated `--guest-arg`, and checksums. Writes raw timings and medians to JSON. Run correctness tests separately. |
 | `bench.c` | arm64 CPU micro-benchmark (qsort, sieve, crc32, list walk, matmul, memops). Build with `clang -arch arm64 -O2 bench.c -o bench && codesign -f -s - bench`, run `attesor --no-aot ./bench`. Use `--no-aot` when comparing translator builds: AOT caches are keyed by `TRANSLATOR_VERSION` and different builds keep invalidating each other. |
 | `gpubench.py <secs> <arcs> [js]` | animated 2D-canvas page in the running Chromium (DevTools on :9333): median frame time / fps, optional JS compute timing. Uses focus emulation because the test Mac's window is often reported `hidden` (which throttles rAF). |
 | `gpu-exp.sh "ENV=1 ..." [secs]` | restart `chromium-gpu` with `MCL_STATS=1` plus extra env, run `gpubench.py`, print the guest-side GPU profile lines. |
