@@ -3267,6 +3267,47 @@ impl<'a> E<'a> {
         a!(self, por(xmm0, xmm2));
     }
 
+    /// Deinterleave xmm0:xmm1 (elements of `size`): xmm0 = even elements, xmm1 = odd elements
+    /// (UZP1 / UZP2 of the pair). Uses xmm2-xmm3.
+    fn uzp128(&mut self, size: u32) {
+        a!(self, movdqa(xmm2, xmm0));
+        a!(self, movdqa(xmm3, xmm1));
+        match size {
+            0 => {
+                a!(self, pcmpeqd(xmm1, xmm1));
+                a!(self, psrlw(xmm1, 8));
+                a!(self, pand(xmm0, xmm1));
+                a!(self, pand(xmm1, xmm3));
+                a!(self, packuswb(xmm0, xmm1));    // evens
+                a!(self, psrlw(xmm2, 8));
+                a!(self, psrlw(xmm3, 8));
+                a!(self, packuswb(xmm2, xmm3));    // odds
+                a!(self, movdqa(xmm1, xmm2));
+            }
+            1 => {
+                a!(self, pslld(xmm0, 16));
+                a!(self, psrad(xmm0, 16));
+                a!(self, pslld(xmm1, 16));
+                a!(self, psrad(xmm1, 16));
+                a!(self, packssdw(xmm0, xmm1));    // evens (sign-extended, so the pack is lossless)
+                a!(self, psrad(xmm2, 16));
+                a!(self, psrad(xmm3, 16));
+                a!(self, packssdw(xmm2, xmm3));    // odds
+                a!(self, movdqa(xmm1, xmm2));
+            }
+            2 => {
+                a!(self, shufps(xmm0, xmm1, 0x88));
+                a!(self, shufps(xmm2, xmm3, 0xDD));
+                a!(self, movdqa(xmm1, xmm2));
+            }
+            _ => {
+                a!(self, punpcklqdq(xmm0, xmm1));
+                a!(self, punpckhqdq(xmm2, xmm3));
+                a!(self, movdqa(xmm1, xmm2));
+            }
+        }
+    }
+
     /// 128-bit constant (low and high halves).
     fn vconst128(&mut self, x: AsmRegisterXmm, lo: u64, hi: u64) {
         self.mov_imm(rax, lo);
@@ -3441,6 +3482,57 @@ impl<'a> E<'a> {
         let q = bit(insn, 30) != 0;
         let u = bit(insn, 29) != 0;
         let size = bits(insn, 23, 22);
+
+        // ---- pairwise: ADDP (vector), [SU]MAXP, [SU]MINP; ADDP (scalar, 2d) ----
+        if insn & 0xFFFF_FC00 == 0x5EF1_B800 && !jit_off("pairwise") {
+            self.vld(xmm0, rn, true);
+            a!(self, pshufd(xmm1, xmm0, 0x0E));
+            a!(self, paddq(xmm0, xmm1));
+            a!(self, movq(rax, xmm0));
+            self.vst_rax(rd, false);
+            return true;
+        }
+        if insn & 0x9F20_0400 == 0x0E20_0400 && !jit_off("pairwise") {
+            let opcode = bits(insn, 15, 11);
+            let op = match (u, opcode) {
+                (false, 0b10111) => Some(0), // ADDP
+                (_, 0b10100) => Some(1),     // [SU]MAXP
+                (_, 0b10101) => Some(2),     // [SU]MINP
+                _ => None,
+            };
+            if let Some(op) = op {
+                // ADDP covers 64-bit lanes (128-bit form only); MAXP/MINP stop at 32-bit lanes
+                if (op == 0 || size < 3) && !(size == 3 && !q) {
+                    if q {
+                        self.vld(xmm0, rn, true);
+                        self.vld(xmm1, rm, true);
+                    } else {
+                        a!(self, movq(xmm0, qword_ptr(r15 + voff(rn))));
+                        a!(self, movq(xmm1, qword_ptr(r15 + voff(rm))));
+                        a!(self, punpcklqdq(xmm0, xmm1));
+                        a!(self, movdqa(xmm1, xmm0));
+                    }
+                    self.uzp128(size);
+                    match (op, u, size) {
+                        (0, _, s) => self.padd_elem(xmm0, xmm1, s),
+                        (1, true, 0) => a!(self, pmaxub(xmm0, xmm1)),
+                        (1, true, 1) => a!(self, pmaxuw(xmm0, xmm1)),
+                        (1, true, _) => a!(self, pmaxud(xmm0, xmm1)),
+                        (1, false, 0) => a!(self, pmaxsb(xmm0, xmm1)),
+                        (1, false, 1) => a!(self, pmaxsw(xmm0, xmm1)),
+                        (1, false, _) => a!(self, pmaxsd(xmm0, xmm1)),
+                        (_, true, 0) => a!(self, pminub(xmm0, xmm1)),
+                        (_, true, 1) => a!(self, pminuw(xmm0, xmm1)),
+                        (_, true, _) => a!(self, pminud(xmm0, xmm1)),
+                        (_, false, 0) => a!(self, pminsb(xmm0, xmm1)),
+                        (_, false, 1) => a!(self, pminsw(xmm0, xmm1)),
+                        (_, false, _) => a!(self, pminsd(xmm0, xmm1)),
+                    }
+                    self.vfin(rd, q);
+                    return true;
+                }
+            }
+        }
 
         // ---- across lanes: ADDV, [SU]MAXV, [SU]MINV, [SU]ADDLV (b/h/s) ----
         // Fold the upper half onto the lower one until one element is left.
@@ -4643,9 +4735,15 @@ impl<'a> E<'a> {
             return true;
         }
 
-        // ---- FCVTZS (vector, single precision) ----
-        if insn & 0xBFFF_FC00 == 0x0EA1_B800 {
+        // ---- FCVTNS / FCVTMS / FCVTPS / FCVTZS (vector, single precision) ----
+        // bit 23 and bit 12 select the rounding: NS nearest-even, MS -inf, PS +inf, ZS zero; round with
+        // ROUNDPS first, then the truncating conversion with ARM saturation.
+        if insn & 0xBF7F_EC00 == 0x0E21_A800 && !jit_off("fcvtxs") {
+            let mode = (bit(insn, 23) << 1) | bit(insn, 12); // 0 NS, 1 MS, 2 PS, 3 ZS
             self.vld(xmm0, rn, q);
+            if mode != 3 {
+                a!(self, roundps(xmm0, xmm0, mode));
+            }
             a!(self, cvttps2dq(xmm1, xmm0));
             self.vconst(xmm2, 0x8000_0000_8000_0000);
             a!(self, pcmpeqd(xmm2, xmm1)); // lanes that overflowed / were NaN
