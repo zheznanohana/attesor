@@ -43,6 +43,7 @@ def main():
         ('tbi-mask', ['python3', 'tests/attesor/tbi-mask-check.py', str(binary)]),
         ('direct-test-branches', ['python3', 'tests/attesor/direct-branch-check.py', str(binary)]),
         ('register-next-use', ['python3', 'tests/attesor/nextuse-check.py', str(binary)]),
+        ('natural-loop-cache', ['python3', 'tests/attesor/regioncache-check.py', str(binary)]),
         ('fp16-exception-state', ['python3', 'tests/attesor/fp16-status-check.py', str(binary)]),
         ('icache-thread-handoff', ['python3', 'tests/attesor/icache-handoff-check.py', str(binary)]),
     ]
