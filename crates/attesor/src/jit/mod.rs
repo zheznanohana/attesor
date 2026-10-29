@@ -117,6 +117,9 @@ static INDEX: Mutex<Option<JitIndex>> = Mutex::new(None);
 static STATS_BLOCKS: AtomicU64 = AtomicU64::new(0);
 static STATS_INSNS: AtomicU64 = AtomicU64::new(0);
 static STATS_FALLBACK: AtomicU64 = AtomicU64::new(0);
+/// Loopra regions actually entered. Step 2 will increment this from the new
+/// execution path; ordinary loops and the write-through regioncache do not count.
+static STATS_LOOP_REGIONS: AtomicU64 = AtomicU64::new(0);
 
 static STATS_TRANSLATE_NS: AtomicU64 = AtomicU64::new(0);
 static STATS_INTERP_BLOCKS: AtomicU64 = AtomicU64::new(0);
