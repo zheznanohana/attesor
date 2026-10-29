@@ -25,6 +25,8 @@ application startup speedup from cache-file existence alone.
   disabled the parent's checkpoints and left the child with no checkpoint worker.
   The child restarts a worker after releasing the inherited locks. Background
   exit builders use the same AOT fork-lock protocol.
+- Exec saves a profile without setting the process-exit flag, because a failed
+  exec returns to the running guest and must keep checkpointing.
 - AOT file temporary names distinguish overlapping builders within one process,
   not just different process IDs.
 
@@ -63,6 +65,8 @@ test compiles private ARM guests and proves:
 4. An older coverage fingerprint retries even without new profile blocks.
 5. A four-thread guest forks and both parent and child complete checkpoints.
 6. Killing that private process group leaves a cache that the next process loads.
+7. A failed `execve` returns the expected error without disabling checkpoints;
+   its translations remain loadable after SIGKILL.
 
 All test artifacts and cache files use a private temporary directory, and only
 processes started by the test are killed. This does not prove that a full Electron

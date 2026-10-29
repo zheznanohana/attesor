@@ -31,11 +31,12 @@ def main():
     root = Path(__file__).resolve().parents[2]
     results = []
 
-    def run(label, command, timeout=240):
+    def run(label, command, timeout=240, environment=None):
         start = time.monotonic()
         child = subprocess.Popen([str(a) for a in command], cwd=root,
                                  stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-                                 text=True, start_new_session=True)
+                                 text=True, start_new_session=True,
+                                 env={**os.environ, **(environment or {})})
         expired = False
         try:
             out, err = child.communicate(timeout=timeout)
@@ -45,6 +46,7 @@ def main():
             out, err = child.communicate()
         row = dict(name=label, command=[str(a) for a in command],
                    returncode=child.returncode, timeout=expired,
+                   environment=environment or {},
                    stdout=out, stderr=err, seconds=time.monotonic() - start)
         row['passed'] = child.returncode == 0 and not expired
         results.append(row)
@@ -71,9 +73,15 @@ def main():
             passed = len(outputs) == 2 and all(outputs) and outputs[0] == outputs[1]
             results.append(dict(name=name + '-native-comparison', passed=bool(passed),
                                 outputs=outputs))
-        for cls in ['fpblocks', 'blocks', 'selchain', 'ff000000:1f000000',
-                    'bf20fc00:0e20cc00', '9f800400:0f000000']:
-            row = run('selftest-' + cls, [binary, '--selftest-jit', cls, args.count])
+        classes = [(c, args.count, {}) for c in
+                   ['fpblocks', 'blocks', 'selchain', 'ff000000:1f000000',
+                    'bf20fc00:0e20cc00', '9f800400:0f000000']]
+        classes += [('fpnan', 62208, {}),
+                    ('fpnan', 62208, {'ATTESOR_SELFTEST_FPCR': '1'})]
+        for cls, count, environment in classes:
+            suffix = '-fpcr' if environment else ''
+            row = run('selftest-' + cls + suffix,
+                      [binary, '--selftest-jit', cls, count], environment=environment)
             summary = re.search(r'jit selftest .*: (.*)', row['stdout'])
             counters = dict((k, int(v)) for k, v in
                             re.findall(r'(\w+)=(\d+)', summary.group(1))) if summary else {}

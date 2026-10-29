@@ -526,7 +526,17 @@ pub fn fork_guest() -> libc::pid_t {
 }
 
 pub fn save_profile() {
-    if !ENABLED.load(Ordering::Relaxed) || SAVED.swap(true, Ordering::SeqCst) {
+    save_profile_inner(true);
+}
+
+/// Exec may fail and return to the guest: persist its translations without
+/// declaring this process finished or disabling future checkpoints.
+pub fn save_before_exec() {
+    save_profile_inner(false);
+}
+
+fn save_profile_inner(exiting: bool) {
+    if !ENABLED.load(Ordering::Relaxed) || (exiting && SAVED.swap(true, Ordering::SeqCst)) {
         return;
     }
     flush_pending();

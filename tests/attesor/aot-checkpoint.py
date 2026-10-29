@@ -104,6 +104,22 @@ def main():
         assert path.read_bytes()[32:40] == expected_hash
         print('PASS: interrupted coverage rebuild retries without new profile blocks')
 
+        exec_source = root / 'cache_exec_fail.c'
+        exec_source.write_text(
+            '#include <stdio.h>\n#include <unistd.h>\n#include <errno.h>\n'
+            'int main(void) { char *argv[] = {"missing", 0}; char *env[] = {0}; '
+            'if (execve("/attesor-test-missing-executable", argv, env) != -1 || errno != ENOENT) return 2; '
+            'puts("EXEC_FAILED_EXPECTED"); fflush(stdout); for (;;) sleep(1); }\n')
+        exec_guest = root / 'cache_exec_fail'
+        subprocess.run(['clang', '-arch', 'arm64', '-O2', str(exec_source),
+                        '-o', str(exec_guest)], check=True)
+        subprocess.run(['codesign', '-f', '-s', '-', str(exec_guest)], check=True, capture_output=True)
+        text = run_until('exec-fail', r'aot checkpoint: cache_exec_fail .*Ok', executable=exec_guest)
+        assert 'EXEC_FAILED_EXPECTED' in text
+        run_until('warm-exec-fail', r'aot: loaded \d+ blocks for cache_exec_fail',
+                  build=False, executable=exec_guest)
+        print('PASS: failed exec preserves checkpoints and SIGKILL cache reuse')
+
         fork_source = root / 'cache_fork.c'
         fork_source.write_text(
             '#include <stdio.h>\n#include <unistd.h>\n#include <pthread.h>\n'

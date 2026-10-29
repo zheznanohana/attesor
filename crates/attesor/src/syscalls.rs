@@ -385,7 +385,7 @@ fn bsd_inner(cpu: &mut Cpu, n: u64, mut args: [u64; 8]) {
         },
         SYS_EXECVE | SYS_POSIX_SPAWN => {
             if n == SYS_EXECVE {
-                crate::engine::flush_profile();
+                crate::aot::save_before_exec();
             }
             let r = crate::spawn::exec_like(n, &args);
             set_res(cpu, r);
