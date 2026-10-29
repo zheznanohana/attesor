@@ -96,3 +96,24 @@ Every class must report mismatch=0 (fpblocks too).
 - Exact test output lines (all self-test classes, cargo test summary).
 - Anything you were unsure about or left out, and why.
 - The commit hash.
+
+## Review of step 2 (Claude) — required in step 3
+Step 2 accepted and committed (1af3c27): correct (loops 49k regions, mismatch=0, sensitivity 4943/10000).
+Audit confirmed: remaining rsi/rdi/r8/r9 users are CAS/LSE/SHA256H (excluded) or behind the region
+branches; mul/div only use rax/rdx.
+Measured (same binary, ATTESOR_JIT_ON=loopra vs off, 3 alternating runs, machine busy so +-5% noise):
+int-hash +11%, branchy +11%, memcpy +6%; but crc32 -11%, memops -11%, list -7%. The crc32 byte loop
+(`38696a6a 4a08014a 92401d4a b86a7aea 4a482148 91000529 f160013f 54ffff21`) shows why: the stores are
+gone but the body is still 44-45 x86 instructions, because templates compute in rax/rcx and copy into
+the assigned register and back (`movq %rcx,%rbx; movl %ebx,%eax; movq %rax,%rbx; movq %rbx,%rax`),
+which also lengthens dependency chains. Step 3 must remove these copies. Also:
+1. Remove the `lock inc [STATS_LOOP_REGIONS]` from generated code in normal runs: emit it only when the
+   self-test asks for it (a flag set by the selftest before translating) — it costs ~20 cycles per loop
+   entry and bounces a shared cache line between threads.
+2. Keep the TBI mask in r11 across the backedge: load it once at region entry (before `fast`) and make
+   every path that reaches the backedge keep it valid (re-materialize before the jump if a helper/cold
+   path invalidated it); today `movabs r11` runs every iteration.
+3. Replace the region push/push/pop/pop stack temporaries in pre/post-index and pair accesses with a
+   register that is free inside regions (rdx or r11 when the TBI mask is re-materialized after).
+4. Measure the crc32 loop above, the int-hash loop and the branchy loop (instruction counts off vs on)
+   and report them; target: crc32 body <= 16 insns, int-hash <= 12.
