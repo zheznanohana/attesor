@@ -44,7 +44,15 @@ pub struct Cpu {
     pub thread: u64,
     /// Instruction budget used to bound time spent in chained code.
     pub budget: u64,
-    pub _pad1: [u64; 2],
+    /// Host stack pointer when generated code was entered; the exit trampoline restores it, which
+    /// discards whatever host return addresses guest calls (BL -> host call) left behind.
+    pub host_sp: u64,
+    /// Host call frames pushed by translated BL/BLR still open (bounded; 0 after every entry).
+    pub ras_depth: u64,
+    /// Guest address a translated RET returns to, checked by the call continuation it lands on.
+    pub ret_target: u64,
+    /// Host pointer to the translation epoch (bumped by every invalidation).
+    pub epoch_ptr: u64,
     /// Host function pointers called by generated code.
     pub helpers: [u64; HELPER_SLOTS],
 }
@@ -71,6 +79,10 @@ pub mod off {
     pub const JIT_EXIT: usize = offset_of!(Cpu, jit_exit);
     pub const IBTC: usize = offset_of!(Cpu, ibtc);
     pub const BUDGET: usize = offset_of!(Cpu, budget);
+    pub const HOST_SP: usize = offset_of!(Cpu, host_sp);
+    pub const RAS_DEPTH: usize = offset_of!(Cpu, ras_depth);
+    pub const RET_TARGET: usize = offset_of!(Cpu, ret_target);
+    pub const EPOCH_PTR: usize = offset_of!(Cpu, epoch_ptr);
     pub const HELPERS: usize = offset_of!(Cpu, helpers);
     pub const fn xreg(n: usize) -> usize {
         X + n * 8

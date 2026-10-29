@@ -50,9 +50,13 @@ std::arch::global_asm!(
     "push r15",
     "sub rsp, 8",
     "mov r15, rdi",
+    "mov [r15 + {host_sp}], rsp",
+    "mov qword ptr [r15 + {ras_depth}], 0",
     "jmp rsi",
     ".p2align 4",
     "_attesor_jit_exit:",
+    // translated guest calls may have pushed host frames: drop them all
+    "mov rsp, [r15 + {host_sp}]",
     "add rsp, 8",
     "pop r15",
     "pop r14",
@@ -61,6 +65,8 @@ std::arch::global_asm!(
     "pop rbx",
     "pop rbp",
     "ret",
+    host_sp = const attesor_core::cpu::off::HOST_SP,
+    ras_depth = const attesor_core::cpu::off::RAS_DEPTH,
 );
 
 extern "C" {
@@ -250,10 +256,18 @@ fn emit_unit(pc: u64, slot_padding: usize) -> Unit {
     let mut u = Unit::new(StubKind::Patchable, commpage_checks());
     u.slot_padding = slot_padding;
     u.no_internal_jumps = verify_mode();
+    u.inline_ok = !verify_mode();
     let l = u.a.create_label();
     u.labels.insert(pc, l);
     let read = guest_reader();
     emit::emit_block(&mut u, pc, &read);
+    // call continuations queued by translated BL/BLR (bounded by the emitter)
+    let mut i = 0;
+    while i < u.inline_queue.len() {
+        let next = u.inline_queue[i];
+        emit::emit_block(&mut u, next, &read);
+        i += 1;
+    }
     u.finish();
     u
 }
@@ -435,6 +449,7 @@ pub fn flush_profile() {
 
 fn setup_cpu(cpu: &mut Cpu) {
     cpu.jit_exit = attesor_jit_exit as usize as u64;
+    cpu.epoch_ptr = &EPOCH as *const AtomicU64 as u64;
     cpu.helpers[HELPER_INTERP] = helper_interp as usize as u64;
     cpu.helpers[HELPER_COMMPAGE] = helper_commpage as usize as u64;
     IBTC.with(|t| {
