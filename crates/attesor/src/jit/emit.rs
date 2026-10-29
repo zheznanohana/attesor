@@ -905,6 +905,40 @@ fn writes_all_flags(insn: u32) -> bool {
         || insn & 0xFF20_FC07 == 0x1E20_2000                            // FCMP/FCMPE
 }
 
+/// Instructions that cannot fault, call a helper, change NZCV, or leave this block.
+/// A blacklist of flag readers is insufficient: unknown encodings and memory accesses
+/// can exit before the next writer, and the exception handler needs the current NZCV.
+fn flags_safe_passthrough(w: u32) -> bool {
+    if w == 0xd503_201f { return true; } // NOP
+    if w & 0x1f00_0000 == 0x1000_0000 { return true; } // ADR/ADRP
+    if w & 0x3f80_0000 == 0x1100_0000 { return true; } // ADD/SUB imm, !S
+    if w & 0x1f80_0000 == 0x1280_0000 { // MOVN/Z/K, valid width/halfword
+        return (w >> 29) & 3 != 1 && (w >> 31 != 0 || (w >> 21) & 3 < 2);
+    }
+    false
+}
+
+/// Restrict liveness kills to encodings known to execute without an undefined
+/// instruction exit. Broad opcode-family matches also include reserved encodings.
+fn flags_safe_writer(w: u32) -> bool {
+    if w & 0x3f80_0000 == 0x3100_0000 { return true; } // ADDS/SUBS imm
+    if w & 0x3f20_0000 == 0x2b00_0000 {
+        return (w >> 22) & 3 < 3 && (w >> 31 != 0 || (w >> 15) & 1 == 0);
+    }
+    if w & 0x3fe0_0000 == 0x2b20_0000 {
+        return (w >> 10) & 7 <= 4;
+    }
+    if w & 0x7f80_0000 == 0x7200_0000 {
+        let sf = w >> 31 != 0;
+        return (sf || bit(w, 22) == 0)
+            && decode_logic_imm(bit(w, 22), bits(w, 15, 10), bits(w, 21, 16), sf).is_some();
+    }
+    if w & 0x7f00_0000 == 0x6a00_0000 {
+        return w >> 31 != 0 || (w >> 15) & 1 == 0;
+    }
+    false
+}
+
 /// Is `insn` a CSEL-family select that a `kind` setter's live x86 flags can feed (fused select)?
 fn fused_select(kind: FuseKind, insn: u32) -> bool {
     insn & 0x3FE0_0800 == 0x1A80_0000 && x86_cc(kind, ((insn >> 12) & 15) ^ 1).is_some()
@@ -915,6 +949,8 @@ fn fused_select(kind: FuseKind, insn: u32) -> bool {
 /// B.cond (both successors) or by being overwritten in straight-line code before any other reader.
 /// `room` is how many more instructions the block may take; no label may sit inside the select chain.
 fn flags_dead_after_selects(kind: FuseKind, pc: u64, room: usize, labels: &HashMap<u64, CodeLabel>, read: &dyn Fn(u64) -> Option<u32>) -> bool {
+    // A disabled select executes in the interpreter, which reads stored NZCV.
+    if disabled_classes() & 8 != 0 { return false; }
     let mut p = pc + 4;
     let mut n = 0;
     while let Some(w) = read(p) {
@@ -944,7 +980,7 @@ fn flags_dead_at(mut pc: u64, read: &dyn Fn(u64) -> Option<u32>) -> bool {
     let mut hops = 0;
     for _ in 0..24 {
         let Some(w) = read(pc) else { return false };
-        if writes_all_flags(w) {
+        if writes_all_flags(w) && flags_safe_writer(w) {
             return true;
         }
         if reads_flags(w) {
@@ -959,7 +995,7 @@ fn flags_dead_at(mut pc: u64, read: &dyn Fn(u64) -> Option<u32>) -> bool {
             pc = pc.wrapping_add((sext((w & 0x03ff_ffff) as u64, 26) << 2) as u64);
             continue;
         }
-        if is_terminator(w) {
+        if is_terminator(w) || !flags_safe_passthrough(w) {
             return false;
         }
         pc += 4;
@@ -6460,4 +6496,91 @@ mod region_cache_tests {
         }
     }
 
+}
+
+#[cfg(test)]
+mod flags_liveness_tests {
+    use super::*;
+    use attesor_core::cpu::Cpu;
+
+    fn dead(words: &[u32]) -> bool {
+        flags_dead_at(0x1000, &|pc| words.get(((pc - 0x1000) / 4) as usize).copied())
+    }
+
+    #[test]
+    fn flags_scan_stops_before_faults_helpers_and_readers() {
+        const WRITE: u32 = 0xf100_041f; // CMP X0, #1
+        for boundary in [0xf940_0020, // LDR X0, [X1] may fault
+                         0xf900_0020, // STR X0, [X1] may fault
+                         0,           // undefined -> interpreter helper
+                         0xd400_1001, // SVC
+                         0x9a02_0020, // ADC X0, X1, X2 consumes C
+                         0xda02_0020, // SBC X0, X1, X2 consumes C
+                         0x9a84_0062, // CSEL X2, X3, X4, EQ
+                         0xfa40_0000, // CCMP consumes conditional NZCV
+                         0xd53b_4200, // MRS X0, NZCV
+                         0xd503_3fdf, // ISB dispatcher boundary
+                         0x12c0_0000, // reserved 32-bit MOV halfword
+                         0x32c0_0000, // reserved MOV opcode
+                         0x7200_fc00, // reserved logical immediate
+                         0x2bc0_0000, // reserved shifted SUBS
+                         0x2b00_8000] // invalid 32-bit shift amount
+        {
+            assert!(!dead(&[boundary, WRITE]), "boundary={boundary:08x}");
+        }
+        assert!(dead(&[0xd503_201f, 0x9100_0401, 0xd280_0022, WRITE]));
+        assert!(!dead(&[0xd503_201f])); // no proof past block/readable end
+        assert!(!dead(&[0xd65f_03c0, WRITE])); // RET: flags live at exit
+    }
+
+    extern "C" fn observing_exit(cpu: *mut Cpu, insn: u32, pc: u64) -> u64 {
+        let cpu = unsafe { &mut *cpu };
+        if insn != 0 {
+            // The debug dpreg switch routes CSEL here. It still must receive
+            // the same architectural flags as its native implementation.
+            cpu.pc = pc;
+            return if attesor_core::interp::exec(cpu, insn).is_ok() { 0 } else { 1 };
+        }
+        cpu.x[10] = cpu.nzcv() as u64;
+        cpu.pc = pc;
+        cpu.exit_reason = EXIT_PENDING;
+        1
+    }
+
+    #[test]
+    fn helper_exit_observes_preceding_cmp_even_before_later_overwrite() {
+        const PC: u64 = 0x1000_0000;
+        let words = [0xf100_041f, // CMP X0,#1
+                     0x9a84_0062, // CSEL X2,X3,X4,EQ (fused)
+                     0,           // unknown helper may exit
+                     0xf100_081f, // CMP X0,#2: never reached
+                     0xd400_1001];
+        let mut u = Unit::new(StubKind::Plain, false);
+        let label = u.a.create_label();
+        u.labels.insert(PC, label);
+        emit_block(&mut u, PC, &|pc| words.get(((pc-PC)/4) as usize).copied());
+        u.finish();
+        let host = crate::jit::code_cache().alloc(4096);
+        let code = u.a.assemble(host).unwrap();
+        unsafe { std::ptr::copy_nonoverlapping(code.as_ptr(), host as *mut u8, code.len()); }
+        let mut cpu = Cpu::new();
+        crate::jit::setup_cpu(&mut cpu);
+        cpu.helpers[HELPER_INTERP] = observing_exit as usize as u64;
+        for value in [0u64, 1, 2, 1 << 63, u64::MAX] {
+            // Independent integer subtraction reference, including borrow and signed overflow.
+            let result = value.wrapping_sub(1);
+            let expected = (((result >> 63) << 3) | (((result == 0) as u64) << 2)
+                | (((value >= 1) as u64) << 1) | (((value ^ 1) & (value ^ result)) >> 63)) as u32;
+            cpu.x[0] = value;
+            cpu.x[3] = 77;
+            cpu.x[4] = 88;
+            cpu.set_nzcv(expected ^ 15);
+            unsafe { crate::jit::attesor_jit_enter(&mut *cpu, host); }
+            assert_eq!(cpu.x[10], expected as u64, "value={value:x}");
+            assert_eq!(cpu.nzcv(), expected);
+            assert_eq!(cpu.x[2], if value == 1 { 77 } else { 88 });
+            assert_eq!(cpu.pc, PC + 8);
+            assert_eq!(cpu.exit_reason, EXIT_PENDING);
+        }
+    }
 }
