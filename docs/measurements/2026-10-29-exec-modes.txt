@@ -1,0 +1,34 @@
+PASS guest spawn  Node=1
+PASS guest spawn Aurora Chat.app Node=1
+PASS guest spawn Vector Editor.app Node=1
+PASS guest exec  Node=1
+PASS guest exec Aurora Chat.app Node=1
+PASS guest exec Vector Editor.app Node=1
+PASS guest spawn  Node=None
+PASS guest spawn Aurora Chat.app Node=None
+PASS guest spawn Vector Editor.app Node=None
+PASS guest exec  Node=None
+PASS guest exec Aurora Chat.app Node=None
+PASS guest exec Vector Editor.app Node=None
+PASS guest genuine universal stays native
+PASS guest FAT64 managed
+PASS native spawn Aurora Chat.app
+PASS native spawnp Aurora Chat.app
+PASS native exec Aurora Chat.app
+PASS guest -> native -> managed Aurora Chat.app
+PASS native spawn Vector Editor.app
+PASS native spawnp Vector Editor.app
+PASS native exec Vector Editor.app
+PASS guest -> native -> managed Vector Editor.app
+PASS native thin ARM
+PASS native genuine universal stays native
+PASS native shebang arm-leaf
+PASS guest shebang arm-leaf
+PASS native shebang owned-fat64
+PASS guest shebang owned-fat64
+PASS Node IPC FD3 False
+PASS Node IPC FD3 True
+PASS native env shebang
+PASS guest env shebang
+PASS eight native threads first-spawn owned ARM
+exec-modes: PASS 51 checks

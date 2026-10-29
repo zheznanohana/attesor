@@ -19,35 +19,13 @@
 #include <unistd.h>
 #include <libkern/OSByteOrder.h>
 
-#define CPU_TYPE_X86_64 0x01000007u
-#define CPU_TYPE_ARM64 0x0100000cu
+#include "attesor_exec_arch.h"
 
 extern char **environ;
 
-static int arm64_only(const char *path) {
-    unsigned char b[512];
-    int fd = open(path, O_RDONLY | O_CLOEXEC);
-    if (fd < 0) return 0;
-    ssize_t n = read(fd, b, sizeof b);
-    close(fd);
-    if (n < 8) return 0;
-    uint32_t be0 = OSReadBigInt32(b, 0);
-    if (be0 == 0xcafebabe) {
-        uint32_t narch = OSReadBigInt32(b, 4);
-        int arm = 0, x86 = 0;
-        for (uint32_t i = 0; i < narch && i < 8 && 8 + i * 20 + 4 <= (uint32_t)n; i++) {
-            uint32_t cpu = OSReadBigInt32(b, 8 + i * 20);
-            arm |= cpu == CPU_TYPE_ARM64;
-            x86 |= cpu == CPU_TYPE_X86_64;
-        }
-        return arm && !x86;
-    }
-    return OSReadLittleInt32(b, 0) == 0xfeedfacf && OSReadLittleInt32(b, 4) == CPU_TYPE_ARM64;
-}
-
-// 1: arm64-only Mach-O. 2: #! script with an arm64-only interpreter (interp, optional single arg). 0: native.
+// 1: ARM-only or Attesor-managed universal Mach-O. 2: script with such an interpreter. 0: genuine native.
 static int classify(const char *path, char *interp, char *iarg) {
-    if (arm64_only(path)) return 1;
+    if (attesor_needs_translation(path)) return 1;
     char line[PATH_MAX + 64];
     int fd = open(path, O_RDONLY | O_CLOEXEC);
     if (fd < 0) return 0;
@@ -68,20 +46,20 @@ static int classify(const char *path, char *interp, char *iarg) {
         strlcpy(iarg, sp, PATH_MAX);
     }
     strlcpy(interp, p, PATH_MAX);
-    return arm64_only(interp) ? 2 : 0;
+    return attesor_needs_translation(interp) ? 2 : 0;
 }
 
 static const char *self_path(void) {
-    static char path[PATH_MAX];
+    static _Thread_local char path[PATH_MAX];
     if (!path[0]) {
         Dl_info info;
-        if (dladdr((void *)arm64_only, &info) && info.dli_fname) strlcpy(path, info.dli_fname, sizeof path);
+        if (dladdr((void *)attesor_needs_translation, &info) && info.dli_fname) strlcpy(path, info.dli_fname, sizeof path);
     }
     return path;
 }
 
 static const char *attesor_bin(void) {
-    static char path[PATH_MAX];
+    static _Thread_local char path[PATH_MAX];
     if (!path[0]) {
         const char *e = getenv("ATTESOR_BIN"), *h = getenv("HOME");
         if (e && *e) strlcpy(path, e, sizeof path);
@@ -132,7 +110,7 @@ static char **attesor_argv(const char *path, char *const argv[], int kind, const
 }
 
 static int my_execve(const char *path, char *const argv[], char *const envp[]) {
-    static char interp[PATH_MAX], iarg[PATH_MAX];
+    char interp[PATH_MAX], iarg[PATH_MAX];
     char **env = with_self(envp);
     int kind = classify(path, interp, iarg);
     if (kind && !getenv("ATTESOR_EXEC_OFF")) {
