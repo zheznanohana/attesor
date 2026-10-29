@@ -220,6 +220,11 @@ pub fn exec_like(n: u64, args: &[u64; 8]) -> SysResult {
     let argv = unsafe { read_argv(args[aidx]) };
     let mut new_argv: Vec<String> = vec![me.to_string_lossy().into_owned()];
     new_argv.extend(FORWARD.lock().unwrap().iter().cloned());
+    // The image path and argv[0] are independent. Darwin replaces argv[0]
+    // with the interpreter path for scripts, but preserves it for binaries.
+    new_argv.push("--guest-argv0".into());
+    new_argv.push(script.as_ref().map(|(interpreter, _)| interpreter.clone())
+        .unwrap_or_else(|| argv.first().cloned().unwrap_or_default()));
     if let Some((interpreter, argument)) = script {
         new_argv.push(interpreter);
         if let Some(argument) = argument { new_argv.push(argument); }

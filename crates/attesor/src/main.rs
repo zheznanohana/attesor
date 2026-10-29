@@ -44,9 +44,17 @@ fn usage() -> ! {
 fn main() {
     let mut args: Vec<String> = std::env::args().skip(1).collect();
     let mut prewarm = false;
+    let mut guest_argv0 = None;
     let mut dyld = std::env::var("ATTESOR_DYLD").unwrap_or_else(|_| "/usr/lib/dyld".to_string());
     while let Some(a) = args.first().cloned() {
         match a.as_str() {
+            // Internal exec channel: image lookup must not depend on argv[0].
+            // Consume the next value literally, including empty/option-like values.
+            "--guest-argv0" => {
+                args.remove(0);
+                if args.is_empty() { usage(); }
+                guest_argv0 = Some(args.remove(0));
+            }
             "--trace-file" => {
                 // Trace to /tmp/attesor-trace-<pid>.log (helper processes have no usable stderr).
                 syscalls::TRACE.store(true, Ordering::Relaxed);
@@ -235,6 +243,7 @@ fn main() {
     if syscalls::TRACE.load(Ordering::Relaxed) {
         eprintln!("[attesor] commpage {} at {:#x}", if cp.in_place { "in place" } else { "redirected" }, cp.base);
     }
+    if let Some(argv0) = guest_argv0 { args[0] = argv0; }
     let (loaded, mut cpu) = match loader::load(&exe, &dyld, &args, &envp) {
         Ok(v) => v,
         Err(e) => {

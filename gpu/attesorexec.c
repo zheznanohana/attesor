@@ -97,9 +97,13 @@ static char **with_self(char *const envp[]) {
 static char **attesor_argv(const char *path, char *const argv[], int kind, const char *interp, const char *iarg) {
     size_t n = 0;
     while (argv && argv[n]) n++;
-    char **out = calloc(n + 5, sizeof *out);
+    char **out = calloc(n + 7, sizeof *out);
     size_t j = 0;
     out[j++] = (char *)attesor_bin();
+    // Keep the image path separate from binary argv[0]; shebangs substitute
+    // their interpreter name and discard the caller's original argv[0].
+    out[j++] = "--guest-argv0";
+    out[j++] = kind == 2 ? (char *)interp : (n ? argv[0] : "");
     if (kind == 2) {
         out[j++] = (char *)interp;
         if (iarg[0]) out[j++] = (char *)iarg;

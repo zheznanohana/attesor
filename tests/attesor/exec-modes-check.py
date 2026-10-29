@@ -35,6 +35,7 @@ def fat(parts, wide=False, little=False):
 def main():
     p = argparse.ArgumentParser(description=__doc__)
     p.add_argument('attesor')
+    p.add_argument('--filter', default='', help='run process cases whose label contains this text')
     a = p.parse_args()
     attesor = str(Path(a.attesor).resolve())
     root = Path(__file__).resolve().parents[2]
@@ -73,11 +74,13 @@ def main():
         args = ['--leaf', '', 'quote \' " λ', '--type=utility']
         payload = b'stdin payload\n'
 
-        def check(label, command, expected_args, arch='arm64', mode='1', native_root=False, path=None, ipc_fd=7, copies=1):
+        def check(label, command, expected_args, arch='arm64', mode='1', native_root=False, path=None, ipc_fd=7, copies=1, argv0=None):
             nonlocal checks
+            if a.filter not in label: return
             e = dict(env, NODE_CHANNEL_FD=str(ipc_fd), TEST_IPC_FD=str(ipc_fd))
             if mode is None: e.pop('ELECTRON_RUN_AS_NODE', None)
             else: e['ELECTRON_RUN_AS_NODE'] = mode
+            if argv0 is not None: e['TEST_ARGV0'] = '1'
             if copies > 1: e['TEST_SKIP_STDIN'] = '1'
             if native_root: e['DYLD_INSERT_LIBRARIES'] = str(shim)
             if path: e['PATH'] = str(path) + ':' + e.get('PATH', '')
@@ -101,7 +104,7 @@ def main():
                     else: os.dup2(saved, ipc_fd); os.close(saved)
                 ipc = os.read(rd, 128)
                 def h(name, value): return name + '=' + value.encode().hex()
-                expected = ['arch=' + arch] + [h('arg', x) for x in expected_args] + [
+                expected = ['arch=' + arch] + ([h('argv0', argv0)] if argv0 is not None else []) + [h('arg', x) for x in expected_args] + [
                     h('mode', '<unset>' if mode is None else mode), h('channel', str(ipc_fd)),
                     h('cwd', str(work.resolve())), h('stdin', 'skipped\n' if copies > 1 else payload.decode())]
                 expected *= copies
@@ -143,6 +146,43 @@ def main():
               [str(env_script)] + args, path=td)
         check('eight native threads first-spawn owned ARM', [native, 'threads', targets[0]] + args,
               args, native_root=True, copies=8)
+        for value in ['', '-multicall', '名字 with spaces λ']:
+            for target in [arm, owned64, genuine]:
+                arch = 'x86_64' if target == genuine else 'arm64'
+                for method in ['spawn0', 'exec0']:
+                    check('guest custom argv0 ' + repr(value), [attesor, '--no-aot', arm, method, target, value] + args,
+                          args, arch=arch, argv0=value)
+                    check('native custom argv0 ' + repr(value), [native, method, target, value] + args,
+                          args, arch=arch, argv0=value, native_root=True)
+                check('guest native guest custom argv0 ' + repr(value),
+                      [attesor, '--no-aot', arm, 'spawn', native, 'exec0', target, value] + args,
+                      args, arch=arch, argv0=value)
+        for interpreter in [arm, owned64]:
+            script = td / ('script-' + interpreter.name)
+            expected = ['--script-argument', str(script)] + args
+            for value in ['', 'ignored script argv0 λ']:
+                for parent, extra in [([attesor, '--no-aot', arm], {}), ([native], {'native_root': True})]:
+                    check('shebang replaces caller argv0 ' + repr(value),
+                          parent + ['exec0', script, value] + args, expected,
+                          argv0=str(interpreter), **extra)
+        for optional in ['', ' --single optional argument with spaces']:
+            script = td / 'script-argv-order'
+            script.write_text('#!' + str(owned64) + optional + '\nignored\n'); script.chmod(0o755)
+            expected = ([optional.strip()] if optional else []) + [str(script)] + args
+            for parent, extra in [([attesor, '--no-aot', arm], {}), ([native], {'native_root': True})]:
+                check('shebang single optional argument ' + repr(optional),
+                      parent + ['spawn0', script, 'discard this argv0'] + args, expected,
+                      argv0=str(owned64), **extra)
+        shell = td / 'arm-shell'
+        run(['lipo', '/bin/sh', '-thin', 'arm64e', '-output', shell])
+        shell.chmod(0o755)
+        for value in ([] if a.filter and a.filter not in 'ARM shell argv0' else ['', 'sh', '-sh', 'shell 名称 λ']):
+            for parent, native_root in [([attesor, '--no-aot', arm], False), ([native], True)]:
+                e = dict(env)
+                if native_root: e['DYLD_INSERT_LIBRARIES'] = str(shim)
+                result = run(parent + ['exec0', shell, value, '-c', 'printf "%s" "$0"'], env=e)
+                assert result.stdout == value.encode(), (value, result.stdout, result.stderr)
+                print('PASS ARM shell argv0', repr(value), native_root, flush=True); checks += 1
         print(f'exec-modes: PASS {checks} checks')
 
 

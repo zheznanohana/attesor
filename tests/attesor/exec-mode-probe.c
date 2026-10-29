@@ -29,6 +29,14 @@ static void *concurrent_spawn(void *p) {
     return WIFEXITED(status) && WEXITSTATUS(status) == 17 ? NULL : (void *)1;
 }
 int main(int argc, char **argv) {
+    if (argc > 4 && (!strcmp(argv[1], "spawn0") || !strcmp(argv[1], "exec0"))) {
+        char **child = argv + 3;
+        if (!strcmp(argv[1], "exec0")) { execve(argv[2], child, environ); return 120; }
+        pid_t pid; int status;
+        if (posix_spawn(&pid, argv[2], NULL, NULL, child, environ)) return 121;
+        if (waitpid(pid, &status, 0) != pid) return 122;
+        return WIFEXITED(status) ? WEXITSTATUS(status) : 128 + WTERMSIG(status);
+    }
     if (argc > 2 && !strcmp(argv[1], "threads")) {
         pthread_t threads[8];
         for (int i = 0; i < 8; i++) if (pthread_create(&threads[i], NULL, concurrent_spawn, argv + 2)) return 125;
@@ -49,6 +57,7 @@ int main(int argc, char **argv) {
 #else
     puts("arch=x86_64");
 #endif
+    if (getenv("TEST_ARGV0")) hex("argv0", argv[0]);
     for (int i = 1; i < argc; i++) hex("arg", argv[i]);
     hex("mode", getenv("ELECTRON_RUN_AS_NODE") ? getenv("ELECTRON_RUN_AS_NODE") : "<unset>");
     hex("channel", getenv("NODE_CHANNEL_FD") ? getenv("NODE_CHANNEL_FD") : "<unset>");
