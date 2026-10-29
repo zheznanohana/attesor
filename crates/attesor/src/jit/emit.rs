@@ -2780,12 +2780,10 @@ impl<'a> E<'a> {
                 return true;
             }
         }
-        // FMOV (register), FABS, FNEG
-        if insn & 0xFF3E_7C00 == 0x1E20_4000 && ftype <= 1 {
+        // FMOV (register), FABS, FNEG. Opcode 3 is FSQRT: leave it to its translation below (returning
+        // false here used to send every FSQRT to the interpreter).
+        if insn & 0xFF3E_7C00 == 0x1E20_4000 && ftype <= 1 && bits(insn, 16, 15) <= 2 {
             let opc = bits(insn, 16, 15);
-            if opc > 2 {
-                return false;
-            }
             let double = ftype == 1;
             if double {
                 a!(self, mov(rax, qword_ptr(r15 + voff(rn))));
