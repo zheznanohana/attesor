@@ -23,7 +23,7 @@ use std::sync::{Arc, Mutex, RwLock, Weak};
 
 const MAGIC: &[u8; 8] = b"MCLAOT05";
 /// Bump when the translator's output changes.
-const TRANSLATOR_VERSION: u32 = 46;
+const TRANSLATOR_VERSION: u32 = 48;
 
 #[derive(Clone)]
 struct Image {
@@ -125,6 +125,10 @@ fn codegen_id() -> u32 {
                 h = h.wrapping_mul(0x100_0000_01b3);
             }
         }
+        // Stats-enabled Plain regions contain an r15-relative entry counter.
+        // Keep those blobs separate so normal runs pay no instrumentation cost.
+        h ^= crate::jit::stats_enabled() as u64;
+        h = h.wrapping_mul(0x100_0000_01b3);
         (h ^ (h >> 32)) as u32 | 1
     })
 }

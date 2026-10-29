@@ -59,6 +59,9 @@ pub struct Cpu {
     pub helpers: [u64; HELPER_SLOTS],
     /// Sampling state, written only at Rust transitions. Appended to preserve all JIT offsets.
     pub profile_state: AtomicU8,
+    /// Stats-only public entries into write-back regions from disk-loaded AOT code.
+    /// Generated code uses r15-relative addressing so cache blobs stay relocatable.
+    pub aot_loop_regions: u64,
 }
 
 pub mod off {
@@ -88,6 +91,7 @@ pub mod off {
     pub const RET_TARGET: usize = offset_of!(Cpu, ret_target);
     pub const EPOCH_PTR: usize = offset_of!(Cpu, epoch_ptr);
     pub const HELPERS: usize = offset_of!(Cpu, helpers);
+    pub const AOT_LOOP_REGIONS: usize = offset_of!(Cpu, aot_loop_regions);
     pub const fn xreg(n: usize) -> usize {
         X + n * 8
     }
