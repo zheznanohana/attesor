@@ -42,13 +42,20 @@ Verified on an Intel laptop (RTX 3060 with a third-party NVIDIA Metal driver, ma
 | IOKit | basic queries work: platform expert/serial, power sources, HID manager. |
 | Metal coverage | `supportsFamily:` and device limits match native; ray tracing (acceleration structure build + intersector in a compute kernel) and the MetalFX spatial scaler give bit-identical results (`rtprobe.m`). |
 | VideoToolbox | **works, in software**: H.264 and HEVC encode → decode round trips are correct (`vtcodec.m`). The host's hardware HEVC encoder is not reached from the guest (HEVC encode 2.1 s vs 0.15 s native for 60 720p frames; decode 76 vs 58 ms). |
-| Debugger | `attesor --gdb PORT`: lldb/gdb remote debugging of the guest (breakpoints, stepping, expressions; see docs/DEBUGGING.md). |
+| Persistent translations | Checkpoints retain partial per-thread profiles and survive guest fork/failed exec. SIGKILL → restart tests prove actual cache loads; full-app startup benefit still needs measurement. |
+| Native libraries | Opt-in host zlib bridge (`ATTESOR_NATIVE_LIBS=1`): CRC32, Adler32, compress2/uncompress; error paths, tagged pointers, threads and child-process forwarding tested. See docs/NATIVE-LIBRARIES.md. |
+| Half conversion | FPCR rounding, FZ/DN/AHP conversion results verified against an independent integer reference; complete FPSR status is not claimed. |
+| App launching | Universal x86 stub plus retained ARM slices; atomic inject/restore and 25 isolated launcher checks, including real ARM execution. Finder/Dock appearance requires separate visual verification. |
+| Debugger | `attesor --gdb PORT` or `--gdb-fd FD`: lldb/gdb debugging of the first guest thread. RSP and real LLDB expression/call tests pass via an inherited socket; see docs/DEBUGGING.md. |
 | JIT | native x86 translations for TBL/TBX, all FRINT forms, SHA-256 (`sha256h/h2/su0/su1`, no SHA extension needed), vector UCVTF/SCVTF, FCVTZU — each checked with the differential self-test (`mismatch=0`). |
 
 
 ![chrome://gpu in the arm64 Chromium 157 snapshot running under Attesor on an Intel Mac Pro: canvas, compositing, rasterization, WebGL and WebGPU hardware accelerated on an AMD Radeon RX 460 via ANGLE/Metal](docs/img/chromium-gpu.png)
 
 *The arm64 Chromium 157 snapshot running under Attesor on an Intel Mac (`chrome://gpu`): compositing, rasterization, WebGL and WebGPU are hardware accelerated on the machine's AMD Radeon RX 460, through the ANGLE/Metal bridge.*
+
+The latest eight-workstream integration, automated acceptance and serial performance results are
+recorded in [docs/TEAM-ACCEPTANCE.md](docs/TEAM-ACCEPTANCE.md).
 
 ## Quick start
 

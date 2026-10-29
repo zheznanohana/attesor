@@ -6,6 +6,10 @@ direction and cannot run as a comparator on this Intel host. Ratios measured
 here are against the same workload compiled for native x86-64, not a Rosetta score.
 No general speedup or completion claim follows from a single microbenchmark.
 
+The eight-agent first integration round is recorded in [TEAM-ACCEPTANCE.md](TEAM-ACCEPTANCE.md),
+including updated test evidence, deployment and serial measurements. The table below is the initial
+audit baseline, retained for context.
+
 ## Scope and completion evidence
 
 | Direction | Current evidence | Remaining work / completion evidence needed |

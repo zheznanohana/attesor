@@ -1,0 +1,165 @@
+{
+  "binary": "/Users/zhez/attesor/target/release/attesor",
+  "sha256": "c61c19536a77d3c759a41822cb9a152eaff45a8e7313f05d6e5bd279d5bb6824",
+  "automated_passed": true,
+  "completed": 11,
+  "required": 11,
+  "results": [
+    {
+      "name": "workspace-unit-tests",
+      "command": [
+        "cargo",
+        "test",
+        "--workspace"
+      ],
+      "returncode": 0,
+      "stdout": "\nrunning 2 tests\ntest aot::tests::checkpoints_publish_idle_and_exited_thread_tails ... ok\ntest aot::tests::incompatible_larger_cache_does_not_block_replacement ... ok\n\ntest result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s\n\n\nrunning 4 tests\ntest interp::simd::tests::sbox ... ok\ntest softfloat::half_conversion_tests::directed_half_boundaries ... ok\ntest interp::simd::tests::aes_mixcolumns_vector ... ok\ntest softfloat::half_conversion_tests::every_ieee_half_roundtrips ... ok\n\ntest result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s\n\n\nrunning 0 tests\n\ntest result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s\n\n\nrunning 0 tests\n\ntest result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s\n\n",
+      "stderr": "warning: unnecessary parentheses around method argument\n    --> crates/attesor/src/jit/emit.rs:5440:39\n     |\n5440 |                     a!(self, add(rcx, (1i32 << esize_log)));\n     |                                       ^                 ^\n     |\n     = note: `#[warn(unused_parens)]` (part of `#[warn(unused)]`) on by default\nhelp: remove these parentheses\n     |\n5440 -                     a!(self, add(rcx, (1i32 << esize_log)));\n5440 +                     a!(self, add(rcx, 1i32 << esize_log));\n     |\n\nwarning: use of deprecated function `libc::mach_thread_self`: Use the `mach2` crate instead\n   --> crates/attesor/src/loader.rs:127:50\n    |\n127 |         format!(\"th_port=0x{:x}\", unsafe { libc::mach_thread_self() }),\n    |                                                  ^^^^^^^^^^^^^^^^\n    |\n    = note: `#[warn(deprecated)]` on by default\n\nwarning: use of deprecated function `libc::mach_task_self`: Use the `mach2` crate instead\n  --> crates/attesor/src/symbols.rs:88:51\n   |\n88 |             let kr = mach_vm_read_overwrite(libc::mach_task_self(), fp, 16, v.as_mut_ptr() as u64, &mut len);\n   |                                                   ^^^^^^^^^^^^^^\n\nwarning: use of deprecated function `libc::mach_thread_self`: Use the `mach2` crate instead\n   --> crates/attesor/src/threads.rs:126:35\n    |\n126 |         let port = unsafe { libc::mach_thread_self() } as u64;\n    |                                   ^^^^^^^^^^^^^^^^\n\nwarning: use of deprecated function `libc::mach_thread_self`: Use the `mach2` crate instead\n   --> crates/attesor/src/workq.rs:225:39\n    |\n225 |             let port = unsafe { libc::mach_thread_self() } as u64;\n    |                                       ^^^^^^^^^^^^^^^^\n\nwarning: unreachable expression\n   --> crates/attesor/src/engine.rs:159:13\n    |\n158 |             crash(cpu, &format!(\"guest executed BRK #{imm:#x} (trap)\"));\n    |             ----------------------------------------------------------- any code following this expression is unreachable\n159 |             false\n    |             ^^^^^ unreachable expression\n    |\n    = note: `#[warn(unreachable_code)]` (part of `#[warn(unused)]`) on by default\n\nwarning: unreachable expression\n   --> crates/attesor/src/engine.rs:163:13\n    |\n162 |             crash(cpu, &format!(\"guest executed undefined instruction {insn:#010x}\"));\n    |             ------------------------------------------------------------------------- any code following this expression is unreachable\n163 |             false\n    |             ^^^^^ unreachable expression\n\nwarning: unreachable expression\n   --> crates/attesor/src/engine.rs:167:13\n    |\n166 |             crash(cpu, &format!(\"unimplemented instruction {insn:#010x}  {}\", disasm(insn)));\n    |             -------------------------------------------------------------------------------- any code following this expression is unreachable\n167 |             false\n    |             ^^^^^ unreachable expression\n\nwarning: field `ranges` is never read\n  --> crates/attesor/src/cache.rs:22:9\n   |\n19 | pub struct MappedCache {\n   |            ----------- field in this struct\n...\n22 |     pub ranges: Vec<(u64, u64)>,\n   |         ^^^^^^\n   |\n   = note: `MappedCache` has derived impls for the traits `Clone` and `Debug`, but these are intentionally ignored during dead code analysis\n   = note: `#[warn(dead_code)]` (part of `#[warn(unused)]`) on by default\n\nwarning: fields `base` and `end` are never read\n  --> crates/attesor/src/jit/mod.rs:78:5\n   |\n77 | pub struct CodeCache {\n   |            --------- fields in this struct\n78 |     base: u64,\n   |     ^^^^\n79 |     end: u64,\n   |     ^^^\n\nwarning: method `contains` is never used\n   --> crates/attesor/src/jit/mod.rs:161:12\n    |\n148 | impl CodeCache {\n    | -------------- method in this implementation\n...\n161 |     pub fn contains(&self, a: u64) -> bool {\n    |            ^^^^^^^^\n\nwarning: field `path` is never read\n  --> crates/attesor/src/loader.rs:16:9\n   |\n15 | pub struct Image {\n   |            ----- field in this struct\n16 |     pub path: String,\n   |         ^^^^\n\nwarning: fields `stack_lo` and `stack_hi` are never read\n  --> crates/attesor/src/loader.rs:27:9\n   |\n22 | pub struct Loaded {\n   |            ------ fields in this struct\n...\n27 |     pub stack_lo: u64,\n   |         ^^^^^^^^\n28 |     pub stack_hi: u64,\n   |         ^^^^^^^^\n\nwarning: constant `LC_SYMTAB` is never used\n  --> crates/attesor/src/macho.rs:18:11\n   |\n18 | pub const LC_SYMTAB: u32 = 0x2;\n   |           ^^^^^^^^^\n\nwarning: constant `MH_DYLINKER` is never used\n  --> crates/attesor/src/macho.rs:22:11\n   |\n22 | pub const MH_DYLINKER: u32 = 7;\n   |           ^^^^^^^^^^^\n\nwarning: field `maxprot` is never read\n  --> crates/attesor/src/macho.rs:31:9\n   |\n25 | pub struct Segment {\n   |            ------- field in this struct\n...\n31 |     pub maxprot: u32,\n   |         ^^^^^^^\n   |\n   = note: `Segment` has derived impls for the traits `Clone` and `Debug`, but these are intentionally ignored during dead code analysis\n\nwarning: fields `cputype` and `cpusubtype` are never read\n  --> crates/attesor/src/macho.rs:40:9\n   |\n36 | pub struct MachO {\n   |            ----- fields in this struct\n...\n40 |     pub cputype: u32,\n   |         ^^^^^^^\n41 |     pub cpusubtype: u32,\n   |         ^^^^^^^^^^\n   |\n   = note: `MachO` has derived impls for the traits `Clone` and `Debug`, but these are intentionally ignored during dead code analysis\n\nwarning: field `tramp` is never read\n  --> crates/attesor/src/signals.rs:13:9\n   |\n11 | pub struct GuestAction {\n   |            ----------- field in this struct\n12 |     pub handler: u64,\n13 |     pub tramp: u64,\n   |         ^^^^^\n   |\n   = note: `GuestAction` has a derived impl for the trait `Clone`, but this is intentionally ignored during dead code analysis\n\nwarning: direct cast of function item into an integer\n   --> crates/attesor/src/engine.rs:122:55\n    |\n122 |     unsafe { libc::signal(libc::SIGUSR1, dump_threads as usize) };\n    |                                                       ^^^^^^^^\n    |\n    = note: `#[warn(function_casts_as_integer)]` on by default\nhelp: first cast to a pointer `as *const ()`\n    |\n122 |     unsafe { libc::signal(libc::SIGUSR1, dump_threads as *const () as usize) };\n    |                                                       ++++++++++++\n\nwarning: direct cast of function item into an integer\n   --> crates/attesor/src/engine.rs:123:55\n    |\n123 |     unsafe { libc::signal(libc::SIGUSR2, dump_current as usize) };\n    |                                                       ^^^^^^^^\n    |\nhelp: first cast to a pointer `as *const ()`\n    |\n123 |     unsafe { libc::signal(libc::SIGUSR2, dump_current as *const () as usize) };\n    |                                                       ++++++++++++\n\nwarning: direct cast of function item into an integer\n   --> crates/attesor/src/engine.rs:126:52\n    |\n126 |             libc::signal(libc::SIGSEGV, fault_dump as usize);\n    |                                                    ^^^^^^^^\n    |\nhelp: first cast to a pointer `as *const ()`\n    |\n126 |             libc::signal(libc::SIGSEGV, fault_dump as *const () as usize);\n    |                                                    ++++++++++++\n\nwarning: direct cast of function item into an integer\n   --> crates/attesor/src/engine.rs:127:51\n    |\n127 |             libc::signal(libc::SIGBUS, fault_dump as usize);\n    |                                                   ^^^^^^^^\n    |\nhelp: first cast to a pointer `as *const ()`\n    |\n127 |             libc::signal(libc::SIGBUS, fault_dump as *const () as usize);\n    |                                                   ++++++++++++\n\nwarning: direct cast of function item into an integer\n   --> crates/attesor/src/jit/mod.rs:451:37\n    |\n451 |     cpu.jit_exit = attesor_jit_exit as usize as u64;\n    |                                     ^^^^^^^^\n    |\nhelp: first cast to a pointer `as *const ()`\n    |\n451 |     cpu.jit_exit = attesor_jit_exit as *const () as usize as u64;\n    |                                     ++++++++++++\n\nwarning: direct cast of function item into an integer\n   --> crates/attesor/src/jit/mod.rs:453:48\n    |\n453 |     cpu.helpers[HELPER_INTERP] = helper_interp as usize as u64;\n    |                                                ^^^^^^^^\n    |\nhelp: first cast to a pointer `as *const ()`\n    |\n453 |     cpu.helpers[HELPER_INTERP] = helper_interp as *const () as usize as u64;\n    |                                                ++++++++++++\n\nwarning: direct cast of function item into an integer\n   --> crates/attesor/src/jit/mod.rs:454:52\n    |\n454 |     cpu.helpers[HELPER_COMMPAGE] = helper_commpage as usize as u64;\n    |                                                    ^^^^^^^^\n    |\nhelp: first cast to a pointer `as *const ()`\n    |\n454 |     cpu.helpers[HELPER_COMMPAGE] = helper_commpage as *const () as usize as u64;\n    |                                                    ++++++++++++\n\nwarning: `mach_vm_read_overwrite` redeclared with a different signature\n   --> crates/attesor/src/symbols.rs:100:5\n    |\n100 |     fn mach_vm_read_overwrite(task: libc::mach_port_t, addr: u64, size: u64, data: u64, outsize: *mut libc::size_t) -> libc::c_int;\n    |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ this signature doesn't match the previous declaration\n    |\n   ::: crates/attesor/src/guestmem.rs:6:5\n    |\n  6 |     fn mach_vm_read_overwrite(task: u32, addr: u64, size: u64, data: u64, outsize: *mut u64) -> i32;\n    |     ------------------------------------------------------------------------------------------------ `mach_vm_read_overwrite` previously declared here\n    |\n    = note: expected `unsafe extern \"C\" fn(u32, u64, u64, u64, *mut u64) -> i32`\n               found `unsafe extern \"C\" fn(u32, u64, u64, u64, *mut usize) -> i32`\n    = note: `#[warn(clashing_extern_declarations)]` on by default\n\nwarning: `attesor` (bin \"attesor\" test) generated 26 warnings (run `cargo fix --bin \"attesor\" -p attesor --tests` to apply 8 suggestions)\n    Finished `test` profile [optimized + debuginfo] target(s) in 0.03s\n     Running unittests src/main.rs (target/debug/deps/attesor-ce03b050cb49f88d)\n     Running unittests src/lib.rs (target/debug/deps/attesor_core-041a367103a27d42)\n     Running unittests src/main.rs (target/debug/deps/difftest-23b5b00911c73677)\n   Doc-tests attesor_core\n",
+      "passed": true,
+      "seconds": 0.18598611699999998
+    },
+    {
+      "name": "cpu-semantics",
+      "command": [
+        "python3",
+        "tests/attesor/accept.py",
+        "--attesor",
+        "/Users/zhez/attesor/target/release/attesor",
+        "--count",
+        "100000",
+        "--output",
+        "/private/tmp/attesor-perf/team-final-acceptance.cpu.json"
+      ],
+      "returncode": 0,
+      "stdout": "selftest-fpblocks: PASS {'ok': 100000, 'mismatch': 0, 'skipped': 0, 'insns': 650599, 'fallback_insns': 0}\nselftest-blocks: PASS {'ok': 8893, 'mismatch': 0, 'skipped': 91107, 'insns': 30638, 'fallback_insns': 1178}\nselftest-selchain: PASS {'ok': 36205, 'mismatch': 0, 'skipped': 63795, 'native': 36205, 'dead_flag_skips': 30538}\nselftest-ff000000:1f000000: PASS {'ok': 75018, 'mismatch': 0, 'skipped': 24982, 'native': 50098}\nselftest-bf20fc00:0e20cc00: PASS {'ok': 74862, 'mismatch': 0, 'skipped': 25138, 'native': 74862}\nselftest-9f800400:0f000000: PASS {'ok': 28156, 'mismatch': 0, 'skipped': 71844, 'native': 4576}\nselftest-fpnan: PASS {'ok': 62208, 'mismatch': 0, 'skipped': 0, 'native': 62208}\nselftest-fpnan-fpcr: PASS {'ok': 62208, 'mismatch': 0, 'skipped': 0, 'native': 62208}\nAcceptance: PASS; report /private/tmp/attesor-perf/team-final-acceptance.cpu.json\n",
+      "stderr": "",
+      "passed": true,
+      "seconds": 101.408174433
+    },
+    {
+      "name": "crypto",
+      "command": [
+        "env",
+        "ATTESOR=/Users/zhez/attesor/target/release/attesor",
+        "tests/attesor/crypto-check.sh"
+      ],
+      "returncode": 0,
+      "stdout": "jit selftest [ffffcc00:4e284800]: ok=12000 mismatch=0 skipped=0 native=12000\njit selftest [bfe0fc00:0ee0e000]: ok=12000 mismatch=0 skipped=0 native=12000\njit selftest [ffe0ec00:5e004000]: ok=12000 mismatch=0 skipped=0 native=12000\njit selftest [fffffc00:5e282800]: ok=12000 mismatch=0 skipped=0 native=12000\njit selftest [ffe0fc00:5e006000]: ok=12000 mismatch=0 skipped=0 native=12000\njit selftest [ffffcc00:4e284800]: ok=12000 mismatch=0 skipped=0 native=12000\njit selftest [bfe0fc00:0ee0e000]: ok=12000 mismatch=0 skipped=0 native=12000\njit selftest [ffe0ec00:5e004000]: ok=12000 mismatch=0 skipped=0 native=12000\njit selftest [fffffc00:5e282800]: ok=12000 mismatch=0 skipped=0 native=12000\njit selftest [ffe0fc00:5e006000]: ok=12000 mismatch=0 skipped=0 native=12000\ncrypto-kat: PASS\ncrypto-kat: PASS\ncrypto-kat: PASS\nchecksum 05e2e1ad19256390\nchecksum 05e2e1ad19256390\n",
+      "stderr": "",
+      "passed": true,
+      "seconds": 31.27982335500002
+    },
+    {
+      "name": "aot-persistence",
+      "command": [
+        "python3",
+        "tests/attesor/aot-checkpoint.py",
+        "--attesor",
+        "/Users/zhez/attesor/target/release/attesor"
+      ],
+      "returncode": 0,
+      "stdout": "PASS: checkpoint survived SIGKILL and next process loaded main-image blocks\nPASS: changed code-generation switches reject the default cache\nPASS: incompatible cache rebuilt from unchanged profile and loaded on restart\nPASS: interrupted coverage rebuild retries without new profile blocks\nPASS: failed exec preserves checkpoints and SIGKILL cache reuse\nPASS: multithreaded guest fork keeps parent and child checkpoints running\nPASS: parent/child checkpoint output survives SIGKILL and loads on restart\n",
+      "stderr": "",
+      "passed": true,
+      "seconds": 8.765145570000016
+    },
+    {
+      "name": "neon-saturation",
+      "command": [
+        "python3",
+        "tests/attesor/neon-qdmulh-check.py",
+        "/Users/zhez/attesor/target/release/attesor"
+      ],
+      "returncode": 0,
+      "stdout": "PASS JIT qdmulh digest 4d92fd0ec98359f5 qc_cases 12708 boundary PASS\nPASS interpreter qdmulh digest 4d92fd0ec98359f5 qc_cases 12708 boundary PASS\njit selftest [9fe0fc00:0e60b400]: ok=20000 mismatch=0 skipped=0 native=20000\njit selftest [9fe0fc00:0ea0b400]: ok=20000 mismatch=0 skipped=0 native=20000\nPASS benchmark checksum checksum 93579ade5b97531f 01c691828ef0017b\n",
+      "stderr": "",
+      "passed": true,
+      "seconds": 13.181322251000012
+    },
+    {
+      "name": "fp16-conversion",
+      "command": [
+        "python3",
+        "tests/attesor/fp16-convert-check.py",
+        "/Users/zhez/attesor/target/release/attesor"
+      ],
+      "returncode": 0,
+      "stdout": "PASS integer-reference: tiny FP32 FZ boundaries PASS\nfp16-convert PASS cases=60000 digest=40c315811183ddde\nPASS JIT: tiny FP32 FZ boundaries PASS\nfp16-convert PASS cases=60000 digest=40c315811183ddde\nPASS interpreter: tiny FP32 FZ boundaries PASS\nfp16-convert PASS cases=60000 digest=40c315811183ddde\ndefault jit selftest [bffffc00:0e216800]: ok=20000 mismatch=0 skipped=0 native=20000\nFPCR jit selftest [bffffc00:0e216800]: ok=20000 mismatch=0 skipped=0 native=20000\n",
+      "stderr": "",
+      "passed": true,
+      "seconds": 12.186451785999992
+    },
+    {
+      "name": "debugger-protocol",
+      "command": [
+        "python3",
+        "tests/attesor/gdb-protocol.py",
+        "/Users/zhez/attesor/target/release/attesor"
+      ],
+      "returncode": 0,
+      "stdout": "PASS initial stop\nPASS feature negotiation\nPASS vCont advertises implemented actions only\nPASS vCont rejects unsupported action\nPASS malformed continue rejected\nPASS register write\nPASS register read\nPASS short register write rejected\nPASS invalid register hex rejected\nPASS bad writes preserve register\nPASS truncated register file rejected\nPASS invalid register file rejected atomically\nPASS bad checksum negatively acknowledged\nPASS bad checksum does not mutate\nPASS NAK retransmits last reply\nPASS vector register write\nPASS vector register read\nPASS memory write\nPASS memory read\nPASS length mismatch rejected\nPASS invalid memory hex rejected\nPASS bad memory writes preserve bytes\nPASS unknown free rejected\nPASS debugger allocation released\nPASS double free rejected\nPASS upload to RX expression allocation\nPASS free RX allocation\nPASS huge XML offset does not overflow\nPASS no-ack negotiation\nPASS no-ack request\nPASS set guest PC\nPASS single step\nPASS unaligned breakpoint rejected\nPASS wrong breakpoint size rejected\nPASS breakpoint insert\nPASS continue reaches breakpoint\nPASS breakpoint remove\nPASS running Ctrl-C reports SIGINT\nPASS stop query preserves SIGINT\nPASS set exit PC\nPASS exit status packet\nPASS guest exit status\nPASS initial stop\nPASS set detach PC\nPASS detach acknowledged\nPASS detached guest continues\nPASS initial stop\nPASS set disconnect PC\nPASS disconnected guest continues\n{\"passed\": true, \"checks\": 49, \"binary\": \"/Users/zhez/attesor/target/release/attesor\"}\n",
+      "stderr": "",
+      "passed": true,
+      "seconds": 0.23211175899999148
+    },
+    {
+      "name": "debugger-lldb",
+      "command": [
+        "python3",
+        "tests/attesor/gdb-lldb-fd.py",
+        "/Users/zhez/attesor/target/release/attesor"
+      ],
+      "returncode": 0,
+      "stdout": "(lldb) target create \"/var/folders/b4/tnjkjcm52s5g4n894r8xrcfh0000gn/T/attesor-lldb-fd-lwsd5ccg/guest\"\nCurrent executable set to '/var/folders/b4/tnjkjcm52s5g4n894r8xrcfh0000gn/T/attesor-lldb-fd-lwsd5ccg/guest' (arm64).\n(lldb) process connect --plugin gdb-remote fd://4\nProcess 88418 stopped\n* thread #1, stop reason = signal SIGTRAP\n    frame #0: 0x00000005800049c0 \n->  0x5800049c0: mov    x0, sp\n    0x5800049c4: and    sp, x0, #0xfffffffffffffff0\n    0x5800049c8: mov    x29, #0x0                 ; =0 \n    0x5800049cc: mov    x30, #0x0                 ; =0 \nTarget 0: (guest) stopped.\n(lldb) target modules load --file guest --slide 0x400000000\n(lldb) b add3\nBreakpoint 1: where = guest`add3 at guest.c:2:72, address = 0x0000000500000460\n(lldb) c\nwarning: guest was compiled with optimization - stepping may behave oddly; variables may not be available.\nProcess 88418 resuming\nProcess 88418 stopped\n* thread #1, stop reason = breakpoint 1.1\n    frame #0: 0x0000000500000460 guest`add3(a=0, b=10, c=100) at guest.c:2:72 [opt]\n   1   \t#include <stdio.h>\n-> 2   \t__attribute__((noinline)) long add3(long a, long b, long c) { return a + b * 2 + c * 3; }\n    \t                                                                       ^\n   3   \tint main(void) { long s = 0; for (int i = 0; i < 5; i++) s += add3(i, 10, 100); printf(\"sum %ld\\n\", s); return 7; }\nTarget 0: (guest) stopped.\n(lldb) p a + b\n(long) 10\n(lldb) p add3(1, 2, 3)\n(long) 14\n(lldb) register write x1 5\n(lldb) finish\nProcess 88418 stopped\n* thread #1, stop reason = step out\nReturn value: (long) $0 = 310\n\n    frame #0: 0x0000000500000498 guest`main at guest.c:3:60 [opt]\n   1   \t#include <stdio.h>\n   2   \t__attribute__((noinline)) long add3(long a, long b, long c) { return a + b * 2 + c * 3; }\n-> 3   \tint main(void) { long s = 0; for (int i = 0; i < 5; i++) s += add3(i, 10, 100); printf(\"sum %ld\\n\", s); return 7; }\n    \t                                                           ^\nTarget 0: (guest) stopped.\n(lldb) breakpoint delete\nAll breakpoints removed. (1 breakpoint)\n\nsum 1600\n\ngdb-lldb-fd: PASS (symbols, arguments, expressions including guest function call, register write, finish, exit)\n",
+      "stderr": "",
+      "passed": true,
+      "seconds": 1.294828066000008
+    },
+    {
+      "name": "native-zlib",
+      "command": [
+        "env",
+        "ATTESOR=/Users/zhez/attesor/target/release/attesor",
+        "tests/attesor/native-zlib-check.sh"
+      ],
+      "returncode": 0,
+      "stdout": "bridge-calls=0\nnative-zlib: PASS\nbridge-calls=4332\nnative-zlib: PASS\nbridge-calls=4332\nnative-zlib: PASS\nnative-chain: PASS\nbridge-calls=0\nnative-zlib: PASS\nnative-chain: PASS\nnative-zlib suite: PASS\n",
+      "stderr": "/tmp/attesor-native-check.IDASX8/native/libattesornative.dylib: replacing existing signature\n",
+      "passed": true,
+      "seconds": 10.047154233000015
+    },
+    {
+      "name": "thread-startup",
+      "command": [
+        "python3",
+        "tests/attesor/thread-startup-check.py",
+        "/Users/zhez/attesor/target/release/attesor"
+      ],
+      "returncode": 0,
+      "stdout": "PASS x86_64: 30 rounds x 4 joined workers x 1 processes\nPASS arm64: 30 rounds x 4 joined workers x 10 processes\n",
+      "stderr": "",
+      "passed": true,
+      "seconds": 7.46863272600001
+    },
+    {
+      "name": "launcher-fixtures",
+      "command": [
+        "python3",
+        "tests/attesor/launcher-check.py",
+        "--attesor",
+        "/Users/zhez/attesor/target/release/attesor"
+      ],
+      "returncode": 0,
+      "stdout": "PASS universal executable contains x86 and ARM\nPASS injection preserves ARM slice byte for byte\nPASS injection preserves executable permissions\nPASS stub/runner preserve empty, quoted, Unicode and shell-like arguments\nPASS shell-like arguments are never evaluated\nPASS ordinary app GPU flags\nPASS Electron flags preserve executable position and arguments\nPASS running application restore is refused\nPASS unknown process visibility refuses restore\nPASS missing runner preserves launch failure status 127\nPASS real emulator executes the retained ARM slice and returns its exit status\nPASS failed restore preparation leaves the universal executable intact\nPASS thin original restores exactly, including file layout\nPASS same bundle identifier cannot collide in backup storage\nPASS failed preparation leaves the original executable intact\nPASS restore retains updated ARM code instead of reverting backup\nPASS scan upgrades an old owned stub and retains updated ARM code\nPASS reinject is safe for an already-current stub\nPASS injection retains both arm64 and arm64e slices\nPASS multi-ARM original fat file restores exactly\nPASS scan does not inject a running application\nPASS scan does not inject when process status is unknown\nPASS legacy nested wrapper migrates to one universal bundle\nPASS migrated wrapper restores exact original executable\nPASS list reports handled apps without modifying application executables\nlauncher integration: 25 checks PASS\n",
+      "stderr": "",
+      "passed": true,
+      "seconds": 11.500925069000004
+    }
+  ],
+  "unverified": [
+    "arbitrary application compatibility",
+    "real Finder/Dock UI",
+    "hardware VideoToolbox",
+    "whole-application startup speedup"
+  ]
+}

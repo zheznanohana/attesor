@@ -8,25 +8,24 @@ Open problems, the bug list (so you recognise symptoms), and a short history.
    register cache inside a block) is done, see "JIT code quality work". Remaining: registers still reload at every
    block boundary (a loop iteration is one block), the TBI mask (`shl/shr 8`) on every access, block-exit/IBTC cost,
    flags kept as four bytes.
-2. Still-interpreted instructions. Done in Attesor: SHA-256, `dc` cache ops (DC ZVA native; the IC IVAU
-   terminator mask used to catch every DC op), TBL/TBX, FRINT*, FCVTZU, UCVTF/SCVTF vector,
-   [US]ADDL/ADDW/SUBL/SUBW/MLAL/MLSL, SUBHN, EXT, SQ(R)DMULH (16-bit), [US]AB[DA], [US]ADDLP/ADALP,
-   FCVTL/FCVTN (F16C for half), FMLA/FMLS/FMUL by element, vector FMLA/FMLS and scalar FMADD family
-   (FMA3; both detected at run time, else interpreted). Left, by DeepSeek Harness profile: USRA/SSRA,
-   64-bit UZP/ZIP, FMAXNM/FMINNM, FCVTMS and other rounding FCVT*, SQXTUN, UQSHRN, UADDLV/ADDV/
-   UMAXP/SMINV reductions, PMULL, PACGA, MUL/MLA by element, LDXR/STXR exclusives, FP16 arithmetic.
-   Use `ATTESOR_FALLBACK_HIST` on the GPU (`--type=gpu-process`), renderer and helper processes to see
-   what matters, and `bench/app-startup.sh` to measure (cold mode isolates the JIT).
+2. Still-interpreted instructions: collect a fresh `ATTESOR_FALLBACK_HIST` from GPU,
+   renderer and helper processes before prioritizing another batch. Historical profiles listed
+   instructions since translated: AES/PMULL/SHA, USRA/SSRA, 64-bit ZIP/UZP, reductions and rounding
+   conversions. Vector SQDMULH/SQRDMULH now covers 16/32-bit lanes with QC; scalar/by-element forms
+   and general FP16 arithmetic still need coverage work. See the focused validation documents and
+   `docs/OPTIMIZATION.md` for tested scope; do not infer complete ISA support from a class name.
 3. Startup: work is ~10 processes on 4 cores; per-process translation. Ideas: pre-warm AOT,
    fewer VS Code processes/features, check Chromium/Electron flags (`--in-process-gpu`,
    `--disable-features=…`), persistent V8 code cache (don't wipe the profile dir).
 4. Chromium-specific: run with a real profile; check `about:blank` page target had `url ""`
    for a long time in one run (renderer for the initial page slow to start) — investigate.
-5. GPU: done for Chromium via the Metal bridge (see "GPU passthrough"); apps that present through
-   `CAMetalLayer`/`MTKView` directly still need that bridged.
-6. Robustness: stale-IBTC hazard if a thread only ever hits IBTC entries after invalidation
-   (accepted risk); AOT profile saving only on graceful exit; concurrent builders write the same
-   files (last writer wins, atomic rename); `ATTESOR_SPIN_DEBUG` for infinite-dispatch bugs.
+5. GPU/video: CAMetalLayer/MTKView have earlier successful probes (README). Extend real-app
+   coverage and hardware video access. In the current sandbox, native and translated VideoToolbox
+   both fail to create compression sessions with -12908, so hardware acceleration remains unverified.
+6. Robustness: stale-IBTC invalidation remains worth auditing, as do non-AOT global locks across
+   fork. Periodic cache persistence, stale-version/coverage rebuilds, AOT fork locks and failed-exec
+   checkpointing have regression tests now; see `docs/AOT-CHECKPOINTS.md`. Thread setup now completes
+   before bsdthread_create returns, with an independent creation/join stress test.
 7. Overcast / iOS-on-Mac apps: would need the iOS-on-Mac runtime and unencrypted binaries;
    FairPlay-encrypted App Store binaries are not runnable off Apple Silicon and circumventing DRM
    is out of scope. Suggested alternative: build your own UIKit "Designed for iPad" or Mac
