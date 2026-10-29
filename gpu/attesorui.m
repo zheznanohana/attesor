@@ -1,7 +1,8 @@
 // Guest-side UI fixups for app bundles (arm64, injected with DYLD_INSERT_LIBRARIES by attesor).
 //
-// The running guest registers with LaunchServices as its own arm64-only bundle, so the Dock shows
-// that bundle's icon with the "prohibited" overlay. Replace the Dock icon with the bundle's own .icns
+// Sets the Dock icon of a running app: the badged icon attesor-apps made for it (the app's icon with an
+// "arm" badge), else the bundle's own .icns (an arm64-only bundle that was not made universal by
+// attesor-apps would otherwise show the "prohibited" overlay). Set
 // the moment the Dock tile comes into existence: +[NSApplication sharedApplication] is swizzled as
 // soon as AppKit is loaded, and the icon is set again when launching finishes (in case the app or
 // AppKit resets it). Links only Foundation: AppKit is looked up at runtime, so helper processes
@@ -10,7 +11,9 @@
 #import <objc/runtime.h>
 #import <objc/message.h>
 #include <mach-o/dyld.h>
+#include <pwd.h>
 #include <stdatomic.h>
+#include <unistd.h>
 #include <stdio.h>
 #include <stdlib.h>
 
@@ -21,8 +24,16 @@ static id bundle_icon(void) {
     dispatch_once(&once, ^{
         Class imgCls = NSClassFromString(@"NSImage");
         NSBundle *b = [NSBundle mainBundle];
+        // attesor-apps renders the app's icon with an "arm" badge for the Dock tile of the running app
+        // (the real home: a sandboxed guest's HOME is its container)
+        NSString *path = nil;
+        struct passwd *pw = getpwuid(getuid());
+        if (pw && b.bundleIdentifier) {
+            NSString *badged = [NSString stringWithFormat:@"%s/Library/Application Support/Attesor/icons/%@.icns", pw->pw_dir, b.bundleIdentifier];
+            if ([[NSFileManager defaultManager] fileExistsAtPath:badged]) path = badged;
+        }
         NSString *name = [b objectForInfoDictionaryKey:@"CFBundleIconFile"];
-        NSString *path = name ? [b pathForResource:[name stringByDeletingPathExtension] ofType:@"icns"] : nil;
+        if (!path && name) path = [b pathForResource:[name stringByDeletingPathExtension] ofType:@"icns"];
         if (imgCls && path)
             gIcon = ((id(*)(id, SEL, id))objc_msgSend)(((id(*)(Class, SEL))objc_msgSend)(imgCls, @selector(alloc)), @selector(initWithContentsOfFile:), path);
     });

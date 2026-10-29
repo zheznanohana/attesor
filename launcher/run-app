@@ -1,0 +1,41 @@
+#!/bin/bash
+# Started by the x86-64 stub slice of an app attesor-apps made universal:  run-app <executable> [args…]
+# Runs the arm64 slice of the same executable under Attesor, with the flags its kind of app needs, and
+# logs to ~/Library/Logs/Attesor/<name>.log (an alert shows the log path if it exits with an error).
+set -uo pipefail
+[ $# -ge 1 ] || { echo "usage: run-app EXECUTABLE [args…]" >&2; exit 2; }
+EXE=$1; shift
+APP=${EXE%/Contents/MacOS/*}
+name=$(basename "$APP" .app)
+ATTESOR=${ATTESOR:-$HOME/bin/attesor}
+LOG="$HOME/Library/Logs/Attesor/${name}.log"
+mkdir -p "$(dirname "$LOG")"
+# keep the log bounded: past 5 MB the old one becomes .1
+[ -f "$LOG" ] && [ "$(stat -f %z "$LOG")" -gt 5242880 ] && mv -f "$LOG" "$LOG.1"
+# Every app gets the GPU bridge (ATTESOR_APPS_GPU=0: software rendering). Electron/Chromium apps also need
+# --no-sandbox, and ANGLE refuses Metal on NVIDIA unless disableMetalOnNvidia is overridden; only their GPU
+# process gets the bridge.
+gpu=${ATTESOR_APPS_GPU:-1}
+if [ -d "$APP/Contents/Frameworks/Electron Framework.framework" ] || [ -d "$APP/Contents/Frameworks/Chromium Embedded Framework.framework" ]; then
+  if [ "$gpu" = 1 ]; then
+    flags=(--gpu --gpu-only --type=gpu-process "$EXE" --no-sandbox --disable-gpu-sandbox --disable-gpu-watchdog
+           --use-angle=metal --use-gl=angle --enable-gpu --ignore-gpu-blocklist --disable-angle-features=disableMetalOnNvidia)
+  else
+    flags=("$EXE" --no-sandbox --disable-gpu)
+  fi
+elif [ "$gpu" = 1 ]; then
+  flags=(--gpu "$EXE")
+else
+  flags=("$EXE")
+fi
+cd "$APP/Contents/MacOS" || exit 1
+echo "=== $(date) ===" >> "$LOG"
+# every guest process also copies its stderr to ~/Library/Logs/Attesor/stderr/ (helpers' stderr is often piped away)
+ATTESOR_STDERR_LOG=1 "$ATTESOR" "${flags[@]}" "$@" >> "$LOG" 2>&1
+rc=$?
+if [ $rc -ne 0 ] && [ "${ATTESOR_NO_ALERT:-0}" != 1 ]; then
+  osascript -e 'on run argv
+    display alert ((item 1 of argv) & " 在 Attesor 下退出（代码 " & (item 2 of argv) & "）") message ("日志：" & (item 3 of argv))
+  end run' -- "$name" "$rc" "$LOG" >/dev/null 2>&1 || true
+fi
+exit $rc

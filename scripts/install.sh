@@ -32,11 +32,17 @@ ln -sf chromium-gpu "$PREFIX/chromium"; ln -sf vscode-gpu "$PREFIX/code"; ln -sf
 LAUNCHER=$HOME/attesor-launcher
 mkdir -p "$LAUNCHER/bin" "$HOME/Library/Logs/Attesor"
 install -S -m 755 launcher/attesor-apps launcher/fix-dock.py "$LAUNCHER/"
-install -S -m 644 launcher/badge.swift launcher/attesor.zsh "$LAUNCHER/"
+install -S -m 644 launcher/badge.swift launcher/stub.c launcher/attesor.zsh "$LAUNCHER/"
+# run-app is started by the apps' stub slices (no environment from here): point it at this install
+sed "s|\${ATTESOR:-\$HOME/bin/attesor}|\${ATTESOR:-$PREFIX/attesor}|" launcher/run-app > "$LAUNCHER/run-app.new" &&
+  chmod 755 "$LAUNCHER/run-app.new" && mv -f "$LAUNCHER/run-app.new" "$LAUNCHER/run-app"
 swiftc -O launcher/badge.swift -o "$LAUNCHER/bin/badge.new" && mv -f "$LAUNCHER/bin/badge.new" "$LAUNCHER/bin/badge"
+# the x86-64 stub slice attesor-apps puts into arm64-only apps (ad-hoc signed on its own)
+clang -O2 -arch x86_64 -mmacosx-version-min=10.15 launcher/stub.c -o "$LAUNCHER/bin/attesor-stub.new" &&
+  codesign -s - -f "$LAUNCHER/bin/attesor-stub.new" 2>/dev/null && mv -f "$LAUNCHER/bin/attesor-stub.new" "$LAUNCHER/bin/attesor-stub"
 ln -sf "$LAUNCHER/attesor-apps" "$PREFIX/attesor-apps"
 
-# login agent: rescans /Applications and ~/Applications (every 30 s) and wraps new arm64-only apps
+# login agent: rescans /Applications and ~/Applications (every 30 s) and makes new arm64-only apps universal
 AGENT=$HOME/Library/LaunchAgents/local.attesor-apps.plist
 if [ -z "${NO_LAUNCH_AGENT:-}" ]; then
   mkdir -p "$(dirname "$AGENT")"

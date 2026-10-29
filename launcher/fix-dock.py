@@ -26,7 +26,8 @@ def wrapped(url):
 
 def running(inner_url):
     path = urllib.parse.unquote(urllib.parse.urlparse(inner_url).path).rstrip('/') + '/'
-    return subprocess.run(['pgrep', '-f', path], capture_output=True).returncode == 0
+    # Unknown process visibility must not authorize rewriting a running app's tile.
+    return subprocess.run(['/usr/bin/pgrep', '-f', re.escape(path)], capture_output=True).returncode != 1
 
 
 def main():

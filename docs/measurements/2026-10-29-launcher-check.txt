@@ -1,0 +1,26 @@
+PASS universal executable contains x86 and ARM
+PASS injection preserves ARM slice byte for byte
+PASS injection preserves executable permissions
+PASS stub/runner preserve empty, quoted, Unicode and shell-like arguments
+PASS shell-like arguments are never evaluated
+PASS ordinary app GPU flags
+PASS Electron flags preserve executable position and arguments
+PASS running application restore is refused
+PASS unknown process visibility refuses restore
+PASS missing runner preserves launch failure status 127
+PASS real emulator executes the retained ARM slice and returns its exit status
+PASS failed restore preparation leaves the universal executable intact
+PASS thin original restores exactly, including file layout
+PASS same bundle identifier cannot collide in backup storage
+PASS failed preparation leaves the original executable intact
+PASS restore retains updated ARM code instead of reverting backup
+PASS scan upgrades an old owned stub and retains updated ARM code
+PASS reinject is safe for an already-current stub
+PASS injection retains both arm64 and arm64e slices
+PASS multi-ARM original fat file restores exactly
+PASS scan does not inject a running application
+PASS scan does not inject when process status is unknown
+PASS legacy nested wrapper migrates to one universal bundle
+PASS migrated wrapper restores exact original executable
+PASS list reports handled apps without modifying application executables
+launcher integration: 25 checks PASS

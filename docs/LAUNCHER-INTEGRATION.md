@@ -1,0 +1,67 @@
+# Application launching integration
+
+The launcher retains Claude's universal-stub design: an x86-64 entry is added
+beside the original ARM slice(s), and invokes the shared `run-app` script. The
+application remains one bundle with its original resources. The UI shim can show
+the application's own icon with an ARM badge. This makes the bundle launchable
+by the Intel system; it does not give the emulated application a native ARM
+kernel identity or enforce its code-signing entitlements.
+
+## Changes and invariants
+
+- The V2 stub passes the executable and every argument directly with `execv`.
+  Spaces, quotes, shell metacharacters, Unicode and empty arguments stay data.
+  Missing runner returns 127 even if the optional alert succeeds. Alert paths
+  and application names are AppleScript arguments rather than source text.
+- `attesor-apps` keeps its existing commands and aliases. Its Python
+  implementation serializes mutations with a file lock. Every modifying command
+  checks whether the app is running; permission errors and unknown process state
+  refuse the operation. Scan never restarts the Dock.
+- A same-directory prepared executable replaces the original atomically. Every
+  retained ARM slice is compared byte for byte before replacement. The exact
+  pre-injection executable is saved under a hash of the canonical application
+  path, so equal bundle identifiers cannot collide.
+- Restore uses the saved original only when its ARM slice(s) still match the
+  current application. An application update is retained. Stub upgrades replace
+  only the owned x86 slice and keep the current ARM code. Genuine native x86
+  slices are not replaced.
+- Migration from the old nested-wrapper layout prepares a complete copy and
+  atomically swaps directories using macOS `renamex_np(..., RENAME_SWAP)`.
+  A failed preparation/swap leaves the old bundle intact. This one-time copy
+  requires enough free disk space for the original application.
+- `fixdock` remains an explicit repair command, and its process check also
+  treats unknown visibility as running. No real Dock changes are needed for
+  command-line tests.
+
+`ATTESOR_SCAN_DIRS` accepts colon-separated directory paths, including spaces.
+`ATTESOR_NO_DESKTOP=1` disables badge generation, LaunchServices registration,
+quarantine changes and Dock repair for isolated tests. `ATTESOR_PROCESS_CHECK`
+can select an external process checker (argument: application path; return 0
+running, 1 stopped, other unknown). It exists for controlled environments and
+fixtures; the default is the system `pgrep` with an escaped path pattern.
+
+## Reproduction
+
+```
+python3 tests/attesor/launcher-check.py --attesor target/release/attesor
+```
+
+The test uses private applications, HOME, runner, process checker and tool
+fixtures. It never injects a real installed app, edits a user's Dock, or launches
+an alert. GUI appearance and Finder/Dock behavior require separate visual
+validation; passing these command-line checks does not claim that validation.
+
+The final run passed **25 checks**, including delegation into the built emulator
+(the retained ARM program prints `guest-ok` and its exit status 17 survives the
+stub and runner). Other cases cover empty/quoted/Unicode/shell-like arguments,
+ordinary and Electron GPU flags, missing-runner status 127, running/unknown
+process refusal, failed injection/restore preparation, path-specific backups,
+app updates, old-stub upgrades, arm64+arm64e slices, exact thin/fat restoration,
+and legacy nested-wrapper migration. The raw output is in
+[the recorded checks](measurements/2026-10-29-launcher-check.txt).
+
+The real-emulator check discovers the installed ARM cache before changing HOME;
+`--sysroot DIR` can specify it explicitly. Omitting `--attesor` runs the other
+24 isolated command-line checks. The process checker is controlled in the fixture,
+so the running/unknown tests prove refusal semantics, not unrestricted process
+visibility in this sandbox. The default checker remains fail-closed.
