@@ -2423,6 +2423,47 @@ fn crypto_sha2(cpu: &mut Cpu, insn: u32) -> R {
 mod tests {
     use super::*;
     #[test]
+    fn fsqrt_dispatch_obeys_arm_nan_and_zero_bits() {
+        let cases64 = [(0xbff0000000000000, 0x7ff8000000000000),
+                       (0xfff0000000000000, 0x7ff8000000000000),
+                       (0x8000000000000001, 0x7ff8000000000000),
+                       (0x8000000000000000, 0x8000000000000000), (0, 0),
+                       (0x4010000000000000, 0x4000000000000000),
+                       (0x7ff0000000000000, 0x7ff0000000000000),
+                       (0x7ff8000000001234, 0x7ff8000000001234),
+                       (0xfff8000000001234, 0xfff8000000001234),
+                       (0x7ff0000000001234, 0x7ff8000000001234),
+                       (0xfff0000000001234, 0xfff8000000001234)];
+        let cases32 = [(0xbf800000, 0x7fc00000), (0xff800000, 0x7fc00000),
+                       (0x80000001, 0x7fc00000), (0x80000000, 0x80000000), (0, 0),
+                       (0x40800000, 0x40000000), (0x7f800000, 0x7f800000),
+                       (0x7fc01234, 0x7fc01234), (0xffc01234, 0xffc01234), (0x7f801234, 0x7fc01234),
+                       (0xff801234, 0xffc01234)];
+        let cases16 = [(0xbc00, 0x7e00), (0xfc00, 0x7e00), (0x8001, 0x7e00),
+                       (0x8000, 0x8000), (0, 0), (0x4400, 0x4000), (0x7c00, 0x7c00),
+                       (0x7e34, 0x7e34), (0xfe34, 0xfe34), (0x7c34, 0x7e34), (0xfc34, 0xfe34)];
+        for (word, cases) in [(0x1e61c020, &cases64[..]), (0x1e21c020, &cases32[..]),
+                              (0x1ee1c020, &cases16[..])] {
+            for &(input, expected) in cases { for rd in [0, 1] {
+                let mut c = Cpu::new(); c.v[1] = [std::hint::black_box(input), u64::MAX];
+                super::super::exec(&mut c, word | rd).unwrap();
+                assert_eq!(c.v[rd as usize], [expected, 0], "word={word:08x} input={input:016x}");
+            }}
+        }
+        // The same shared FSQRT semantics apply to all vector lanes.
+        for (word, width, cases) in [(0x6ee1f820, 64, &cases64[..]), (0x6ea1f820, 32, &cases32[..])] {
+            for &(lane, expected) in cases {
+                let mut input = 0u128; let mut output = 0u128;
+                for i in 0..128/width { input |= (lane as u128) << (i*width); output |= (expected as u128) << (i*width); }
+                for rd in [0, 1] {
+                    let mut c = Cpu::new(); c.set_vq(1, std::hint::black_box(input));
+                    super::super::exec(&mut c, word | rd).unwrap(); assert_eq!(c.vq(rd), output);
+                }
+            }
+        }
+    }
+
+    #[test]
     fn aes_mixcolumns_vector() {
         let mut cpu = Cpu::new();
         // column db 13 53 45 -> 8e 4d a1 bc (FIPS-197 / wikipedia test column)

@@ -179,7 +179,14 @@ pub fn fsqrt<T: Fp>(a: T) -> T {
     if a.is_nan() {
         return if a.is_snan() { a.quiet() } else { a };
     }
-    fix(a.sqrt())
+    // Classify the invalid domain before host arithmetic. Besides expressing
+    // ARM's positive default NaN directly, this avoids relying on a post-sqrt
+    // NaN check: some optimization levels simplify that check away when the
+    // source was already proven non-NaN. -0 compares equal and keeps its sign.
+    if a < T::zero(false) {
+        return T::default_nan();
+    }
+    a.sqrt()
 }
 /// Fused a + n*m (FMADD semantics: result = a + n*m).
 #[inline(always)]
