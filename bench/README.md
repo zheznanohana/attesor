@@ -33,3 +33,12 @@ python3 bench/serial-acceptance.py --attesor /absolute/path/to/attesor --output-
 The output directory must be new or empty. This entry point builds ARM64 and native reference fixtures, then runs serial alternating OFF/ON comparisons for next-use eviction (pressure, short CLI, mixed CPU kernels), direct branches, TBI masks and opt-in region caching. It finishes with private-cache short CLI prewarm comparison. Counts are configurable with `--pressure-count`, `--branch-count`, `--tbi-count` and `--region-count`; use identical counts when comparing reports. The before side disables the selected default-on optimization; the after side enables it. Region caching is explicitly opt-in on the after side. Other toggles use the translator's defaults. No production defaults change.
 
 Each comparison uses `--reference`; semantic output is required for every checksum-bearing fixture. Ordinary mixed kernels print only timings, so their native comparison cannot establish numerical equivalence; this limitation is explicitly recorded in `manifest.json`. Prewarm uses its own native output reference and proves actual cache loads. Raw JSON, exact commands, build logs, fixture/source hashes and translator/driver hashes remain in the output directory. The runner stops on the first failure and records failed status. It clears inherited translator toggles and bridge injection settings, preserves explicit `ATTESOR_SYSROOT` / `ATTESOR_DYLD`, and uses temporary private caches. Do not run it concurrently with compilation or correctness testing. It measures these workloads only, not general app responsiveness or pure JIT compiler throughput.
+
+
+`electron-probe.py` is a read-only real-application startup/GPU diagnostic, not a
+benchmark. It starts an owned universal app entry with private runtime data,
+checks a requested DevTools target URL and browser GPU metadata, and cleans up
+only its owned session/observed descendants. See
+[the probe guide](../docs/ELECTRON-PROBE.md) for renderer gates, explicit cache
+copies, `{data}` argument isolation and scope limits. Do not run it concurrently
+with CPU/performance measurements.
