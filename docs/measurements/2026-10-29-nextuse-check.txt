@@ -1,0 +1,39 @@
+next-use jit selftest [blocks]: ok=8893 mismatch=0 skipped=91107 insns=30638 fallback_insns=1178
+next-use jit selftest [fpblocks]: ok=100000 mismatch=0 skipped=0 insns=650599 fallback_insns=0
+next-use jit selftest [tbiblocks]: ok=5000 mismatch=0 skipped=0 native=70000 fallback_insns=10000
+old-policy jit selftest [blocks]: ok=8893 mismatch=0 skipped=91107 insns=30638 fallback_insns=1178
+old-policy jit selftest [fpblocks]: ok=100000 mismatch=0 skipped=0 insns=650599 fallback_insns=0
+old-policy jit selftest [tbiblocks]: ok=5000 mismatch=0 skipped=0 native=70000 fallback_insns=10000
+PASS next-use checksum c3ec706e00000000 02dc4648006840c8
+PASS old-policy checksum c3ec706e00000000 02dc4648006840c8
+PASS redirected checksum c3ec706e00000000 02dc4648006840c8
+PASS call-return checksum c3ec706e00000000 02dc4648006840c8
+     Running unittests src/main.rs (target/debug/deps/attesor-ce03b050cb49f88d)
+
+running 5 tests
+test jit::emit::cache_nextuse_tests::eviction_prefers_dead_then_furthest_not_oldest ... ok
+test jit::emit::cache_nextuse_tests::masks_separate_banks_and_discarded_old_values ... ok
+test jit::emit::direct_branch_tests::compare_and_test_branches_preserve_nzcv_and_all_registers ... ok
+test jit::emit::direct_branch_tests::direct_conditions_reach_both_internal_successor_labels ... ok
+test jit::emit::tbi_mask_tests::conditional_mask_load_and_scratch_join_execute_correctly ... ok
+
+test result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; 4 filtered out; finished in 0.02s
+
+
+Exceptional V pressure (ARM interpreter / candidate):
+checksum 82ca0ba46236e8e4 02dc4648006840c8
+checksum 82ca0ba46236e8e4 02dc4648006840c8
+next-use jit selftest [blocks]: ok=103 mismatch=0 skipped=897 insns=340 fallback_insns=12
+next-use jit selftest [fpblocks]: ok=1000 mismatch=0 skipped=0 insns=6570 fallback_insns=0
+next-use jit selftest [tbiblocks]: ok=5000 mismatch=0 skipped=0 native=70000 fallback_insns=10000
+next-use jit selftest [selchain]: ok=7177 mismatch=0 skipped=12823 native=7177 dead_flag_skips=6075
+old-policy jit selftest [blocks]: ok=103 mismatch=0 skipped=897 insns=340 fallback_insns=12
+old-policy jit selftest [fpblocks]: ok=1000 mismatch=0 skipped=0 insns=6570 fallback_insns=0
+old-policy jit selftest [tbiblocks]: ok=5000 mismatch=0 skipped=0 native=70000 fallback_insns=10000
+old-policy jit selftest [selchain]: ok=7177 mismatch=0 skipped=12823 native=7177 dead_flag_skips=6040
+PASS next-use checksum c3ec706e00000000 02dc4648006840c8
+PASS old-policy checksum c3ec706e00000000 02dc4648006840c8
+PASS redirected checksum c3ec706e00000000 02dc4648006840c8
+PASS call-return checksum c3ec706e00000000 02dc4648006840c8
+PASS exceptional V pressure next-use checksum 82ca0ba46236e8e4 02dc4648006840c8
+PASS exceptional V pressure nextuse checksum 82ca0ba46236e8e4 02dc4648006840c8

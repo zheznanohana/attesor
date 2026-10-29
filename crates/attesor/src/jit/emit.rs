@@ -82,6 +82,8 @@ pub struct Unit {
     /// The next few instruction words of the current block (up to and including a terminator):
     /// only used to decide whether caching a register is worthwhile.
     pub look: Vec<u32>,
+    /// Bank-local next reads for the current window; MAX means dead or not seen.
+    cache_uses: [[u8; 32]; 2],
     /// The flag-setting instruction being translated feeds a fused branch/select and its NZCV bytes
     /// are dead afterwards: skip the four flag stores.
     pub dead_flags: bool,
@@ -152,6 +154,100 @@ fn v_writes(insn: u32) -> Option<[u8; 2]> {
 pub static DEAD_FLAG_SKIPS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
 const LOOKAHEAD: usize = 10;
 
+/// Operand masks used only for cache profitability. Unknown encodings read
+/// everything and kill nothing: decode coverage never determines correctness.
+#[derive(Clone, Copy, Default)]
+struct CacheAccess { xr: u32, xw: u32, vr: u32, vw: u32 }
+fn reg_bit(r: u32, allow_sp: bool) -> u32 { if r == 31 && !allow_sp { 0 } else { 1u32 << r } }
+fn cache_access(w: u32) -> CacheAccess {
+    let (d, n, m, a) = (w & 31, (w >> 5) & 31, (w >> 16) & 31, (w >> 10) & 31);
+    let mut x = CacheAccess::default();
+    let rd = reg_bit(d, false); let rn = reg_bit(n, false); let rm = reg_bit(m, false);
+    // Immediate integer families (same class split as interp::dp_imm).
+    if (w >> 25) & 14 == 8 {
+        match (w >> 23) & 7 {
+            0 | 1 => x.xw = rd, // ADR(P)
+            2 => { x.xr = reg_bit(n, true); x.xw = reg_bit(d, w & (1 << 29) == 0); }
+            4 => { x.xr = rn; x.xw = reg_bit(d, (w >> 29) & 3 != 3); }
+            5 => { x.xr = if (w >> 29) & 3 == 3 { rd } else { 0 }; x.xw = rd; }
+            6 => { x.xr = rn | if (w >> 29) & 3 == 1 { rd } else { 0 }; x.xw = rd; }
+            7 => { x.xr = rn | rm; x.xw = rd; }
+            _ => return CacheAccess { xr: !0, vr: !0, ..x },
+        }
+        return x;
+    }
+    if w & 0x1f00_0000 == 0x0a00_0000 { x.xr = rn | rm; x.xw = rd; return x; }
+    if w & 0x1f00_0000 == 0x0b00_0000 {
+        let extended = w & (1 << 21) != 0;
+        x.xr = reg_bit(n, extended) | rm;
+        x.xw = reg_bit(d, extended && w & (1 << 29) == 0); return x;
+    }
+    if w & 0x5fe0_0000 == 0x5ac0_0000 { x.xr = rn; x.xw = rd; return x; }
+    if w & 0x5fe0_0000 == 0x1ac0_0000 || w & 0x1fe0_0000 == 0x1a00_0000 || w & 0x1fe0_0000 == 0x1a80_0000 {
+        x.xr = rn | rm; x.xw = rd; return x;
+    }
+    if w & 0x1f00_0000 == 0x1b00_0000 { x.xr = rn | rm | reg_bit(a, false); x.xw = rd; return x; }
+    // Simple scalar floating-point arithmetic and fused multiply-add.
+    if w & 0xff20_0c00 == 0x1e20_0800 && (w >> 12) & 15 <= 3 {
+        x.vr = (1 << n) | (1 << m); x.vw = 1 << d; return x;
+    }
+    if w & 0xff3f_fc00 == 0x1e21_c000 { x.vr = 1 << n; x.vw = 1 << d; return x; }
+    if w & 0xff00_0000 == 0x1f00_0000 {
+        x.vr = (1 << n) | (1 << m) | (1 << a); x.vw = 1 << d; return x;
+    }
+    // Common single-register memory accesses: avoid interpreting offset fields
+    // or the other register bank as a use of the cached value.
+    if w & 0x3b00_0000 == 0x3900_0000 || w & 0x3b20_0000 == 0x3800_0000 {
+        let v = w & (1 << 26) != 0;
+        let opc = (w >> 22) & 3;
+        x.xr = reg_bit(n, true);
+        if w & 0x3b00_0000 != 0x3900_0000 && ((w >> 10) & 3 == 1 || (w >> 10) & 3 == 3) { x.xw |= reg_bit(n, true); }
+        if v {
+            if opc & 1 != 0 { x.vw = 1 << d; } else { x.vr = 1 << d; }
+        } else if opc == 0 { x.xr |= rd; } else { x.xw |= rd; }
+        return x;
+    }
+    if w & 0x3b20_0c00 == 0x3820_0800 {
+        x.xr = reg_bit(n, true) | rm;
+        if w & (1 << 26) != 0 {
+            if (w >> 22) & 1 != 0 { x.vw = 1 << d; } else { x.vr = 1 << d; }
+        } else if (w >> 22) & 3 == 0 { x.xr |= rd; } else { x.xw = rd; }
+        return x;
+    }
+    if w & 0x7e00_0000 == 0x3400_0000 || w & 0x7e00_0000 == 0x3600_0000 {
+        x.xr = rd; return x; // CBZ/TBZ use Rt, not Rd
+    }
+    if w & 0xfe00_0000 == 0xd600_0000 { x.xr = rn; return x; }
+    if is_terminator(w) { return x; }
+    CacheAccess { xr: !0, vr: !0, ..x }
+}
+
+fn cache_next_uses(look: &[u32]) -> [[u8; 32]; 2] {
+    let mut next = [[u8::MAX; 32]; 2];
+    let mut unresolved = [!0u32; 2];
+    for (i, &w) in look.iter().enumerate() {
+        let a = cache_access(w);
+        for (bank, (reads, writes)) in [(a.xr, a.xw), (a.vr, a.vw)].into_iter().enumerate() {
+            let mut used = reads & unresolved[bank];
+            while used != 0 {
+                let reg = used.trailing_zeros() as usize;
+                next[bank][reg] = i as u8;
+                used &= used - 1;
+            }
+            // An old value has no next use when overwritten before being read.
+            unresolved[bank] &= !(reads | writes);
+        }
+        if unresolved == [0, 0] { break; }
+    }
+    next
+}
+#[cfg(test)]
+fn next_cache_use(look: &[u32], n: u32, vector: bool) -> Option<usize> {
+    let n = cache_next_uses(look)[vector as usize][n as usize];
+    (n != u8::MAX).then_some(n as usize)
+}
+
+
 #[derive(Clone, Copy, Default)]
 pub struct RegCache {
     /// Guest register held in each slot (0xff = empty).
@@ -219,6 +315,7 @@ impl Unit {
             rc: RegCache::new(),
             rc_frozen: false,
             look: Vec::new(),
+            cache_uses: [[u8::MAX; 32]; 2],
             dead_flags: false,
             skip_next: false,
             inline_ok: false,
@@ -361,10 +458,13 @@ impl<'a> E<'a> {
         self.u.rc.tick += 1;
         self.u.rc.stamp[s] = self.u.rc.tick;
     }
-    /// Slot for guest register `n` (least recently used one is evicted; memory is up to date).
+    /// Slot for `n`: furthest next use, LRU tie-break (memory stays up to date).
     fn rc_alloc(&mut self, n: u32) -> usize {
         let rc = &self.u.rc;
-        let s = (0..NCREGS).find(|&i| rc.reg[i] == 0xff).unwrap_or_else(|| (0..NCREGS).min_by_key(|&i| rc.stamp[i]).unwrap());
+        let s = (0..NCREGS).find(|&i| rc.reg[i] == 0xff).unwrap_or_else(|| {
+            if jit_off("nextuse") { (0..NCREGS).min_by_key(|&i| rc.stamp[i]).unwrap() }
+            else { (0..NCREGS).max_by_key(|&i| (self.u.cache_uses[0][rc.reg[i] as usize], u32::MAX - rc.stamp[i])).unwrap() }
+        });
         self.u.rc.reg[s] = n as u8;
         self.rc_touch(s);
         s
@@ -388,7 +488,10 @@ impl<'a> E<'a> {
     }
     fn vc_alloc(&mut self, n: u32) -> usize {
         let vc = &self.u.vc;
-        let s = (0..NVREGS).find(|&i| vc.reg[i] == 0xff).unwrap_or_else(|| (0..NVREGS).min_by_key(|&i| vc.stamp[i]).unwrap());
+        let s = (0..NVREGS).find(|&i| vc.reg[i] == 0xff).unwrap_or_else(|| {
+            if jit_off("nextuse") { (0..NVREGS).min_by_key(|&i| vc.stamp[i]).unwrap() }
+            else { (0..NVREGS).max_by_key(|&i| (self.u.cache_uses[1][vc.reg[i] as usize], u32::MAX - vc.stamp[i])).unwrap() }
+        });
         self.u.vc.reg[s] = n as u8;
         self.vc_touch(s);
         s
@@ -412,7 +515,7 @@ impl<'a> E<'a> {
         }
         let s = match self.vc_find(d) {
             Some(s) => s,
-            None if self.used_soon(d) => self.vc_alloc(d),
+            None if self.used_soon_bank(d, true) => self.vc_alloc(d),
             None => return,
         };
         a!(self, movdqa(VREGS[s], x));
@@ -435,11 +538,13 @@ impl<'a> E<'a> {
             None => a!(self, movss(x, dword_ptr(r15 + voff(n)))),
         }
     }
-    /// Does a later instruction of this block name guest register `n` in any register field?
-    /// (Heuristic: false positives only cost performance.)
-    fn used_soon(&self, n: u32) -> bool {
+    /// Is the current bank-local value read before a known overwrite in the
+    /// lookahead? Unknown encodings are conservative; this affects speed only.
+    fn used_soon_bank(&self, n: u32, vector: bool) -> bool {
+        if !jit_off("nextuse") { return self.u.cache_uses[vector as usize][n as usize] != u8::MAX; }
         self.u.look.iter().any(|&w| (w & 31) == n || ((w >> 5) & 31) == n || ((w >> 10) & 31) == n || ((w >> 16) & 31) == n)
     }
+    fn used_soon(&self, n: u32) -> bool { self.used_soon_bank(n, false) }
     /// A label is about to be created: code after it may be conditional.
     fn new_label(&mut self) -> CodeLabel {
         self.u.rc_frozen = true;
@@ -988,6 +1093,7 @@ pub fn emit_block(u: &mut Unit, pc: u64, read: &dyn Fn(u64) -> Option<u32>) -> u
             return cur;
         };
         let fuse_in = u.fuse.take();
+        if !jit_off("nextuse") { u.cache_uses = cache_next_uses(&u.look); }
         u.rc_frozen = false;
         u.dead_flags = false;
         if let Some(kind) = fusable_setter(insn) {
@@ -5959,5 +6065,61 @@ mod tbi_mask_tests {
                 assert_eq!(cpu.x[2], expected, "initial_mask={initial_mask} branch={branch}");
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod cache_nextuse_tests {
+    use super::*;
+
+    #[test]
+    fn masks_separate_banks_and_discarded_old_values() {
+        // MOVZ X3,#3 is a write, not an old-value use through Rd or imm16 bits.
+        let movz = 0xd2800063;
+        let a = cache_access(movz);
+        assert_eq!((a.xr, a.xw, a.vr, a.vw), (0, 1 << 3, 0, 0));
+        assert_eq!(next_cache_use(&[movz, 0x8b030020], 3, false), None);
+        // ADD X3,X3,X4 consumes X3 before overwriting it.
+        assert_eq!(next_cache_use(&[0x8b040063], 3, false), Some(0));
+        let fadd = cache_access(0x1e622820); // FADD D0,D1,D2
+        assert_eq!((fadd.xr, fadd.xw), (0, 0));
+        assert_eq!((fadd.vr, fadd.vw), ((1 << 1) | (1 << 2), 1));
+        assert_eq!(next_cache_use(&[0x1e622820, movz], 3, false), None);
+        let store = cache_access(0xf90017e3); // STR X3,[SP,#40]
+        assert_eq!(store.xr, (1 << 31) | (1 << 3));
+        assert_eq!(store.xw, 0);
+        let load = cache_access(0xf94017e3);
+        assert_eq!((load.xr, load.xw), (1 << 31, 1 << 3));
+        let unknown = cache_access(0xffff_ffff);
+        assert_eq!((unknown.xr, unknown.vr), (!0, !0));
+        assert_eq!((unknown.xw, unknown.vw), (0, 0));
+    }
+
+    #[test]
+    fn eviction_prefers_dead_then_furthest_not_oldest() {
+        if jit_off("nextuse") { return; } // caller can test the old policy separately
+        let mut u = Unit::new(StubKind::Plain, false);
+        u.rc.reg = [0, 1, 2, 3, 4];
+        u.rc.stamp = [1, 2, 3, 4, 5];
+        // X0 is oldest but consumed immediately; X1 and X2 are not consumed.
+        u.look = vec![0x8b04000a, 0x8b03014b];
+        u.cache_uses = cache_next_uses(&u.look);
+        let mut e = E { u: &mut u, pc: 0, fuse_in: None, scalar_inputs: None };
+        assert_eq!(e.rc_alloc(9), 1); // oldest dead slot (X1), not live X0
+        e.u.vc.reg = [0, 1, 2, 3, 4, 5, 6, 7];
+        e.u.vc.stamp = [1, 2, 3, 4, 5, 6, 7, 8];
+        e.u.look = vec![0x1e622820]; // V1/V2 read now, V0 written
+        e.u.cache_uses = cache_next_uses(&e.u.look);
+        assert_eq!(e.vc_alloc(9), 0); // old V0 is killed; bank-local decision
+        e.u.rc.reg = [0, 1, 2, 3, 4];
+        e.u.rc.stamp = [1, 2, 3, 4, 5];
+        e.u.look = vec![0x8b01000a, 0x8b03004b, 0x8b05008c];
+        e.u.cache_uses = cache_next_uses(&e.u.look);
+        assert_eq!(e.rc_alloc(9), 4); // newest slot, but used furthest away
+        e.u.vc.reg = [0, 1, 2, 3, 4, 5, 6, 7];
+        e.u.vc.stamp = [1, 2, 3, 4, 5, 6, 7, 8];
+        e.u.look = (0..8).map(|r| 0x1e60281f | (r << 5) | (r << 16)).collect();
+        e.u.cache_uses = cache_next_uses(&e.u.look);
+        assert_eq!(e.vc_alloc(9), 7);
     }
 }
