@@ -15,3 +15,13 @@ VideoToolbox runs in software in the guest (HEVC encode of 60 720p frames 2.1 s 
    shared by IOSurface ID; encoded data as bytes + format description parameter sets). Opt-in
    `ATTESOR_GPU_VT=1`. Verify with tests/attesor/vtcodec.m: identical round-trip checks, hw=1, timings.
 No GUI apps; offscreen rendering only.
+
+## Round 2 (Claude ran the GPU measurements outside the sandbox: Metal/VT are unavailable inside it)
+Baseline from `gpu/measure-headless.py --frames 120 --seed 1`, ~/bin/attesor, load 6-12:
+native 339.9 fps; attesor 259.4 / 270.5 / 246.3 fps (~76% of native); checksum identical (fc302ac9fe269bef);
+host calls per frame incl. setup 63.8 — by kind: 1:403, 2:403, 4:6836, 5:16 (120 frames).
+Your job now: implement #25 (cut round trips: batch kind-4 calls, async where no reply is needed, shared memory
+for uploads) and #27 (VT bridge, opt-in `ATTESOR_GPU_VT=1`) in code; keep `measure-headless.py --after` ready.
+You cannot run Metal or VT in the sandbox: build, run the oracle/unit tests you can, then stop and say exactly
+which commands Claude must run outside the sandbox (measure-headless.py --before/--after, tests/attesor rtprobe,
+vtcodec). Commit messages to target/ as before.
