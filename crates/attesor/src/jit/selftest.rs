@@ -528,9 +528,18 @@ fn loop_insn(rng: &mut Rng, pool: &[u32], wide: bool, i: usize) -> u32 {
                 | (offset << 15) | (t2 << 10) | ((20 + rng.next() as u32 % 4) << 5) | d
         }
         11 => { // LDR/STR register offset, x29 remains a small private-buffer index
-            let size = rng.next() as u32 % 4;
-            (size << 30) | 0x3820_6800 | ((rng.next() as u32 & 1) << 22)
-                | (29 << 16) | ((rng.next() as u32 & 1) << 12)
+            // GPR or SIMD&FP (B/H/S/D, and Q whose LSL #4 scale x86 addressing cannot encode),
+            // with every valid extend (UXTW, LSL, SXTW, SXTX).
+            let load = rng.next() as u32 & 1;
+            let vector = rng.next() & 1 == 1;
+            let (size, opc) = match (vector, rng.next() % 5) {
+                (true, 4) => (0, 2 | load),
+                (true, k) => (k as u32, load),
+                (false, _) => (rng.next() as u32 % 4, load),
+            };
+            let option = [0b010, 0b011, 0b110, 0b111][rng.next() as usize % 4];
+            (size << 30) | 0x3820_0800 | ((vector as u32) << 26) | (opc << 22)
+                | (29 << 16) | (option << 13) | ((rng.next() as u32 & 1) << 12)
                 | ((20 + rng.next() as u32 % 4) << 5) | d
         }
         12 => fp_insn(rng),
