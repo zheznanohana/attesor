@@ -905,15 +905,57 @@ fn writes_all_flags(insn: u32) -> bool {
         || insn & 0xFF20_FC07 == 0x1E20_2000                            // FCMP/FCMPE
 }
 
-/// Instructions that cannot fault, call a helper, change NZCV, or leave this block.
-/// A blacklist of flag readers is insufficient: unknown encodings and memory accesses
-/// can exit before the next writer, and the exception handler needs the current NZCV.
+/// Guest memory faults end the program (signals.rs: no delivery to guest handlers), so the NZCV a
+/// fault would leave behind is only seen by the crash dump. Loads and stores may then sit between a
+/// setter and its overwriting writer. Turn this off when fault delivery is implemented.
+const GUEST_FAULTS_FATAL: bool = true;
+
+/// Instructions that cannot fault (into anything that observes guest state), call a helper,
+/// change or read NZCV, or leave this block. Valid encodings only: a reserved one exits to the
+/// interpreter, which would see the stale flags.
 fn flags_safe_passthrough(w: u32) -> bool {
+    let sf = w >> 31 != 0;
     if w == 0xd503_201f { return true; } // NOP
     if w & 0x1f00_0000 == 0x1000_0000 { return true; } // ADR/ADRP
     if w & 0x3f80_0000 == 0x1100_0000 { return true; } // ADD/SUB imm, !S
     if w & 0x1f80_0000 == 0x1280_0000 { // MOVN/Z/K, valid width/halfword
-        return (w >> 29) & 3 != 1 && (w >> 31 != 0 || (w >> 21) & 3 < 2);
+        return (w >> 29) & 3 != 1 && (sf || (w >> 21) & 3 < 2);
+    }
+    if w & 0x1f80_0000 == 0x1200_0000 && (w >> 29) & 3 != 3 { // AND/ORR/EOR immediate (not ANDS)
+        return (sf || bit(w, 22) == 0) && decode_logic_imm(bit(w, 22), bits(w, 15, 10), bits(w, 21, 16), sf).is_some();
+    }
+    if w & 0x1f80_0000 == 0x1300_0000 && (w >> 29) & 3 != 3 { // SBFM/BFM/UBFM (LSL, LSR, UBFX, SXTW, ...)
+        return bit(w, 22) == sf as u32 && (sf || (bits(w, 21, 16) < 32 && bits(w, 15, 10) < 32));
+    }
+    if w & 0x7fa0_0000 == 0x1380_0000 { // EXTR
+        return bit(w, 22) == sf as u32 && (sf || bits(w, 15, 10) < 32);
+    }
+    if w & 0x1f00_0000 == 0x0a00_0000 && (w >> 29) & 3 != 3 { // logical shifted register (not ANDS/BICS)
+        return sf || bit(w, 15) == 0;
+    }
+    if w & 0x3f20_0000 == 0x0b00_0000 { // ADD/SUB shifted register, !S
+        return (w >> 22) & 3 != 3 && (sf || bit(w, 15) == 0);
+    }
+    if w & 0x3fe0_0000 == 0x0b20_0000 { // ADD/SUB extended register, !S
+        return bits(w, 12, 10) <= 4;
+    }
+    if w & 0x7fe0_0000 == 0x1ac0_0000 { // UDIV/SDIV/LSLV/LSRV/ASRV/RORV (division by zero gives 0 on ARM)
+        return matches!(bits(w, 15, 10), 2 | 3 | 8..=11);
+    }
+    if w & 0x7fff_0000 == 0x5ac0_0000 { // RBIT/REV16/REV/REV32/CLZ/CLS
+        return bits(w, 15, 10) <= 5 && (sf || bits(w, 15, 10) != 3);
+    }
+    if w & 0x7f00_0000 == 0x1b00_0000 { // MADD/MSUB (MUL), SMADDL/UMADDL/SMULH/UMULH
+        let op = bits(w, 23, 21);
+        return op == 0 || (sf && (op == 1 || op == 5 || ((op == 2 || op == 6) && bit(w, 15) == 0)));
+    }
+    if GUEST_FAULTS_FATAL {
+        // LDR/STR (immediate pre/post-index, unscaled, unsigned offset, register offset), LDP/STP;
+        // general and SIMD&FP registers. Not exclusives, atomics or PAC loads.
+        if w & 0x3b00_0000 == 0x3900_0000 { return true; } // unsigned offset
+        if w & 0x3b20_0000 == 0x3800_0000 { return bits(w, 11, 10) != 2; } // unscaled, post-index, pre-index (not LDTR)
+        if w & 0x3b20_0c00 == 0x3820_0800 { return bit(w, 14) == 1; } // register offset, UXTW/LSL/SXTW/SXTX
+        if w & 0x3a00_0000 == 0x2800_0000 { return bits(w, 31, 30) != 3; } // pairs
     }
     false
 }
@@ -6517,9 +6559,7 @@ mod flags_liveness_tests {
     #[test]
     fn flags_scan_stops_before_faults_helpers_and_readers() {
         const WRITE: u32 = 0xf100_041f; // CMP X0, #1
-        for boundary in [0xf940_0020, // LDR X0, [X1] may fault
-                         0xf900_0020, // STR X0, [X1] may fault
-                         0,           // undefined -> interpreter helper
+        for boundary in [0,           // undefined -> interpreter helper
                          0xd400_1001, // SVC
                          0x9a02_0020, // ADC X0, X1, X2 consumes C
                          0xda02_0020, // SBC X0, X1, X2 consumes C
@@ -6536,6 +6576,9 @@ mod flags_liveness_tests {
             assert!(!dead(&[boundary, WRITE]), "boundary={boundary:08x}");
         }
         assert!(dead(&[0xd503_201f, 0x9100_0401, 0xd280_0022, WRITE]));
+        // non-faulting data processing: EOR, MUL, AND #0xff, LSL, UDIV, CLZ, and (faults being fatal) LDRB/STR
+        assert!(dead(&[0xca01_0000, 0x9b02_7c20, 0x1200_1c00, 0xd37d_f000, 0x9ac2_0820, 0xdac0_1000, WRITE]));
+        assert!(GUEST_FAULTS_FATAL && dead(&[0x3840_158d, 0xf900_0020, WRITE]));
         assert!(!dead(&[0xd503_201f])); // no proof past block/readable end
         assert!(!dead(&[0xd65f_03c0, WRITE])); // RET: flags live at exit
     }

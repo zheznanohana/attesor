@@ -42,3 +42,14 @@ ATTESOR_JIT_DISABLE=dpreg cargo test -p attesor helper_exit_observes_preceding_c
 
 Any integration of this code-generation change must increment the AOT translator
 version so old cached code cannot retain the incorrect liveness decision.
+
+## Non-faulting instructions (follow-up)
+
+The whitelist above also stopped at ordinary integer instructions (EOR, MUL, AND, shifts, LDRB...),
+which put four NZCV stores back into most loops: int-hash +35%, branchy +15% against the previous
+release. `flags_safe_passthrough` now accepts every valid encoding of the non-faulting integer
+data-processing classes (logical/add/sub immediate and register without S, bitfield, EXTR, 2- and
+1-source, MADD/MSUB/MULH family). Loads and stores pass too while `GUEST_FAULTS_FATAL` holds: guest
+faults end the program, so stale NZCV is only visible in the crash dump. Reserved encodings, SVC,
+ISB, flag readers and the debug-disabled CSEL path remain boundaries. int-hash 525 -> 396 ms,
+branchy 1287 -> 1123 ms (interleaved A/B, same load).
