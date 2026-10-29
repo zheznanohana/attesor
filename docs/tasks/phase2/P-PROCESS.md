@@ -15,3 +15,21 @@ Evidence: Electron apps start 6+ guest processes; each translates the same Elect
    interpreter/JIT; e.g. cache PrebuiltLoader sets or the result of its expensive steps). Report if not feasible.
 4. #23/#24: measure emulation overhead of Mach IPC, psynch/ulock, path mapping/container mapping; fix if >5%.
 5. #35: translation threads at lower QoS, guest UI threads unchanged; measure that nothing gets slower.
+
+## Round 2 (Claude)
+Round 1 committed (measurements, opt-in process-qos: slower, stays off). Decisions:
+- #28 moves to wave 2 (needs translator-core registration/invalidation APIs; it will be done together with the
+  core tracks). Do not work on it now.
+- #30, new approach: your Node profile shows dyld's `JustInTimeLoader::applyFixups` at ~24% of start-up
+  execution samples. Apply chained fixups natively instead of caching closures: recognise the guest dyld's
+  fixup-application entry point(s) for an image (dyld has symbols in the sysroot), and perform the same
+  rebases/binds in Rust on the host for that image (the way `cache::map_and_slide_2` applies shared-cache
+  slides), returning to dyld as if its loop had run. Binds need symbol resolution: either keep dyld doing binds
+  and do only rebases natively, or resolve via dyld's own results; measure which part dominates first.
+  Opt-in `ATTESOR_JIT_ON=nativefixups` (or a process option), exact equivalence check: memory of every fixed-up
+  page identical with and without, for Node, a Foundation test program and a big dylib; start time A/B.
+- #29, safer design to evaluate (feasibility report first, implement only if the hazards are solvable): spawn
+  without exec — the parent attesor forks itself and the child drops the parent's guest state and loads the new
+  program in-process, reusing the mapped shared cache, slide cache and loaded AOT. Parent/child, waitpid,
+  signals and fds then stay correct by construction; the open problems are multithreaded fork safety (locks of
+  other threads, allocator), posix_spawn file actions/attributes, and fully unmapping the parent's guest memory.
