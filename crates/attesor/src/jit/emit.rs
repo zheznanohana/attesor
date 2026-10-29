@@ -644,6 +644,39 @@ fn writes_all_flags(insn: u32) -> bool {
         || insn & 0xFF20_FC07 == 0x1E20_2000                            // FCMP/FCMPE
 }
 
+/// Is `insn` a CSEL-family select that a `kind` setter's live x86 flags can feed (fused select)?
+fn fused_select(kind: FuseKind, insn: u32) -> bool {
+    insn & 0x3FE0_0800 == 0x1A80_0000 && x86_cc(kind, ((insn >> 12) & 15) ^ 1).is_some()
+}
+
+/// Flags of a fusable `kind` setter at `pc` that only fused selects read: the selects right after it
+/// run on the live x86 flags (each keeps them), then the guest flags must be dead, either at a fused
+/// B.cond (both successors) or by being overwritten in straight-line code before any other reader.
+/// `room` is how many more instructions the block may take; no label may sit inside the select chain.
+fn flags_dead_after_selects(kind: FuseKind, pc: u64, room: usize, labels: &HashMap<u64, CodeLabel>, read: &dyn Fn(u64) -> Option<u32>) -> bool {
+    let mut p = pc + 4;
+    let mut n = 0;
+    while let Some(w) = read(p) {
+        if !fused_select(kind, w) || labels.contains_key(&p) || n + 2 > room {
+            break;
+        }
+        p += 4;
+        n += 1;
+    }
+    if n == 0 {
+        return false;
+    }
+    let Some(w) = read(p) else { return false };
+    if w & 0xFF00_0010 == 0x5400_0000 && (w & 15) < 14 {
+        if x86_cc(kind, w & 15).is_none() || labels.contains_key(&p) || n + 2 > room {
+            return false;
+        }
+        let target = p.wrapping_add((sext(((w >> 5) & 0x7ffff) as u64, 19) << 2) as u64);
+        return flags_dead_at(target, read) && flags_dead_at(p + 4, read);
+    }
+    flags_dead_at(p, read)
+}
+
 /// Are the flags dead at `pc`: overwritten before anything reads them, looking at most a few
 /// straight-line instructions ahead (unconditional direct branches are followed).
 fn flags_dead_at(mut pc: u64, read: &dyn Fn(u64) -> Option<u32>) -> bool {
@@ -840,6 +873,14 @@ pub fn emit_block(u: &mut Unit, pc: u64, read: &dyn Fn(u64) -> Option<u32>) -> u
                         DEAD_FLAG_SKIPS.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
                     }
                 }
+            }
+            if !u.dead_flags
+                && disabled_classes() & 32 == 0
+                && !jit_off("selflags")
+                && flags_dead_after_selects(kind, cur, MAX_BLOCK_INSNS - count, &u.labels, read)
+            {
+                u.dead_flags = true;
+                DEAD_FLAG_SKIPS.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
             }
         }
         let mut e = E { u, pc: cur, fuse_in };
@@ -1377,6 +1418,8 @@ impl<'a> E<'a> {
                     }
                     self.cmov(cc_false, rcx, rdx, sf);
                     self.stx(rd, rcx, false);
+                    // the x86 flags are untouched: a following select can use them too
+                    self.u.fuse = Some(k);
                     return true;
                 }
             }

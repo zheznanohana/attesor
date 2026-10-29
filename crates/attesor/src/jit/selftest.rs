@@ -171,6 +171,114 @@ fn run_selftest_fuse(count: usize, deep: bool) {
     println!("jit selftest [fuse{}]: ok={ok} mismatch={bad} skipped={skipped} native={native} pairs={fused} dead_flag_skips={}", if deep { "2" } else { "" }, DEAD_FLAG_SKIPS.load(Ordering::Relaxed));
 }
 
+/// Flag setter feeding a chain of 1-3 selects, then either a B.cond over a writer or straight-line code
+/// up to a writer: the shape where the setter's guest flags are never stored (flags_dead_after_selects).
+fn run_selftest_selchain(count: usize) {
+    const SETTERS: [(u32, u32); 5] = [
+        (0x3F80_0000, 0x3100_0000),
+        (0x3F20_0000, 0x2B00_0000),
+        (0x3F20_0000, 0x2B20_0000),
+        (0x7F80_0000, 0x7200_0000),
+        (0x7F00_0000, 0x6A00_0000),
+    ];
+    let page = unsafe {
+        libc::mmap(std::ptr::null_mut(), 0x1000, libc::PROT_READ | libc::PROT_WRITE, libc::MAP_ANON | libc::MAP_PRIVATE, -1, 0) as u64
+    };
+    let mut rng = Rng(0x5e1c_4a11_0bad_cafe);
+    let (mut ok, mut bad, mut skipped, mut native) = (0u64, 0u64, 0u64, 0u64);
+    let skips0 = DEAD_FLAG_SKIPS.load(Ordering::Relaxed);
+    let setter_of = |rng: &mut Rng| {
+        let (m, v) = SETTERS[(rng.next() % SETTERS.len() as u64) as usize];
+        (rng.next() as u32 & !m) | v
+    };
+    for _ in 0..count {
+        let mut prog = vec![setter_of(&mut rng)];
+        // all selects test the same condition class often (eq/ne/hi...), sometimes different ones
+        let cond0 = rng.next() as u32 % 14;
+        for _ in 0..1 + rng.next() % 3 {
+            let f = rng.next() as u32;
+            let cond = if f & 1 != 0 { cond0 } else { (f >> 1) % 14 };
+            prog.push((f & !0x3FE0_F800) | 0x1A80_0000 | (cond << 12) | (f & 0x0000_0400));
+        }
+        if rng.next() % 2 == 0 {
+            prog.push(0x5400_0000 | (2 << 5) | (rng.next() as u32 % 14)); // b.cond +8
+            prog.push(setter_of(&mut rng));
+            prog.push(setter_of(&mut rng));
+        } else {
+            prog.push((rng.next() as u32 & !0xFF80_0000) | 0x9100_0000); // add (immediate), no flags
+            prog.push(setter_of(&mut rng));
+        }
+        prog.push(0xD400_1001);
+        let mut init = Cpu::new();
+        for i in 0..31 {
+            init.x[i] = rng.val();
+        }
+        init.x[31] = rng.val();
+        init.set_nzcv((rng.next() % 16) as u32);
+        init.pc = page;
+        for (i, w) in prog.iter().enumerate() {
+            unsafe { *((page + 4 * i as u64) as *mut u32) = *w };
+        }
+        let mut r = Cpu::new();
+        *r = clone_cpu(&init);
+        let mut steps = 0;
+        let mut bad_ref = false;
+        loop {
+            let insn = unsafe { *(r.pc as *const u32) };
+            match interp::exec(&mut r, insn) {
+                Ok(()) => {}
+                Err(interp::Exit::Svc(_)) => break,
+                Err(_) => { bad_ref = true; break; }
+            }
+            steps += 1;
+            if steps > 12 { bad_ref = true; break; }
+        }
+        if bad_ref {
+            skipped += 1;
+            continue;
+        }
+        invalidate_range(page, 64);
+        let mut j = Cpu::new();
+        *j = clone_cpu(&init);
+        setup_cpu(&mut j);
+        let fb0 = STATS_FALLBACK.load(Ordering::Relaxed);
+        let host = lookup_or_translate(page);
+        if STATS_FALLBACK.load(Ordering::Relaxed) == fb0 {
+            native += 1;
+        }
+        unsafe { attesor_jit_enter(&mut *j, host) };
+        let mut hops = 0;
+        while j.exit_reason != EXIT_SVC && j.exit_reason != EXIT_PENDING && hops < 6 {
+            let h2 = lookup_or_translate(j.pc);
+            unsafe { attesor_jit_enter(&mut *j, h2) };
+            hops += 1;
+        }
+        let pending = PENDING.with(|p| p.take());
+        if j.exit_reason == EXIT_PENDING || pending.is_some() {
+            skipped += 1;
+            continue;
+        }
+        let (a, b) = (snapshot(&r), snapshot(&j));
+        if a != b || j.exit_reason != EXIT_SVC {
+            bad += 1;
+            if bad <= 20 {
+                println!("MISMATCH");
+                for w in &prog {
+                    println!("    {:08x} {}", w, disasm(*w));
+                }
+                for i in 0..a.len() {
+                    if a[i] != b[i] {
+                        println!("    slot {i}: interp={:#x} jit={:#x}", a[i], b[i]);
+                    }
+                }
+            }
+        } else {
+            ok += 1;
+        }
+    }
+    println!("jit selftest [selchain]: ok={ok} mismatch={bad} skipped={skipped} native={native} dead_flag_skips={}", DEAD_FLAG_SKIPS.load(Ordering::Relaxed) - skips0);
+}
+
 /// Random straight-line blocks over a small register set (so values are reused constantly): exercises
 /// the JIT's register cache and flag fusion across instructions. Memory operations use x20-x23 as
 /// bases, which no other instruction may write except through their own writeback.
@@ -308,6 +416,9 @@ pub fn run_selftest(class: &str, count: usize) {
     }
     if class == "blocks" {
         return run_selftest_blocks(count);
+    }
+    if class == "selchain" {
+        return run_selftest_selchain(count);
     }
     let (mask, val): (u32, u32) = match class {
         "dpimm" => (0x1C00_0000, 0x1000_0000),
