@@ -99,6 +99,7 @@ pub struct Unit {
     pub skip_next: bool,
     /// The unit may take extra blocks (the JIT's own units; AOT units are laid out up front).
     pub inline_ok: bool,
+    pub(super) callret: bool,
     /// Blocks to translate into this unit after the current one: call continuations, so a translated
     /// RET lands on code that runs straight into the caller's next block.
     pub inline_queue: Vec<u64>,
@@ -391,6 +392,7 @@ impl Unit {
             dead_flags: false,
             skip_next: false,
             inline_ok: false,
+            callret: callret_enabled(),
             inline_queue: Vec::new(),
             vc: VCache::new(),
             dead_v: 0,
@@ -1654,12 +1656,11 @@ fn jit_off(group: &str) -> bool {
         .any(|g| g == group)
 }
 
-/// Translated BL/BLR/RET as host call/ret (see E::host_call). Opt-in with ATTESOR_JIT_ON=callret: measured
-/// slower than the indirect-branch cache (callsites bench ~110 ms vs ~70 ms, qsort -5%), since the epoch and
-/// target checks on every return cost more than the return-stack prediction saves.
-fn callret_enabled() -> bool {
+/// Host call/return remains opt-in until every required alternating benchmark
+/// wins. OFF always takes precedence, including over an explicit ON.
+pub(super) fn callret_enabled() -> bool {
     static F: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
-    *F.get_or_init(|| std::env::var("ATTESOR_JIT_ON").unwrap_or_default().split(',').any(|g| g == "callret"))
+    *F.get_or_init(|| !jit_off("callret") && std::env::var("ATTESOR_JIT_ON").unwrap_or_default().split(',').any(|g| g == "callret"))
 }
 
 /// Ten-register write-back region for JIT units and position-independent AOT blobs.
@@ -2791,7 +2792,7 @@ impl<'a> E<'a> {
             let target = pc.wrapping_add((sext((insn & 0x03ff_ffff) as u64, 26) << 2) as u64);
             if insn & 0x8000_0000 != 0 {
                 self.st_imm(30, next);
-                if callret_enabled() {
+                if self.u.callret {
                     self.host_call(next, |e| e.goto(target));
                     return true;
                 }
@@ -2885,22 +2886,29 @@ impl<'a> E<'a> {
             self.ldx(rax, reg, false);
             if opc & 1 != 0 {
                 self.st_imm(30, next);
-                if callret_enabled() {
+                if self.u.callret {
                     // BLR/BLRAA…: rax holds the target across the call setup (only rcx is used)
                     self.host_call(next, |e| e.indirect(false));
                     return true;
                 }
             }
-            if opc == 2 && callret_enabled() {
-                // RET: return through the host stack when a translated call is open, so the host's
-                // return predictor sees a call/ret pair; the continuation checks the target.
-                // a call frame is open iff rsp is below the entry stack pointer (loads only: no
-                // read-modify-write chain on a counter)
+            if opc == 2 && self.u.callret {
+                // Each frame is [host continuation, expected guest PC]. A changed
+                // LR / longjmp searches older frames, never returns to a nonmatching
+                // continuation. Depth is bounded by host_call. Plain/depth-overflow
+                // calls need no special marker: matching by guest PC is sufficient.
+                let mut l_scan = self.new_label();
                 let mut l_plain = self.new_label();
+                self.u.a.set_label(&mut l_scan).unwrap();
                 a!(self, cmp(rsp, qword_ptr(r15 + off::HOST_SP)));
                 a!(self, jae(l_plain));
-                a!(self, mov(qword_ptr(r15 + off::RET_TARGET), rax));
+                a!(self, cmp(rax, qword_ptr(rsp + 8)));
+                let mut l_mismatch = self.new_label();
+                a!(self, jne(l_mismatch));
                 a!(self, ret());
+                self.u.a.set_label(&mut l_mismatch).unwrap();
+                a!(self, add(rsp, 16));
+                a!(self, jmp(l_scan));
                 self.u.a.set_label(&mut l_plain).unwrap();
             }
             self.indirect(opc == 2);
@@ -2994,45 +3002,42 @@ impl<'a> E<'a> {
         false
     }
 
-    /// Translated BL/BLR as a host call (Rosetta/Box64 CALLRET): the callee's RET becomes a host `ret`,
-    /// which the CPU's return-address predictor gets right, instead of an IBTC lookup and an indirect
-    /// jump. `callee` emits the jump to the target. Each open call keeps the translation epoch next to
-    /// the return address (also keeping rsp 16-byte aligned); the continuation goes on to `next` only
-    /// if no translation was invalidated meanwhile and the RET's target is `next`, else it dispatches
-    /// to the real target. Calls nest at most RAS_LIMIT deep; deeper ones (and longjmp-style returns)
-    /// take the plain paths, and the exit trampoline discards open host frames.
+    /// Two-word, 16-byte-aligned frames: push guest PC, then CALL pushes host
+    /// PC. No per-call epoch or RET_TARGET traffic. The epoch is sampled once at
+    /// jit_enter; a continuation checks it BEFORE executing another guest insn.
+    /// See docs/tasks/STAGE3-RESULTS.md for lifetime/concurrency requirements.
     fn host_call(&mut self, next: u64, callee: impl Fn(&mut Self)) {
-        const RAS_LIMIT: i32 = 256; // open calls; 16 bytes of host stack each
+        const RAS_LIMIT: i32 = 256;
+        debug_assert!(self.u.region.is_none(), "calls must not enter loopra regions");
         let mut l_plain = self.new_label();
         let mut l_callee = self.new_label();
-        let mut l_target = self.new_label();
-        // depth from the stack pointer itself: rsp > entry rsp - limit*16 leaves room for one more
+        let mut l_epoch = self.new_label();
         a!(self, mov(rcx, qword_ptr(r15 + off::HOST_SP)));
         a!(self, sub(rcx, RAS_LIMIT * 16));
         a!(self, cmp(rsp, rcx));
         a!(self, jbe(l_plain));
-        a!(self, mov(rcx, qword_ptr(r15 + off::EPOCH_PTR)));
-        a!(self, push(qword_ptr(rcx)));
-        a!(self, call(l_callee));
-        // continuation: the callee clobbered every host register but r15/rsp
-        self.rc_clear();
-        a!(self, pop(rcx));
-        a!(self, mov(rdx, qword_ptr(r15 + off::EPOCH_PTR)));
-        a!(self, mov(rax, qword_ptr(r15 + off::RET_TARGET)));
-        a!(self, cmp(rcx, qword_ptr(rdx)));
-        a!(self, jne(l_target));
         self.mov_imm(rcx, next);
-        a!(self, cmp(rax, rcx));
-        a!(self, jne(l_target));
-        // translate the caller's next block into this unit, so the continuation runs straight into it
+        a!(self, push(rcx));
+        a!(self, call(l_callee));
+        // All caches and live flag-fusion state die across guest calls.
+        self.rc_clear();
+        self.u.fuse = None;
+        a!(self, pop(rcx));
+        // Invalidated translations are retained, not freed/reused. Returning
+        // to this guard is safe even if another thread invalidated the caller.
+        // Reject its guest continuation and discard ALL frames at jit_exit.
+        a!(self, mov(rcx, qword_ptr(r15 + off::EPOCH_PTR)));
+        a!(self, mov(rcx, qword_ptr(rcx)));
+        a!(self, cmp(rcx, qword_ptr(r15 + off::ENTRY_EPOCH)));
+        a!(self, jne(l_epoch));
         if self.u.inline_ok && !self.u.labels.contains_key(&next) && self.u.inline_queue.len() < 8 {
             let l = self.u.a.create_label();
             self.u.labels.insert(next, l);
             self.u.inline_queue.push(next);
         }
         self.goto(next);
-        self.u.a.set_label(&mut l_target).unwrap();
-        self.indirect(true); // rax = where the RET wanted to go
+        self.u.a.set_label(&mut l_epoch).unwrap();
+        self.st_pc_and_exit(next); // do NOT consult a stale IBTC or chain slot
         self.u.a.set_label(&mut l_callee).unwrap();
         callee(self);
         self.u.a.set_label(&mut l_plain).unwrap();

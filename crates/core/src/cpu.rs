@@ -51,7 +51,7 @@ pub struct Cpu {
     pub host_sp: u64,
     /// Host call frames pushed by translated BL/BLR still open (bounded; 0 after every entry).
     pub ras_depth: u64,
-    /// Guest address a translated RET returns to, checked by the call continuation it lands on.
+    /// Reserved legacy CALLRET scratch (retained to preserve Cpu offsets).
     pub ret_target: u64,
     /// Host pointer to the translation epoch (bumped by every invalidation).
     pub epoch_ptr: u64,
@@ -62,6 +62,8 @@ pub struct Cpu {
     /// Stats-only public entries into write-back regions from disk-loaded AOT code.
     /// Generated code uses r15-relative addressing so cache blobs stay relocatable.
     pub aot_loop_regions: u64,
+    /// Translation epoch sampled by jit_enter, shared by all open host frames.
+    pub entry_epoch: u64,
 }
 
 pub mod off {
@@ -91,6 +93,7 @@ pub mod off {
     pub const RET_TARGET: usize = offset_of!(Cpu, ret_target);
     pub const EPOCH_PTR: usize = offset_of!(Cpu, epoch_ptr);
     pub const HELPERS: usize = offset_of!(Cpu, helpers);
+    pub const ENTRY_EPOCH: usize = offset_of!(Cpu, entry_epoch);
     pub const AOT_LOOP_REGIONS: usize = offset_of!(Cpu, aot_loop_regions);
     pub const fn xreg(n: usize) -> usize {
         X + n * 8

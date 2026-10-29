@@ -882,7 +882,177 @@ fn run_selftest_tbiblocks(count: usize) {
     println!("jit selftest [tbiblocks]: ok={ok} mismatch={bad} skipped=0 native={native} fallback_insns={fallbacks}");
 }
 
+/// Private complete units avoid relying on hot thresholds/chaining to exercise
+/// actual nested host frames. The same guest program runs in the interpreter.
+/// All branch targets (also changed-LR targets) are public unit entries.
+fn call_program(rng: &mut Rng, mode: usize) -> Vec<u32> {
+    fn branch(at: usize, to: usize, link: bool) -> u32 {
+        (if link { 0x9400_0000 } else { 0x1400_0000 }) | ((to as i32 - at as i32) as u32 & 0x03ff_ffff)
+    }
+    fn adr(at: usize, to: usize, r: u32) -> u32 {
+        let imm = ((to as i32 - at as i32) * 4) as u32;
+        0x1000_0000 | ((imm & 3) << 29) | (((imm >> 2) & 0x7ffff) << 5) | r
+    }
+    const SAVE: u32 = 0xa9bf_7bfd; // stp x29,x30,[sp,#-16]!
+    const RESTORE: u32 = 0xa8c1_7bfd;
+    const RET: u32 = 0xd65f_03c0;
+    // x25 = outer SP; x26 = outer continuation; x22 = nonmatching return target.
+    let mut p = vec![0x9100_03f9, 0, 0, 0, 0, 0x9100_0400, 0xd400_1001,
+                     0x9100_1c00, 0xd400_1021];
+    p[1] = adr(1, 5, 26); p[2] = adr(2, 7, 22);
+    if mode == 7 {
+        // Recursion well beyond RAS_LIMIT. At the bound BL takes its plain
+        // path; repeated guest return PCs may match older equivalent frames.
+        let f = p.len();
+        p.extend([SAVE, 0xd100_079c, 0, 0, 0, 0x9100_0400, RESTORE, RET]);
+        p[f + 2] = 0xb400_001c | (4 << 5); // cbz x28, restore
+        p[f + 3] = adr(f + 3, f, 17);
+        p[f + 4] = if rng.next() & 1 == 0 { branch(f + 4, f, true) } else { 0xd63f_0220 };
+        p[3] = adr(3, f, 17); p[4] = 0xd63f_0220;
+        return p;
+    }
+    let n = 3 + rng.next() as usize % 6;
+    let mut starts = Vec::new();
+    let mut links = Vec::new();
+    let mut outer_cont = 0;
+    for f in 0..n {
+        starts.push(p.len());
+        let tail = f != 0 && f + 1 < n && rng.next() % 3 == 0;
+        if !tail { p.push(SAVE); }
+        // Scalar V values must not be cached across guest calls.
+        p.push(0x1e61_2800); // fadd d0,d0,d1
+        p.push(0x9100_0000 | ((1 + rng.next() as u32 % 31) << 10));
+        if f == 0 {
+            p.push(0x9100_03f8); // x24 = checkpoint SP inside outer function
+            let at = p.len(); p.push(0); links.push((at, usize::MAX, false)); // ADR x23, after-call
+        }
+        if f + 1 == n {
+            if mode == 6 { p.push(0x1ac0_4020); } // CRC32B helper barrier
+            if mode == 4 || mode == 5 {
+                // Longjmp to an older frame, or to a PC matching no frame.
+                p.push(if mode == 4 { 0x9100_031f } else { 0x9100_033f }); // sp=x24/x25
+                p.push(if mode == 4 { 0xaa17_03fe } else { 0xaa16_03fe }); // lr=x23/x22
+                p.push(RET);
+            } else { p.extend([RESTORE, RET]); }
+        } else {
+            let child = if mode == 4 || mode == 5 { f + 1 } else { f + 1 + rng.next() as usize % (n - f - 1) };
+            let indirect = rng.next() & 1 != 0;
+            if indirect {
+                let at = p.len(); p.push(0); links.push((at, child, true));
+                p.push(if tail { 0xd61f_0220 } else { 0xd63f_0220 });
+            } else {
+                let at = p.len(); p.push(0); links.push((at, child, false));
+            }
+            if f == 0 { outer_cont = p.len(); }
+            if !tail { p.extend([0x9100_0c00, RESTORE, RET]); }
+        }
+    }
+    for (at, child, indirect) in links {
+        p[at] = if child == usize::MAX { adr(at, outer_cont, 23) }
+            else if indirect { adr(at, starts[child], 17) }
+            else {
+                // Tail encodings have no restore/return after their transfer.
+                let tail = at + 1 == p.len() || starts.contains(&(at + 1));
+                branch(at, starts[child], !tail)
+            };
+    }
+    p[3] = adr(3, starts[0], 17);
+    p[4] = if mode & 1 == 0 { branch(4, starts[0], true) } else { 0xd63f_0220 };
+    p
+}
+
+struct CallsCode { base: u64, len: usize }
+impl CallsCode {
+    fn new() -> Self {
+        let len = 1 << 20;
+        let p = unsafe { libc::mmap(std::ptr::null_mut(), len, libc::PROT_READ | libc::PROT_WRITE | libc::PROT_EXEC,
+            libc::MAP_ANON | libc::MAP_PRIVATE, -1, 0) };
+        assert_ne!(p, libc::MAP_FAILED);
+        Self { base: p as u64, len }
+    }
+    fn compile(&self, pc: u64, words: &[u32], callret: bool) -> (HashMap<u64, u64>, u64) {
+        let mut entries = std::collections::BTreeSet::from([0usize]);
+        for (i, &w) in words.iter().enumerate() {
+            if emit::is_terminator(w) && i + 1 < words.len() { entries.insert(i + 1); }
+            let target = if w & 0x7c00_0000 == 0x1400_0000 {
+                Some(i as i64 + (((w & 0x03ff_ffff) as i32) << 6 >> 6) as i64)
+            } else if w & 0x7e00_0000 == 0x3400_0000 {
+                Some(i as i64 + ((((w >> 5) & 0x7ffff) as i32) << 13 >> 13) as i64)
+            } else if w & 0x9f00_0000 == 0x1000_0000 {
+                let imm = (((w >> 5) & 0x7ffff) << 2) | ((w >> 29) & 3);
+                Some(i as i64 + ((imm as i32) << 11 >> 11) as i64 / 4)
+            } else { None };
+            if let Some(t) = target { assert!(t >= 0 && (t as usize) < words.len()); entries.insert(t as usize); }
+        }
+        let mut u = Unit::new(StubKind::Plain, false);
+        u.callret = callret;
+        for &i in &entries { let l = u.a.create_label(); u.labels.insert(pc + i as u64 * 4, l); }
+        for &i in &entries {
+            emit::emit_block(&mut u, pc + i as u64 * 4, &|p| p.checked_sub(pc).and_then(|x| words.get((x / 4) as usize)).copied());
+        }
+        u.finish();
+        let r = u.a.assemble_options(self.base, BlockEncoderOptions::RETURN_NEW_INSTRUCTION_OFFSETS).unwrap();
+        assert!(r.inner.code_buffer.len() < self.len);
+        unsafe { std::ptr::copy_nonoverlapping(r.inner.code_buffer.as_ptr(), self.base as *mut u8, r.inner.code_buffer.len()); }
+        let hosts = u.labels.iter().map(|(&p, l)| (p, r.label_ip(l).unwrap())).collect();
+        (hosts, u.insns_fallback)
+    }
+}
+impl Drop for CallsCode {
+    fn drop(&mut self) { unsafe { libc::munmap(self.base as *mut _, self.len); } }
+}
+
+fn run_selftest_calls(count: usize) {
+    const PC: u64 = 0x2000_0000;
+    let code = CallsCode::new();
+    let mut rng = Rng(0xca11_7e57_1234_5678);
+    let mut stack = vec![0u8; 32768];
+    let mut ok = 0; let mut bad = 0; let mut native = 0;
+    for it in 0..count {
+        let mode = it % 8;
+        let words = call_program(&mut rng, mode);
+        let (hosts, fallback) = code.compile(PC, &words, emit::callret_enabled());
+        stack.fill(0);
+        let mut init = Cpu::new();
+        for r in 0..31 { init.x[r] = rng.val(); init.v[r] = [fp_val(&mut rng), rng.val()]; }
+        init.v[0][0] = 0.5f64.to_bits(); init.v[1][0] = 0.25f64.to_bits();
+        init.x[31] = (stack.as_mut_ptr() as u64 + stack.len() as u64 - 4096) & !15;
+        init.x[28] = 270 + rng.next() % 65;
+        init.set_nzcv((rng.next() & 15) as u32); init.set_pc(PC);
+        let mut r = clone_cpu(&init);
+        let mut svc = None;
+        for _ in 0..20000 {
+            let Some(&w) = r.pc().checked_sub(PC).and_then(|p| words.get((p / 4) as usize)) else { break };
+            match interp::exec(&mut r, w) { Ok(()) => {}, Err(Exit::Svc(n)) => { svc = Some(n); break; }, Err(e) => panic!("calls reference {w:08x}: {e:?}") }
+        }
+        assert!(svc.is_some(), "nonterminating calls reference: {mode}");
+        let expected_memory = stack.clone(); stack.fill(0);
+        let mut j = clone_cpu(&init); setup_cpu(&mut j);
+        ibtc_clear(); for (&p, &h) in &hosts { ibtc_insert(p, h); }
+        let mut pending = None;
+        for _ in 0..20000 {
+            let Some(&host) = hosts.get(&j.pc()) else { break };
+            unsafe { attesor_jit_enter(&mut j, host); }
+            pending = PENDING.with(|p| p.take());
+            if j.exit_reason != EXIT_CONTINUE || pending.is_some() { break; }
+        }
+        native += (fallback == 0) as usize;
+        if snapshot(&j) != snapshot(&r) || stack != expected_memory || j.pc() != r.pc()
+            || j.exit_reason != EXIT_SVC || j.exit_data != svc.unwrap() as u64 || pending.is_some() {
+            bad += 1;
+            if bad <= 5 {
+                println!("MISMATCH calls #{it} mode={mode} pc={:#x}/{:#x} exit={} data={}", j.pc(), r.pc(), j.exit_reason, j.exit_data);
+                for (i, (&a, b)) in snapshot(&r).iter().zip(snapshot(&j)).enumerate() { if a != b { println!(" slot {i}: interp={a:#x} jit={b:#x}"); } }
+                for (i, &w) in words.iter().enumerate() { println!(" +{:03x} {w:08x} {}", i * 4, disasm(w)); }
+            }
+        } else { ok += 1; }
+    }
+    ibtc_clear(); // no dangling entries into the private mapping
+    println!("jit selftest [calls]: ok={ok} mismatch={bad} skipped=0 native={native} callret={} deep={}", emit::callret_enabled() as u8, count / 8);
+}
+
 pub fn run_selftest(class: &str, count: usize) {
+    if class == "calls" { return run_selftest_calls(count); }
     if class == "loops" { return run_selftest_loops(count); }
     if class == "tbiblocks" { return run_selftest_tbiblocks(count); }
     if class == "fpnan" {
@@ -1075,4 +1245,65 @@ pub fn dump_block(words: &[u32]) {
     let bytes = unsafe { std::slice::from_raw_parts(host as *const u8, n) };
     let hex: String = bytes.iter().map(|b| format!("{b:02x}")).collect();
     println!("{hex}");
+}
+
+#[cfg(test)]
+mod callret_tests {
+    use super::*;
+    const PC: u64 = 0x2400_0000;
+
+    extern "C" fn change_epoch(c: *mut Cpu, _: u32, _: u64) -> u64 {
+        let c = unsafe { &mut *c };
+        let ptr = c.epoch_ptr as usize;
+        if c.x[1] == 0 {
+            unsafe { &*(ptr as *const AtomicU64) }.fetch_add(1, Ordering::SeqCst);
+        } else {
+            std::thread::spawn(move || {
+                unsafe { &*(ptr as *const AtomicU64) }.fetch_add(1, Ordering::SeqCst);
+            }).join().unwrap();
+        }
+        0
+    }
+
+    #[test]
+    fn epoch_change_in_open_call_rejects_continuation_including_other_thread() {
+        let code = CallsCode::new();
+        // bl callee; add x0,x0,#1; svc; fallback; ret
+        let words = [0x94000003, 0x91000400, 0xd4001001, 0, 0xd65f03c0];
+        let (hosts, fallback) = code.compile(PC, &words, true);
+        assert_eq!(fallback, 1);
+        for thread in [0, 1] {
+            let epoch = AtomicU64::new(17);
+            let mut c = Cpu::new(); setup_cpu(&mut c);
+            c.epoch_ptr = &epoch as *const _ as u64;
+            c.helpers[HELPER_INTERP] = change_epoch as *const () as u64;
+            c.x[0] = 42; c.x[1] = thread;
+            c.set_pc(PC);
+            unsafe { attesor_jit_enter(&mut *c, hosts[&PC]); }
+            assert_eq!(epoch.load(Ordering::SeqCst), 18);
+            assert_eq!(c.entry_epoch, 17);
+            assert_eq!(c.pc(), PC + 4);
+            assert_eq!(c.exit_reason, EXIT_CONTINUE); assert_eq!(c.exit_data, 0);
+            assert_eq!(c.x[0], 42, "must not execute invalidated guest continuation");
+            unsafe { attesor_jit_enter(&mut *c, hosts[&(PC + 4)]); }
+            assert_eq!(c.entry_epoch, 18); assert_eq!(c.exit_reason, EXIT_SVC);
+            assert_eq!(c.x[0], 43);
+        }
+    }
+
+    #[test]
+    fn svc_discards_open_frames_before_reentry() {
+        let code = CallsCode::new();
+        let words = [0x94000003, 0x91000400, 0xd4001001, 0xd4001021, 0xd65f03c0];
+        let (hosts, _) = code.compile(PC, &words, true);
+        let mut c = Cpu::new(); setup_cpu(&mut c); c.x[0] = 42;
+        ibtc_clear(); for (&p, &h) in &hosts { ibtc_insert(p, h); }
+        unsafe { attesor_jit_enter(&mut *c, hosts[&PC]); }
+        assert_eq!(c.exit_reason, EXIT_SVC); assert_eq!(c.exit_data, 0x81);
+        assert_eq!(c.pc(), PC + 16); assert_eq!(c.x[0], 42);
+        unsafe { attesor_jit_enter(&mut *c, hosts[&(PC + 16)]); }
+        assert_eq!(c.exit_reason, EXIT_SVC); assert_eq!(c.exit_data, 0x80);
+        assert_eq!(c.x[0], 43);
+        ibtc_clear();
+    }
 }

@@ -52,6 +52,9 @@ std::arch::global_asm!(
     "mov r15, rdi",
     "mov [r15 + {host_sp}], rsp",
     "mov qword ptr [r15 + {ras_depth}], 0",
+    "mov rax, [r15 + {epoch_ptr}]",
+    "mov rax, [rax]",
+    "mov [r15 + {entry_epoch}], rax",
     "jmp rsi",
     ".p2align 4",
     "_attesor_jit_exit:",
@@ -67,6 +70,8 @@ std::arch::global_asm!(
     "ret",
     host_sp = const attesor_core::cpu::off::HOST_SP,
     ras_depth = const attesor_core::cpu::off::RAS_DEPTH,
+    epoch_ptr = const attesor_core::cpu::off::EPOCH_PTR,
+    entry_epoch = const attesor_core::cpu::off::ENTRY_EPOCH,
 );
 
 extern "C" {
