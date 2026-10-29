@@ -565,9 +565,14 @@ fn fp_1src(cpu: &mut Cpu, insn: u32, ptype: u32, opcode: u32, rd: u32, rn: u32) 
             1 => d.to_bits(),
             3 => {
                 if ptype == 0 {
-                    sf::f32_to_f16_fpcr(f32::from_bits(src as u32), cpu.fpcr) as u64
+                    let (result, flags) = sf::f32_to_f16_status(f32::from_bits(src as u32), cpu.fpcr);
+                    cpu.fpsr |= flags;
+                    result as u64
                 } else {
-                    sf::f64_to_f16_fpcr(d, cpu.fpcr) as u64
+                    let raw = if ptype == 1 { f64::from_bits(src) } else { d };
+                    let (result, flags) = sf::f64_to_f16_status(raw, cpu.fpcr);
+                    cpu.fpsr |= flags;
+                    result as u64
                 }
             }
             _ => return Err(unimpl(insn)),
@@ -1298,7 +1303,9 @@ fn two_misc_fp(cpu: &mut Cpu, insn: u32, scalar: bool, q: bool, u: bool, size: u
             let off = if q { 4 } else { 0 };
             for i in 0..4 {
                 let f = f32::from_bits(get(a, 32, i) as u32);
-                put(&mut out, 16, i + off, sf::f32_to_f16_fpcr(f, cpu.fpcr) as u64);
+                let (result, flags) = sf::f32_to_f16_status(f, cpu.fpcr);
+                cpu.fpsr |= flags;
+                put(&mut out, 16, i + off, result as u64);
             }
         } else {
             let n = if scalar { 1 } else { 2 };

@@ -2685,6 +2685,72 @@ impl<'a> E<'a> {
         a!(self, movdqa(xmm0, xmm3));
     }
 
+    /// Sticky flags for a nonempty lane mask. Does not inspect host MXCSR:
+    /// host library work and earlier guest instructions may have left flags set.
+    fn half_flag(&mut self, mask: AsmRegisterXmm, flags: i32) {
+        let mut done = self.new_label();
+        a!(self, ptest(mask, mask));
+        a!(self, jz(done));
+        a!(self, or(dword_ptr(r15 + off::FPSR as i32), flags));
+        self.u.a.set_label(&mut done).unwrap();
+        a!(self, nop());
+    }
+
+    /// FCVTN single->IEEE half flags: source in xmm1, half result in xmm0.
+    /// ARM detects tininess before rounding, including values rounded up to
+    /// the minimum normal half. F16C's own sticky state is not authoritative.
+    /// DN/AHP/FZ16 blocks retain the existing interpreter entry guard.
+    fn half_convert_status(&mut self) {
+        a!(self, vcvtph2ps(xmm2, xmm0));
+        a!(self, movdqa(xmm3, xmm1));
+        self.vconst(xmm7, 0x7fff_ffff_7fff_ffff);
+        a!(self, pand(xmm3, xmm7)); // absolute source bits
+        a!(self, movdqa(xmm4, xmm2));
+        a!(self, cmpps(xmm4, xmm1, 4)); // unequal, including unordered
+        a!(self, movdqa(xmm5, xmm1));
+        a!(self, cmpps(xmm5, xmm5, 7)); // ordered inputs only
+        a!(self, pand(xmm4, xmm5)); // inexact finite conversion
+        self.half_flag(xmm4, 1 << 4);
+
+        self.vconst(xmm7, 0x3880_0000_3880_0000); // minimum normal half
+        a!(self, movdqa(xmm5, xmm7));
+        a!(self, pcmpgtd(xmm5, xmm3));
+        a!(self, pand(xmm5, xmm4));
+        self.half_flag(xmm5, 1 << 3);
+
+        self.vconst(xmm7, 0x477f_ffff_477f_ffff); // abs source >= 65536
+        a!(self, movdqa(xmm5, xmm3));
+        a!(self, pcmpgtd(xmm5, xmm7));
+        a!(self, pslld(xmm2, 1));
+        a!(self, psrld(xmm2, 1)); // absolute widened result
+        self.vconst(xmm7, 0x7f80_0000_7f80_0000);
+        a!(self, pcmpeqd(xmm2, xmm7)); // rounded to infinity
+        a!(self, por(xmm5, xmm2));
+        a!(self, movdqa(xmm6, xmm7));
+        a!(self, pcmpgtd(xmm6, xmm3)); // source finite
+        a!(self, pand(xmm5, xmm6));
+        self.half_flag(xmm5, (1 << 2) | (1 << 4));
+
+        a!(self, movdqa(xmm5, xmm3));
+        a!(self, pcmpgtd(xmm5, xmm7)); // NaN: abs > infinity
+        self.vconst(xmm7, 0x7fc0_0000_7fc0_0000);
+        a!(self, pcmpgtd(xmm7, xmm3)); // signalling: abs < quiet-bit cutoff
+        a!(self, pand(xmm5, xmm7));
+        self.half_flag(xmm5, 1);
+
+        let mut no_fz = self.new_label();
+        a!(self, test(dword_ptr(r15 + off::FPCR), 1 << 24));
+        a!(self, jz(no_fz));
+        self.vconst(xmm7, 0x0080_0000_0080_0000);
+        a!(self, pcmpgtd(xmm7, xmm3)); // source below minimum normal FP32
+        a!(self, pxor(xmm6, xmm6));
+        a!(self, pcmpgtd(xmm3, xmm6)); // source nonzero
+        a!(self, pand(xmm7, xmm3));
+        self.half_flag(xmm7, 1 << 7);
+        self.u.a.set_label(&mut no_fz).unwrap();
+        a!(self, nop());
+    }
+
     /// Binary vector arithmetic, with the second source still in xmm1. Reload
     /// the first source only on the rare NaN path, before the destination store.
     fn vfix_binary_nan(&mut self, double: bool, rn: u32, q: bool) {
@@ -4180,7 +4246,9 @@ impl<'a> E<'a> {
                 if wide {
                     a!(self, cvtpd2ps(xmm0, xmm0));
                 } else {
+                    a!(self, movdqa(xmm1, xmm0));
                     a!(self, vcvtps2ph(xmm0, xmm0, 4)); // use MXCSR.RC, synchronized with FPCR.RMode
+                    self.half_convert_status();
                 }
                 a!(self, movq(xmm0, xmm0));
                 if q {

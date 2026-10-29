@@ -435,23 +435,32 @@ pub fn f64_to_f16(v: f64) -> u16 { f64_to_f16_fpcr(v, 0) }
 /// FPConvert to half precision. Conversion instructions ignore FZ16, observe
 /// AHP/DN and RMode, and apply FZ to a denormal source (not a half result).
 /// This returns result bits; architectural FPSR exception reporting is separate.
-pub fn f64_to_f16_fpcr(v: f64, fpcr: u64) -> u16 {
-    let b = v.to_bits();
+pub fn f64_to_f16_fpcr(v: f64, fpcr: u64) -> u16 { f64_to_f16_status(v, fpcr).0 }
+
+/// Half conversion result plus cumulative FPSR flags for masked exceptions.
+/// No host floating-point exception status is consulted.
+pub fn f64_to_f16_status(v: f64, fpcr: u64) -> (u16, u64) {
+    // Keep classification integer-only. LLVM otherwise folds bitwise nonzero
+    // tests into FP comparisons, which treat denormals as zero under host DAZ.
+    let b = std::hint::black_box(v.to_bits());
     let sign = ((b >> 63) as u16) << 15;
     let exp = ((b >> 52) & 0x7ff) as i64;
     let frac = b & ((1u64 << 52) - 1);
     let alt = fpcr & (1 << 26) != 0;
     let mode = (fpcr >> 22) & 3;
     if exp == 0x7ff {
-        if frac == 0 { return sign | if alt { 0x7fff } else { 0x7c00 }; }
-        if alt { return sign; }
-        if fpcr & (1 << 25) != 0 { return DEFAULT_NAN16; }
-        return sign | 0x7e00 | ((frac >> 42) as u16 & 0x1ff);
+        if frac == 0 { return (sign | if alt { 0x7fff } else { 0x7c00 }, if alt { 1 } else { 0 }); }
+        if alt { return (sign, 1); }
+        let flags = if frac & (1 << 51) == 0 { 1 } else { 0 }; // IOC: signalling NaN
+        if fpcr & (1 << 25) != 0 { return (DEFAULT_NAN16, flags); }
+        return (sign | 0x7e00 | ((frac >> 42) as u16 & 0x1ff), flags);
     }
-    if exp == 0 && (frac == 0 || fpcr & (1 << 24) != 0) { return sign; }
-    let overflow = || -> u16 {
+    if exp == 0 && frac == 0 { return (sign, 0); }
+    if exp == 0 && fpcr & (1 << 24) != 0 { return (sign, 1 << 7); } // IDC
+    let overflow = || -> (u16, u64) {
         let infinity = !alt && (mode == 0 || (mode == 1 && sign == 0) || (mode == 2 && sign != 0));
-        sign | if infinity { 0x7c00 } else if alt { 0x7fff } else { 0x7bff }
+        (sign | if infinity { 0x7c00 } else if alt { 0x7fff } else { 0x7bff },
+         if alt { 1 } else { (1 << 2) | (1 << 4) }) // AHP: IOC, IEEE: OFC|IXC
     };
     let e = exp - 1023 + 15;
     let max_exp = if alt { 31 } else { 30 };
@@ -473,6 +482,7 @@ pub fn f64_to_f16_fpcr(v: f64, fpcr: u64) -> u16 {
         2 => rem != 0 && sign != 0,
         _ => false,
     };
+    let flags = if rem != 0 { (1 << 4) | if e_out == 0 { 1 << 3 } else { 0 } } else { 0 };
     if up { m += 1; }
     let out = if e_out == 0 { m as u16 } else {
         let ex = e_out as u64 + (m >> 11);
@@ -480,18 +490,22 @@ pub fn f64_to_f16_fpcr(v: f64, fpcr: u64) -> u16 {
         if ex > max_exp as u64 { return overflow(); }
         ((ex << 10) | mm) as u16
     };
-    sign | out
+    (sign | out, flags)
 }
 
 pub fn f32_to_f16(v: f32) -> u16 { f32_to_f16_fpcr(v, 0) }
 
-pub fn f32_to_f16_fpcr(v: f32, fpcr: u64) -> u16 {
-    let b = v.to_bits();
+pub fn f32_to_f16_fpcr(v: f32, fpcr: u64) -> u16 { f32_to_f16_status(v, fpcr).0 }
+
+pub fn f32_to_f16_status(v: f32, fpcr: u64) -> (u16, u64) {
+    let b = std::hint::black_box(v.to_bits());
     if b & 0x7f80_0000 == 0 && fpcr & (1 << 24) != 0 {
-        return ((b >> 31) as u16) << 15;
+        return (((b >> 31) as u16) << 15, if b & 0x7fff_ffff != 0 { 1 << 7 } else { 0 });
     }
-    // Widening is exact; rounding occurs once in the integer half converter.
-    f64_to_f16_fpcr(v as f64, fpcr)
+    // Widening quiets sNaNs on x86: retain IOC from the original input bits.
+    let signalling = b & 0x7f80_0000 == 0x7f80_0000 && b & 0x007f_ffff != 0 && b & 0x0040_0000 == 0;
+    let (result, flags) = f64_to_f16_status(v as f64, fpcr);
+    (result, flags | if signalling { 1 } else { 0 })
 }
 
 #[cfg(test)]
@@ -532,6 +546,53 @@ mod half_conversion_tests {
         assert_eq!(f32_to_f16_fpcr(65536.0, 1 << 26), 0x7c00);
         assert_eq!(f32_to_f16_fpcr(f32::from_bits(0x33800000), 1 << 19), 1);
     }
+    #[test]
+    fn half_exception_status() {
+        for (bits, fpcr, want) in [
+            (0x3f800000, 0, 0), // exact normal
+            (0x3f801000, 0, 16), // inexact normal
+            (0x477ff000, 0, 20), // rounded overflow
+            (0x477ff000, 3 << 22, 16), // toward zero stays in the finite exponent range
+            (0x47800000, 3 << 22, 20), // exponent overflow even toward zero
+            (0x33800000, 0, 0), // exact subnormal half
+            (0x33000000, 0, 24), // tiny inexact
+            (0x387fffff, 0, 24), // tiny before rounding up to minimum normal
+            (0x7fc00001, 0, 0),
+            (0x7f800001, 0, 1),
+            (0x7f800001, 1 << 25, 1),
+            (0x7fc00001, 1 << 26, 1),
+            (0x48000000, 1 << 26, 1), // AHP overflow: IOC, without IXC
+            (0x00000001, 0, 24),
+            (0x00000001, 1 << 24, 128),
+            (0x80000001, 1 << 24, 128),
+            (0x00000000, 1 << 24, 0),
+        ] {
+            assert_eq!(f32_to_f16_status(f32::from_bits(bits), fpcr).1, want);
+        }
+        assert_eq!(f64_to_f16_status(f64::from_bits(1), 0).1, 24);
+        assert_eq!(f64_to_f16_status(f64::from_bits(1), 1 << 24).1, 128);
+        assert_eq!(f64_to_f16_status(f64::from_bits(0x7ff0000000000001), 0).1, 1);
+    }
+
+    #[test]
+    #[cfg(target_arch = "x86_64")]
+    fn host_flags_and_daz_do_not_change_status() {
+        unsafe {
+            let mut saved = 0u32;
+            core::arch::asm!("stmxcsr [{}]", in(reg) &mut saved);
+            // DAZ and every host sticky flag set. Preserve masks/control mode.
+            let poisoned = saved | 0x7f;
+            core::arch::asm!("ldmxcsr [{}]", in(reg) &poisoned);
+            let exact = f32_to_f16_status(f32::from_bits(0x3f800000), 1 << 24);
+            let tiny = f32_to_f16_status(f32::from_bits(1), 1 << 24);
+            let tiny64 = f64_to_f16_status(f64::from_bits(1), 1 << 24);
+            core::arch::asm!("ldmxcsr [{}]", in(reg) &saved);
+            assert_eq!(exact, (0x3c00, 0));
+            assert_eq!(tiny, (0, 128));
+            assert_eq!(tiny64, (0, 128));
+        }
+    }
+
     #[test]
     fn every_ieee_half_roundtrips() {
         for h in 0..=u16::MAX {
