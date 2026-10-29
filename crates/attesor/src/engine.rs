@@ -167,7 +167,8 @@ extern "C" fn fault_dump(sig: i32) {
 /// Handle an exit from interpreter/JIT. Returns false when the thread should stop.
 pub fn handle_exit(cpu: &mut Cpu, e: Exit) -> bool {
     match e {
-        Exit::Svc(_) => {
+        Exit::Svc(imm) => {
+            if crate::nativefixups::handle_svc(cpu, imm) { return true; }
             crate::syscalls::handle_svc(cpu);
             !EXIT_REQUESTED.with(|f| f.get())
         }

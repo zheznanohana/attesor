@@ -1,0 +1,1692 @@
+{
+  "date": "2026-10-29",
+  "base_commit": "70c4f28",
+  "status": "experimental; correctness passed; performance NOT accepted",
+  "host": "ProductName:\t\tmacOS\nProductVersion:\t\t26.7.2\nBuildVersion:\t\t25G332",
+  "arch": "x86_64",
+  "binary_sha256": "4a3e5d6e81d3bfcd21b2836ebcbefa4e5a95ae1e74b093e8725e4d901dbd9a72",
+  "nativefixups_source_sha256": "d4f224ce017ab84b3adb87f5d16048a7cae8fbb4aee3cec68746fc6fd43cea44",
+  "dyld_uuid": "57f4e7e7a49738bba3d2a459c622460b",
+  "dyld_symbol_offset": "0x4dfbc",
+  "translator_version": 54,
+  "method": "private warm DSC disk cache; AOT disabled for A/B; alternating OFF/ON x3; stats enabled both; CPU=waited child aggregate; wall=launch-to-exit",
+  "node_command": "ELECTRON_RUN_AS_NODE=1 attesor --no-aot /Applications/DeepSeek Harness.app/Contents/MacOS/DeepSeek Harness -e console.log(PASS Node,crypto.sha256(nativefixups))",
+  "rows": [
+    {
+      "name": "warmup",
+      "variant": "off",
+      "wall_s": 1.128036271,
+      "cpu_s": 1.0858560000000002,
+      "returncode": 0,
+      "uptime": "22:56  2 users, load averages: 17.40 17.03 13.86",
+      "fixups": []
+    },
+    {
+      "name": "check-trivial-off",
+      "variant": "off",
+      "wall_s": 0.18101516500000026,
+      "cpu_s": 0.17523100000000014,
+      "returncode": 0,
+      "uptime": "22:56  2 users, load averages: 17.40 17.03 13.86",
+      "fixups": []
+    },
+    {
+      "name": "check-trivial-verify",
+      "variant": "verify",
+      "wall_s": 0.17730463899999993,
+      "cpu_s": 0.17125499999999994,
+      "returncode": 0,
+      "uptime": "22:56  2 users, load averages: 17.40 17.03 13.86",
+      "fixups": []
+    },
+    {
+      "name": "check-trivial-on",
+      "variant": "on",
+      "wall_s": 0.2107893790000004,
+      "cpu_s": 0.19565100000000024,
+      "returncode": 0,
+      "uptime": "22:56  2 users, load averages: 17.40 17.03 13.86",
+      "fixups": []
+    },
+    {
+      "name": "check-trivial-precedence",
+      "variant": "precedence",
+      "wall_s": 0.20316060299999972,
+      "cpu_s": 0.19266799999999984,
+      "returncode": 0,
+      "uptime": "22:56  2 users, load averages: 17.40 17.03 13.86",
+      "fixups": []
+    },
+    {
+      "name": "check-node-off",
+      "variant": "off",
+      "wall_s": 3.527998468,
+      "cpu_s": 3.342543,
+      "returncode": 0,
+      "uptime": "22:56  2 users, load averages: 17.40 17.03 13.86",
+      "fixups": []
+    },
+    {
+      "name": "check-node-verify",
+      "variant": "verify",
+      "wall_s": 2.9717032129999996,
+      "cpu_s": 2.8598330000000005,
+      "returncode": 0,
+      "uptime": "22:56  2 users, load averages: 17.69 17.09 13.90",
+      "fixups": [
+        {
+          "mode": "verified",
+          "image": "0x500000000",
+          "pages": 4,
+          "rebases": 0,
+          "binds": 10,
+          "native_ns": 729859,
+          "guest_ns": 25509
+        },
+        {
+          "mode": "verified",
+          "image": "0x4000004000",
+          "pages": 1908,
+          "rebases": 652675,
+          "binds": 8194,
+          "native_ns": 54712865,
+          "guest_ns": 7473693
+        },
+        {
+          "mode": "verified",
+          "image": "0x400c1b8000",
+          "pages": 4,
+          "rebases": 588,
+          "binds": 498,
+          "native_ns": 171439,
+          "guest_ns": 17991
+        },
+        {
+          "mode": "verified",
+          "image": "0x400c1b8000",
+          "pages": 4,
+          "rebases": 1318,
+          "binds": 130,
+          "native_ns": 298929,
+          "guest_ns": 22208
+        },
+        {
+          "mode": "verified",
+          "image": "0x400c1f8000",
+          "pages": 16,
+          "rebases": 3037,
+          "binds": 792,
+          "native_ns": 1341245,
+          "guest_ns": 51024
+        },
+        {
+          "mode": "verified",
+          "image": "0x400c258000",
+          "pages": 4,
+          "rebases": 201,
+          "binds": 200,
+          "native_ns": 363227,
+          "guest_ns": 11253
+        },
+        {
+          "mode": "verified",
+          "image": "0x400c258000",
+          "pages": 4,
+          "rebases": 481,
+          "binds": 48,
+          "native_ns": 249601,
+          "guest_ns": 14980
+        },
+        {
+          "mode": "verified",
+          "image": "0x400c308000",
+          "pages": 40,
+          "rebases": 5967,
+          "binds": 105,
+          "native_ns": 1065744,
+          "guest_ns": 105862
+        }
+      ]
+    },
+    {
+      "name": "check-node-on",
+      "variant": "on",
+      "wall_s": 2.161659322,
+      "cpu_s": 2.1967000000000003,
+      "returncode": 0,
+      "uptime": "22:56  2 users, load averages: 16.99 16.96 13.87",
+      "fixups": [
+        {
+          "mode": "native",
+          "image": "0x500000000",
+          "pages": 4,
+          "rebases": 0,
+          "binds": 10,
+          "native_ns": 88917,
+          "guest_ns": 0
+        },
+        {
+          "mode": "native",
+          "image": "0x4000004000",
+          "pages": 1908,
+          "rebases": 652675,
+          "binds": 8194,
+          "native_ns": 38956826,
+          "guest_ns": 0
+        },
+        {
+          "mode": "native",
+          "image": "0x400c1b8000",
+          "pages": 4,
+          "rebases": 588,
+          "binds": 498,
+          "native_ns": 88359,
+          "guest_ns": 0
+        },
+        {
+          "mode": "native",
+          "image": "0x400c1b8000",
+          "pages": 4,
+          "rebases": 1318,
+          "binds": 130,
+          "native_ns": 69039,
+          "guest_ns": 0
+        },
+        {
+          "mode": "native",
+          "image": "0x400c1f8000",
+          "pages": 16,
+          "rebases": 3037,
+          "binds": 792,
+          "native_ns": 225168,
+          "guest_ns": 0
+        },
+        {
+          "mode": "native",
+          "image": "0x400c258000",
+          "pages": 4,
+          "rebases": 201,
+          "binds": 200,
+          "native_ns": 74402,
+          "guest_ns": 0
+        },
+        {
+          "mode": "native",
+          "image": "0x400c258000",
+          "pages": 4,
+          "rebases": 481,
+          "binds": 48,
+          "native_ns": 81126,
+          "guest_ns": 0
+        },
+        {
+          "mode": "native",
+          "image": "0x400c308000",
+          "pages": 40,
+          "rebases": 5967,
+          "binds": 105,
+          "native_ns": 492960,
+          "guest_ns": 0
+        }
+      ]
+    },
+    {
+      "name": "check-node-precedence",
+      "variant": "precedence",
+      "wall_s": 3.0169103980000003,
+      "cpu_s": 2.8932659999999997,
+      "returncode": 0,
+      "uptime": "22:56  2 users, load averages: 16.99 16.96 13.87",
+      "fixups": []
+    },
+    {
+      "name": "check-foundation-off",
+      "variant": "off",
+      "wall_s": 0.37764527899999933,
+      "cpu_s": 0.36519200000000085,
+      "returncode": 0,
+      "uptime": "22:56  2 users, load averages: 16.99 16.96 13.87",
+      "fixups": []
+    },
+    {
+      "name": "check-foundation-verify",
+      "variant": "verify",
+      "wall_s": 0.3712292109999993,
+      "cpu_s": 0.36053600000000063,
+      "returncode": 0,
+      "uptime": "22:56  2 users, load averages: 16.99 16.96 13.87",
+      "fixups": [
+        {
+          "mode": "verified",
+          "image": "0x500000000",
+          "pages": 4,
+          "rebases": 15,
+          "binds": 16,
+          "native_ns": 76900,
+          "guest_ns": 246648
+        },
+        {
+          "mode": "verified",
+          "image": "0x500000000",
+          "pages": 4,
+          "rebases": 6,
+          "binds": 0,
+          "native_ns": 246874,
+          "guest_ns": 10480
+        }
+      ]
+    },
+    {
+      "name": "check-foundation-on",
+      "variant": "on",
+      "wall_s": 0.407724506000001,
+      "cpu_s": 0.393104000000001,
+      "returncode": 0,
+      "uptime": "22:56  2 users, load averages: 16.99 16.96 13.87",
+      "fixups": [
+        {
+          "mode": "native",
+          "image": "0x500000000",
+          "pages": 4,
+          "rebases": 15,
+          "binds": 16,
+          "native_ns": 75410,
+          "guest_ns": 0
+        },
+        {
+          "mode": "native",
+          "image": "0x500000000",
+          "pages": 4,
+          "rebases": 6,
+          "binds": 0,
+          "native_ns": 82002,
+          "guest_ns": 0
+        }
+      ]
+    },
+    {
+      "name": "check-foundation-precedence",
+      "variant": "precedence",
+      "wall_s": 0.3049794040000009,
+      "cpu_s": 0.29920299999999944,
+      "returncode": 0,
+      "uptime": "22:56  2 users, load averages: 16.99 16.96 13.87",
+      "fixups": []
+    },
+    {
+      "name": "check-big-off",
+      "variant": "off",
+      "wall_s": 0.2105815270000022,
+      "cpu_s": 0.20184900000000106,
+      "returncode": 0,
+      "uptime": "22:56  2 users, load averages: 16.99 16.96 13.87",
+      "fixups": []
+    },
+    {
+      "name": "check-big-verify",
+      "variant": "verify",
+      "wall_s": 0.22088362199999878,
+      "cpu_s": 0.21238199999999896,
+      "returncode": 0,
+      "uptime": "22:56  2 users, load averages: 16.19 16.79 13.83",
+      "fixups": [
+        {
+          "mode": "verified",
+          "image": "0x500000000",
+          "pages": 4,
+          "rebases": 0,
+          "binds": 5,
+          "native_ns": 257878,
+          "guest_ns": 14554
+        },
+        {
+          "mode": "verified",
+          "image": "0x4000008000",
+          "pages": 260,
+          "rebases": 65536,
+          "binds": 65538,
+          "native_ns": 4747045,
+          "guest_ns": 1555643
+        },
+        {
+          "mode": "verified",
+          "image": "0x4000118000",
+          "pages": 260,
+          "rebases": 65536,
+          "binds": 65538,
+          "native_ns": 4773104,
+          "guest_ns": 1067086
+        }
+      ]
+    },
+    {
+      "name": "check-big-on",
+      "variant": "on",
+      "wall_s": 0.20432082299999976,
+      "cpu_s": 0.19891499999999862,
+      "returncode": 0,
+      "uptime": "22:56  2 users, load averages: 16.19 16.79 13.83",
+      "fixups": [
+        {
+          "mode": "native",
+          "image": "0x500000000",
+          "pages": 4,
+          "rebases": 0,
+          "binds": 5,
+          "native_ns": 57727,
+          "guest_ns": 0
+        },
+        {
+          "mode": "native",
+          "image": "0x4000008000",
+          "pages": 260,
+          "rebases": 65536,
+          "binds": 65538,
+          "native_ns": 4902681,
+          "guest_ns": 0
+        },
+        {
+          "mode": "native",
+          "image": "0x4000118000",
+          "pages": 260,
+          "rebases": 65536,
+          "binds": 65538,
+          "native_ns": 3576153,
+          "guest_ns": 0
+        }
+      ]
+    },
+    {
+      "name": "check-big-precedence",
+      "variant": "precedence",
+      "wall_s": 0.19903215900000149,
+      "cpu_s": 0.1916500000000001,
+      "returncode": 0,
+      "uptime": "22:56  2 users, load averages: 16.19 16.79 13.83",
+      "fixups": []
+    },
+    {
+      "name": "check-big-interp",
+      "variant": "on",
+      "wall_s": 0.20504527800000005,
+      "cpu_s": 0.19976000000000127,
+      "returncode": 0,
+      "uptime": "22:56  2 users, load averages: 16.19 16.79 13.83",
+      "fixups": [
+        {
+          "mode": "native",
+          "image": "0x500000000",
+          "pages": 4,
+          "rebases": 0,
+          "binds": 5,
+          "native_ns": 148329,
+          "guest_ns": 0
+        },
+        {
+          "mode": "native",
+          "image": "0x4000008000",
+          "pages": 260,
+          "rebases": 65536,
+          "binds": 65538,
+          "native_ns": 4595098,
+          "guest_ns": 0
+        },
+        {
+          "mode": "native",
+          "image": "0x4000118000",
+          "pages": 260,
+          "rebases": 65536,
+          "binds": 65538,
+          "native_ns": 4440142,
+          "guest_ns": 0
+        }
+      ]
+    },
+    {
+      "name": "check-foundation-aot-0",
+      "variant": "on",
+      "wall_s": 1.0132200080000011,
+      "cpu_s": 0.47703099999999843,
+      "returncode": 0,
+      "uptime": "22:57  2 users, load averages: 16.19 16.79 13.83",
+      "fixups": [
+        {
+          "mode": "native",
+          "image": "0x500000000",
+          "pages": 4,
+          "rebases": 15,
+          "binds": 16,
+          "native_ns": 121995,
+          "guest_ns": 0
+        },
+        {
+          "mode": "native",
+          "image": "0x500000000",
+          "pages": 4,
+          "rebases": 6,
+          "binds": 0,
+          "native_ns": 84311,
+          "guest_ns": 0
+        }
+      ]
+    },
+    {
+      "name": "check-foundation-aot-1",
+      "variant": "on",
+      "wall_s": 0.6505701659999978,
+      "cpu_s": 0.4809000000000001,
+      "returncode": 0,
+      "uptime": "22:57  2 users, load averages: 16.19 16.79 13.83",
+      "fixups": [
+        {
+          "mode": "native",
+          "image": "0x500000000",
+          "pages": 4,
+          "rebases": 15,
+          "binds": 16,
+          "native_ns": 140417,
+          "guest_ns": 0
+        },
+        {
+          "mode": "native",
+          "image": "0x500000000",
+          "pages": 4,
+          "rebases": 6,
+          "binds": 0,
+          "native_ns": 73021,
+          "guest_ns": 0
+        }
+      ]
+    },
+    {
+      "name": "ab-0-trivial-off",
+      "variant": "off",
+      "wall_s": 0.43207351100000224,
+      "cpu_s": 0.27337000000000167,
+      "returncode": 0,
+      "uptime": "22:57  2 users, load averages: 16.19 16.79 13.83",
+      "fixups": []
+    },
+    {
+      "name": "ab-0-trivial-on",
+      "variant": "on",
+      "wall_s": 0.48937198600000187,
+      "cpu_s": 0.2747409999999997,
+      "returncode": 0,
+      "uptime": "22:57  2 users, load averages: 16.19 16.79 13.83",
+      "fixups": []
+    },
+    {
+      "name": "ab-0-node-off",
+      "variant": "off",
+      "wall_s": 2.402620724000002,
+      "cpu_s": 2.419640000000001,
+      "returncode": 0,
+      "uptime": "22:57  2 users, load averages: 15.30 16.60 13.78",
+      "fixups": []
+    },
+    {
+      "name": "ab-0-node-on",
+      "variant": "on",
+      "wall_s": 2.1796265309999967,
+      "cpu_s": 2.2205900000000005,
+      "returncode": 0,
+      "uptime": "22:57  2 users, load averages: 15.30 16.60 13.78",
+      "fixups": [
+        {
+          "mode": "native",
+          "image": "0x500000000",
+          "pages": 4,
+          "rebases": 0,
+          "binds": 10,
+          "native_ns": 78359,
+          "guest_ns": 0
+        },
+        {
+          "mode": "native",
+          "image": "0x4000004000",
+          "pages": 1908,
+          "rebases": 652675,
+          "binds": 8194,
+          "native_ns": 44645797,
+          "guest_ns": 0
+        },
+        {
+          "mode": "native",
+          "image": "0x400c1b8000",
+          "pages": 4,
+          "rebases": 588,
+          "binds": 498,
+          "native_ns": 84947,
+          "guest_ns": 0
+        },
+        {
+          "mode": "native",
+          "image": "0x400c1b8000",
+          "pages": 4,
+          "rebases": 1318,
+          "binds": 130,
+          "native_ns": 72052,
+          "guest_ns": 0
+        },
+        {
+          "mode": "native",
+          "image": "0x400c1f8000",
+          "pages": 16,
+          "rebases": 3037,
+          "binds": 792,
+          "native_ns": 228097,
+          "guest_ns": 0
+        },
+        {
+          "mode": "native",
+          "image": "0x400c258000",
+          "pages": 4,
+          "rebases": 201,
+          "binds": 200,
+          "native_ns": 64659,
+          "guest_ns": 0
+        },
+        {
+          "mode": "native",
+          "image": "0x400c258000",
+          "pages": 4,
+          "rebases": 481,
+          "binds": 48,
+          "native_ns": 67675,
+          "guest_ns": 0
+        },
+        {
+          "mode": "native",
+          "image": "0x400c308000",
+          "pages": 40,
+          "rebases": 5967,
+          "binds": 105,
+          "native_ns": 480874,
+          "guest_ns": 0
+        }
+      ]
+    },
+    {
+      "name": "ab-0-foundation-off",
+      "variant": "off",
+      "wall_s": 0.42635157799999845,
+      "cpu_s": 0.4179320000000004,
+      "returncode": 0,
+      "uptime": "22:57  2 users, load averages: 15.30 16.60 13.78",
+      "fixups": []
+    },
+    {
+      "name": "ab-0-foundation-on",
+      "variant": "on",
+      "wall_s": 0.4344243320000025,
+      "cpu_s": 0.4259979999999999,
+      "returncode": 0,
+      "uptime": "22:57  2 users, load averages: 15.30 16.60 13.78",
+      "fixups": [
+        {
+          "mode": "native",
+          "image": "0x500000000",
+          "pages": 4,
+          "rebases": 15,
+          "binds": 16,
+          "native_ns": 60189,
+          "guest_ns": 0
+        },
+        {
+          "mode": "native",
+          "image": "0x500000000",
+          "pages": 4,
+          "rebases": 6,
+          "binds": 0,
+          "native_ns": 46054,
+          "guest_ns": 0
+        }
+      ]
+    },
+    {
+      "name": "ab-0-big-off",
+      "variant": "off",
+      "wall_s": 0.34541564799999946,
+      "cpu_s": 0.3347809999999969,
+      "returncode": 0,
+      "uptime": "22:57  2 users, load averages: 15.30 16.60 13.78",
+      "fixups": []
+    },
+    {
+      "name": "ab-0-big-on",
+      "variant": "on",
+      "wall_s": 0.30358331300000074,
+      "cpu_s": 0.29660899999999835,
+      "returncode": 0,
+      "uptime": "22:57  2 users, load averages: 15.30 16.60 13.78",
+      "fixups": [
+        {
+          "mode": "native",
+          "image": "0x500000000",
+          "pages": 4,
+          "rebases": 0,
+          "binds": 5,
+          "native_ns": 139936,
+          "guest_ns": 0
+        },
+        {
+          "mode": "native",
+          "image": "0x4000008000",
+          "pages": 260,
+          "rebases": 65536,
+          "binds": 65538,
+          "native_ns": 5491722,
+          "guest_ns": 0
+        },
+        {
+          "mode": "native",
+          "image": "0x4000118000",
+          "pages": 260,
+          "rebases": 65536,
+          "binds": 65538,
+          "native_ns": 4845824,
+          "guest_ns": 0
+        }
+      ]
+    },
+    {
+      "name": "ab-1-trivial-off",
+      "variant": "off",
+      "wall_s": 0.26891127899999745,
+      "cpu_s": 0.26026200000000266,
+      "returncode": 0,
+      "uptime": "22:57  2 users, load averages: 14.55 16.42 13.73",
+      "fixups": []
+    },
+    {
+      "name": "ab-1-trivial-on",
+      "variant": "on",
+      "wall_s": 0.25209299300000154,
+      "cpu_s": 0.24675500000000472,
+      "returncode": 0,
+      "uptime": "22:57  2 users, load averages: 14.55 16.42 13.73",
+      "fixups": []
+    },
+    {
+      "name": "ab-1-node-off",
+      "variant": "off",
+      "wall_s": 2.082428944,
+      "cpu_s": 2.111295,
+      "returncode": 0,
+      "uptime": "22:57  2 users, load averages: 14.55 16.42 13.73",
+      "fixups": []
+    },
+    {
+      "name": "ab-1-node-on",
+      "variant": "on",
+      "wall_s": 2.1128124659999976,
+      "cpu_s": 2.148954,
+      "returncode": 0,
+      "uptime": "22:57  2 users, load averages: 14.55 16.42 13.73",
+      "fixups": [
+        {
+          "mode": "native",
+          "image": "0x500000000",
+          "pages": 4,
+          "rebases": 0,
+          "binds": 10,
+          "native_ns": 72461,
+          "guest_ns": 0
+        },
+        {
+          "mode": "native",
+          "image": "0x4000004000",
+          "pages": 1908,
+          "rebases": 652675,
+          "binds": 8194,
+          "native_ns": 32964732,
+          "guest_ns": 0
+        },
+        {
+          "mode": "native",
+          "image": "0x400c1b8000",
+          "pages": 4,
+          "rebases": 588,
+          "binds": 498,
+          "native_ns": 82193,
+          "guest_ns": 0
+        },
+        {
+          "mode": "native",
+          "image": "0x400c1b8000",
+          "pages": 4,
+          "rebases": 1318,
+          "binds": 130,
+          "native_ns": 63192,
+          "guest_ns": 0
+        },
+        {
+          "mode": "native",
+          "image": "0x400c1f8000",
+          "pages": 16,
+          "rebases": 3037,
+          "binds": 792,
+          "native_ns": 190735,
+          "guest_ns": 0
+        },
+        {
+          "mode": "native",
+          "image": "0x400c258000",
+          "pages": 4,
+          "rebases": 201,
+          "binds": 200,
+          "native_ns": 90150,
+          "guest_ns": 0
+        },
+        {
+          "mode": "native",
+          "image": "0x400c258000",
+          "pages": 4,
+          "rebases": 481,
+          "binds": 48,
+          "native_ns": 90948,
+          "guest_ns": 0
+        },
+        {
+          "mode": "native",
+          "image": "0x400c308000",
+          "pages": 40,
+          "rebases": 5967,
+          "binds": 105,
+          "native_ns": 447600,
+          "guest_ns": 0
+        }
+      ]
+    },
+    {
+      "name": "ab-1-foundation-off",
+      "variant": "off",
+      "wall_s": 0.37843116500000207,
+      "cpu_s": 0.36921300000000024,
+      "returncode": 0,
+      "uptime": "22:57  2 users, load averages: 14.11 16.30 13.70",
+      "fixups": []
+    },
+    {
+      "name": "ab-1-foundation-on",
+      "variant": "on",
+      "wall_s": 0.36511855500000223,
+      "cpu_s": 0.3595000000000006,
+      "returncode": 0,
+      "uptime": "22:57  2 users, load averages: 14.11 16.30 13.70",
+      "fixups": [
+        {
+          "mode": "native",
+          "image": "0x500000000",
+          "pages": 4,
+          "rebases": 15,
+          "binds": 16,
+          "native_ns": 67128,
+          "guest_ns": 0
+        },
+        {
+          "mode": "native",
+          "image": "0x500000000",
+          "pages": 4,
+          "rebases": 6,
+          "binds": 0,
+          "native_ns": 38266,
+          "guest_ns": 0
+        }
+      ]
+    },
+    {
+      "name": "ab-1-big-off",
+      "variant": "off",
+      "wall_s": 0.30112449100000305,
+      "cpu_s": 0.2950590000000002,
+      "returncode": 0,
+      "uptime": "22:57  2 users, load averages: 14.11 16.30 13.70",
+      "fixups": []
+    },
+    {
+      "name": "ab-1-big-on",
+      "variant": "on",
+      "wall_s": 0.27091463299999674,
+      "cpu_s": 0.2655079999999961,
+      "returncode": 0,
+      "uptime": "22:57  2 users, load averages: 14.11 16.30 13.70",
+      "fixups": [
+        {
+          "mode": "native",
+          "image": "0x500000000",
+          "pages": 4,
+          "rebases": 0,
+          "binds": 5,
+          "native_ns": 56426,
+          "guest_ns": 0
+        },
+        {
+          "mode": "native",
+          "image": "0x4000008000",
+          "pages": 260,
+          "rebases": 65536,
+          "binds": 65538,
+          "native_ns": 4842002,
+          "guest_ns": 0
+        },
+        {
+          "mode": "native",
+          "image": "0x4000118000",
+          "pages": 260,
+          "rebases": 65536,
+          "binds": 65538,
+          "native_ns": 4742412,
+          "guest_ns": 0
+        }
+      ]
+    },
+    {
+      "name": "ab-2-trivial-off",
+      "variant": "off",
+      "wall_s": 0.23117692499999976,
+      "cpu_s": 0.2258160000000018,
+      "returncode": 0,
+      "uptime": "22:57  2 users, load averages: 14.11 16.30 13.70",
+      "fixups": []
+    },
+    {
+      "name": "ab-2-trivial-on",
+      "variant": "on",
+      "wall_s": 0.22622236100000492,
+      "cpu_s": 0.22120499999999943,
+      "returncode": 0,
+      "uptime": "22:57  2 users, load averages: 14.11 16.30 13.70",
+      "fixups": []
+    },
+    {
+      "name": "ab-2-node-off",
+      "variant": "off",
+      "wall_s": 2.0630011110000055,
+      "cpu_s": 2.1095620000000004,
+      "returncode": 0,
+      "uptime": "22:57  2 users, load averages: 14.11 16.30 13.70",
+      "fixups": []
+    },
+    {
+      "name": "ab-2-node-on",
+      "variant": "on",
+      "wall_s": 2.0311712029999995,
+      "cpu_s": 2.0832769999999954,
+      "returncode": 0,
+      "uptime": "22:57  2 users, load averages: 13.46 16.13 13.66",
+      "fixups": [
+        {
+          "mode": "native",
+          "image": "0x500000000",
+          "pages": 4,
+          "rebases": 0,
+          "binds": 10,
+          "native_ns": 76684,
+          "guest_ns": 0
+        },
+        {
+          "mode": "native",
+          "image": "0x4000004000",
+          "pages": 1908,
+          "rebases": 652675,
+          "binds": 8194,
+          "native_ns": 43010967,
+          "guest_ns": 0
+        },
+        {
+          "mode": "native",
+          "image": "0x400c1b8000",
+          "pages": 4,
+          "rebases": 588,
+          "binds": 498,
+          "native_ns": 80020,
+          "guest_ns": 0
+        },
+        {
+          "mode": "native",
+          "image": "0x400c1b8000",
+          "pages": 4,
+          "rebases": 1318,
+          "binds": 130,
+          "native_ns": 64992,
+          "guest_ns": 0
+        },
+        {
+          "mode": "native",
+          "image": "0x400c1f8000",
+          "pages": 16,
+          "rebases": 3037,
+          "binds": 792,
+          "native_ns": 311512,
+          "guest_ns": 0
+        },
+        {
+          "mode": "native",
+          "image": "0x400c258000",
+          "pages": 4,
+          "rebases": 201,
+          "binds": 200,
+          "native_ns": 53678,
+          "guest_ns": 0
+        },
+        {
+          "mode": "native",
+          "image": "0x400c258000",
+          "pages": 4,
+          "rebases": 481,
+          "binds": 48,
+          "native_ns": 50451,
+          "guest_ns": 0
+        },
+        {
+          "mode": "native",
+          "image": "0x400c308000",
+          "pages": 40,
+          "rebases": 5967,
+          "binds": 105,
+          "native_ns": 572192,
+          "guest_ns": 0
+        }
+      ]
+    },
+    {
+      "name": "ab-2-foundation-off",
+      "variant": "off",
+      "wall_s": 0.43884105699999765,
+      "cpu_s": 0.4292080000000045,
+      "returncode": 0,
+      "uptime": "22:57  2 users, load averages: 13.46 16.13 13.66",
+      "fixups": []
+    },
+    {
+      "name": "ab-2-foundation-on",
+      "variant": "on",
+      "wall_s": 0.4280779060000057,
+      "cpu_s": 0.4203880000000062,
+      "returncode": 0,
+      "uptime": "22:57  2 users, load averages: 13.46 16.13 13.66",
+      "fixups": [
+        {
+          "mode": "native",
+          "image": "0x500000000",
+          "pages": 4,
+          "rebases": 15,
+          "binds": 16,
+          "native_ns": 75941,
+          "guest_ns": 0
+        },
+        {
+          "mode": "native",
+          "image": "0x500000000",
+          "pages": 4,
+          "rebases": 6,
+          "binds": 0,
+          "native_ns": 41385,
+          "guest_ns": 0
+        }
+      ]
+    },
+    {
+      "name": "ab-2-big-off",
+      "variant": "off",
+      "wall_s": 0.3087666350000049,
+      "cpu_s": 0.3009590000000042,
+      "returncode": 0,
+      "uptime": "22:57  2 users, load averages: 13.46 16.13 13.66",
+      "fixups": []
+    },
+    {
+      "name": "ab-2-big-on",
+      "variant": "on",
+      "wall_s": 0.26144357100000093,
+      "cpu_s": 0.2546599999999959,
+      "returncode": 0,
+      "uptime": "22:57  2 users, load averages: 13.46 16.13 13.66",
+      "fixups": [
+        {
+          "mode": "native",
+          "image": "0x500000000",
+          "pages": 4,
+          "rebases": 0,
+          "binds": 5,
+          "native_ns": 74401,
+          "guest_ns": 0
+        },
+        {
+          "mode": "native",
+          "image": "0x4000008000",
+          "pages": 260,
+          "rebases": 65536,
+          "binds": 65538,
+          "native_ns": 4738160,
+          "guest_ns": 0
+        },
+        {
+          "mode": "native",
+          "image": "0x4000118000",
+          "pages": 260,
+          "rebases": 65536,
+          "binds": 65538,
+          "native_ns": 4829704,
+          "guest_ns": 0
+        }
+      ]
+    },
+    {
+      "name": "profile-node-off",
+      "variant": "off",
+      "wall_s": 2.868293242,
+      "cpu_s": 3.030874999999998,
+      "returncode": 0,
+      "uptime": "22:57  2 users, load averages: 13.02 15.99 13.62",
+      "fixups": []
+    },
+    {
+      "name": "profile-node-on",
+      "variant": "on",
+      "wall_s": 2.848598115999998,
+      "cpu_s": 3.0166199999999996,
+      "returncode": 0,
+      "uptime": "22:57  2 users, load averages: 13.02 15.99 13.62",
+      "fixups": [
+        {
+          "mode": "native",
+          "image": "0x500000000",
+          "pages": 4,
+          "rebases": 0,
+          "binds": 10,
+          "native_ns": 99944,
+          "guest_ns": 0
+        },
+        {
+          "mode": "native",
+          "image": "0x4000004000",
+          "pages": 1908,
+          "rebases": 652675,
+          "binds": 8194,
+          "native_ns": 44248684,
+          "guest_ns": 0
+        },
+        {
+          "mode": "native",
+          "image": "0x400c1b8000",
+          "pages": 4,
+          "rebases": 588,
+          "binds": 498,
+          "native_ns": 117473,
+          "guest_ns": 0
+        },
+        {
+          "mode": "native",
+          "image": "0x400c1b8000",
+          "pages": 4,
+          "rebases": 1318,
+          "binds": 130,
+          "native_ns": 66780,
+          "guest_ns": 0
+        },
+        {
+          "mode": "native",
+          "image": "0x400c1f8000",
+          "pages": 16,
+          "rebases": 3037,
+          "binds": 792,
+          "native_ns": 263560,
+          "guest_ns": 0
+        },
+        {
+          "mode": "native",
+          "image": "0x400c258000",
+          "pages": 4,
+          "rebases": 201,
+          "binds": 200,
+          "native_ns": 65359,
+          "guest_ns": 0
+        },
+        {
+          "mode": "native",
+          "image": "0x400c258000",
+          "pages": 4,
+          "rebases": 481,
+          "binds": 48,
+          "native_ns": 52298,
+          "guest_ns": 0
+        },
+        {
+          "mode": "native",
+          "image": "0x400c308000",
+          "pages": 40,
+          "rebases": 5967,
+          "binds": 105,
+          "native_ns": 522590,
+          "guest_ns": 0
+        }
+      ]
+    },
+    {
+      "name": "check-process-fork",
+      "variant": "on",
+      "wall_s": 5.8343448700000025,
+      "cpu_s": 22.315588999999996,
+      "returncode": 0,
+      "uptime": "22:57  2 users, load averages: 12.54 15.84 13.59",
+      "fixups": [
+        {
+          "mode": "native",
+          "image": "0x500000000",
+          "pages": 4,
+          "rebases": 0,
+          "binds": 10,
+          "native_ns": 84973,
+          "guest_ns": 0
+        },
+        {
+          "mode": "native",
+          "image": "0x4000004000",
+          "pages": 1908,
+          "rebases": 652675,
+          "binds": 8194,
+          "native_ns": 40593940,
+          "guest_ns": 0
+        },
+        {
+          "mode": "native",
+          "image": "0x400c1b8000",
+          "pages": 4,
+          "rebases": 588,
+          "binds": 498,
+          "native_ns": 94219,
+          "guest_ns": 0
+        },
+        {
+          "mode": "native",
+          "image": "0x400c1b8000",
+          "pages": 4,
+          "rebases": 1318,
+          "binds": 130,
+          "native_ns": 67803,
+          "guest_ns": 0
+        },
+        {
+          "mode": "native",
+          "image": "0x400c1f8000",
+          "pages": 16,
+          "rebases": 3037,
+          "binds": 792,
+          "native_ns": 225835,
+          "guest_ns": 0
+        },
+        {
+          "mode": "native",
+          "image": "0x400c258000",
+          "pages": 4,
+          "rebases": 201,
+          "binds": 200,
+          "native_ns": 73922,
+          "guest_ns": 0
+        },
+        {
+          "mode": "native",
+          "image": "0x400c258000",
+          "pages": 4,
+          "rebases": 481,
+          "binds": 48,
+          "native_ns": 51929,
+          "guest_ns": 0
+        },
+        {
+          "mode": "native",
+          "image": "0x400c308000",
+          "pages": 40,
+          "rebases": 5967,
+          "binds": 105,
+          "native_ns": 617694,
+          "guest_ns": 0
+        },
+        {
+          "mode": "native",
+          "image": "0x500000000",
+          "pages": 4,
+          "rebases": 0,
+          "binds": 10,
+          "native_ns": 150258,
+          "guest_ns": 0
+        },
+        {
+          "mode": "native",
+          "image": "0x4000004000",
+          "pages": 1908,
+          "rebases": 652675,
+          "binds": 8194,
+          "native_ns": 50649445,
+          "guest_ns": 0
+        },
+        {
+          "mode": "native",
+          "image": "0x400c1b8000",
+          "pages": 4,
+          "rebases": 588,
+          "binds": 498,
+          "native_ns": 93010,
+          "guest_ns": 0
+        },
+        {
+          "mode": "native",
+          "image": "0x400c1b8000",
+          "pages": 4,
+          "rebases": 1318,
+          "binds": 130,
+          "native_ns": 77537,
+          "guest_ns": 0
+        },
+        {
+          "mode": "native",
+          "image": "0x400c1f8000",
+          "pages": 16,
+          "rebases": 3037,
+          "binds": 792,
+          "native_ns": 359999,
+          "guest_ns": 0
+        },
+        {
+          "mode": "native",
+          "image": "0x400c258000",
+          "pages": 4,
+          "rebases": 201,
+          "binds": 200,
+          "native_ns": 135769,
+          "guest_ns": 0
+        },
+        {
+          "mode": "native",
+          "image": "0x400c258000",
+          "pages": 4,
+          "rebases": 481,
+          "binds": 48,
+          "native_ns": 92498,
+          "guest_ns": 0
+        },
+        {
+          "mode": "native",
+          "image": "0x400c308000",
+          "pages": 40,
+          "rebases": 5967,
+          "binds": 105,
+          "native_ns": 796755,
+          "guest_ns": 0
+        },
+        {
+          "mode": "native",
+          "image": "0x500000000",
+          "pages": 4,
+          "rebases": 0,
+          "binds": 10,
+          "native_ns": 117859,
+          "guest_ns": 0
+        },
+        {
+          "mode": "native",
+          "image": "0x500000000",
+          "pages": 4,
+          "rebases": 0,
+          "binds": 10,
+          "native_ns": 115624,
+          "guest_ns": 0
+        },
+        {
+          "mode": "native",
+          "image": "0x500000000",
+          "pages": 4,
+          "rebases": 0,
+          "binds": 10,
+          "native_ns": 90599,
+          "guest_ns": 0
+        },
+        {
+          "mode": "native",
+          "image": "0x500000000",
+          "pages": 4,
+          "rebases": 0,
+          "binds": 10,
+          "native_ns": 111275,
+          "guest_ns": 0
+        },
+        {
+          "mode": "native",
+          "image": "0x500000000",
+          "pages": 4,
+          "rebases": 0,
+          "binds": 10,
+          "native_ns": 128949,
+          "guest_ns": 0
+        },
+        {
+          "mode": "native",
+          "image": "0x4000004000",
+          "pages": 1908,
+          "rebases": 652675,
+          "binds": 8194,
+          "native_ns": 49895312,
+          "guest_ns": 0
+        },
+        {
+          "mode": "native",
+          "image": "0x400c1b8000",
+          "pages": 4,
+          "rebases": 588,
+          "binds": 498,
+          "native_ns": 112219,
+          "guest_ns": 0
+        },
+        {
+          "mode": "native",
+          "image": "0x400c1b8000",
+          "pages": 4,
+          "rebases": 1318,
+          "binds": 130,
+          "native_ns": 101070,
+          "guest_ns": 0
+        },
+        {
+          "mode": "native",
+          "image": "0x400c1f8000",
+          "pages": 16,
+          "rebases": 3037,
+          "binds": 792,
+          "native_ns": 432811,
+          "guest_ns": 0
+        },
+        {
+          "mode": "native",
+          "image": "0x400c258000",
+          "pages": 4,
+          "rebases": 201,
+          "binds": 200,
+          "native_ns": 104748,
+          "guest_ns": 0
+        },
+        {
+          "mode": "native",
+          "image": "0x400c258000",
+          "pages": 4,
+          "rebases": 481,
+          "binds": 48,
+          "native_ns": 80629,
+          "guest_ns": 0
+        },
+        {
+          "mode": "native",
+          "image": "0x400c308000",
+          "pages": 40,
+          "rebases": 5967,
+          "binds": 105,
+          "native_ns": 896904,
+          "guest_ns": 0
+        },
+        {
+          "mode": "native",
+          "image": "0x4000004000",
+          "pages": 1908,
+          "rebases": 652675,
+          "binds": 8194,
+          "native_ns": 58756548,
+          "guest_ns": 0
+        },
+        {
+          "mode": "native",
+          "image": "0x400c1b8000",
+          "pages": 4,
+          "rebases": 588,
+          "binds": 498,
+          "native_ns": 134988,
+          "guest_ns": 0
+        },
+        {
+          "mode": "native",
+          "image": "0x400c1b8000",
+          "pages": 4,
+          "rebases": 1318,
+          "binds": 130,
+          "native_ns": 114269,
+          "guest_ns": 0
+        },
+        {
+          "mode": "native",
+          "image": "0x400c1f8000",
+          "pages": 16,
+          "rebases": 3037,
+          "binds": 792,
+          "native_ns": 341345,
+          "guest_ns": 0
+        },
+        {
+          "mode": "native",
+          "image": "0x400c258000",
+          "pages": 4,
+          "rebases": 201,
+          "binds": 200,
+          "native_ns": 120455,
+          "guest_ns": 0
+        },
+        {
+          "mode": "native",
+          "image": "0x400c258000",
+          "pages": 4,
+          "rebases": 481,
+          "binds": 48,
+          "native_ns": 76413,
+          "guest_ns": 0
+        },
+        {
+          "mode": "native",
+          "image": "0x400c308000",
+          "pages": 40,
+          "rebases": 5967,
+          "binds": 105,
+          "native_ns": 702077,
+          "guest_ns": 0
+        },
+        {
+          "mode": "native",
+          "image": "0x4000004000",
+          "pages": 1908,
+          "rebases": 652675,
+          "binds": 8194,
+          "native_ns": 51216055,
+          "guest_ns": 0
+        },
+        {
+          "mode": "native",
+          "image": "0x400c1b8000",
+          "pages": 4,
+          "rebases": 588,
+          "binds": 498,
+          "native_ns": 120308,
+          "guest_ns": 0
+        },
+        {
+          "mode": "native",
+          "image": "0x400c1b8000",
+          "pages": 4,
+          "rebases": 1318,
+          "binds": 130,
+          "native_ns": 86183,
+          "guest_ns": 0
+        },
+        {
+          "mode": "native",
+          "image": "0x400c1f8000",
+          "pages": 16,
+          "rebases": 3037,
+          "binds": 792,
+          "native_ns": 346116,
+          "guest_ns": 0
+        },
+        {
+          "mode": "native",
+          "image": "0x400c258000",
+          "pages": 4,
+          "rebases": 201,
+          "binds": 200,
+          "native_ns": 104474,
+          "guest_ns": 0
+        },
+        {
+          "mode": "native",
+          "image": "0x400c258000",
+          "pages": 4,
+          "rebases": 481,
+          "binds": 48,
+          "native_ns": 88222,
+          "guest_ns": 0
+        },
+        {
+          "mode": "native",
+          "image": "0x400c308000",
+          "pages": 40,
+          "rebases": 5967,
+          "binds": 105,
+          "native_ns": 981921,
+          "guest_ns": 0
+        },
+        {
+          "mode": "native",
+          "image": "0x4000004000",
+          "pages": 1908,
+          "rebases": 652675,
+          "binds": 8194,
+          "native_ns": 50196074,
+          "guest_ns": 0
+        },
+        {
+          "mode": "native",
+          "image": "0x400c1b8000",
+          "pages": 4,
+          "rebases": 588,
+          "binds": 498,
+          "native_ns": 195355,
+          "guest_ns": 0
+        },
+        {
+          "mode": "native",
+          "image": "0x400c1b8000",
+          "pages": 4,
+          "rebases": 1318,
+          "binds": 130,
+          "native_ns": 92000,
+          "guest_ns": 0
+        },
+        {
+          "mode": "native",
+          "image": "0x400c1f8000",
+          "pages": 16,
+          "rebases": 3037,
+          "binds": 792,
+          "native_ns": 448699,
+          "guest_ns": 0
+        },
+        {
+          "mode": "native",
+          "image": "0x400c258000",
+          "pages": 4,
+          "rebases": 201,
+          "binds": 200,
+          "native_ns": 132817,
+          "guest_ns": 0
+        },
+        {
+          "mode": "native",
+          "image": "0x400c258000",
+          "pages": 4,
+          "rebases": 481,
+          "binds": 48,
+          "native_ns": 87338,
+          "guest_ns": 0
+        },
+        {
+          "mode": "native",
+          "image": "0x400c308000",
+          "pages": 40,
+          "rebases": 5967,
+          "binds": 105,
+          "native_ns": 1277316,
+          "guest_ns": 0
+        },
+        {
+          "mode": "native",
+          "image": "0x4000004000",
+          "pages": 1908,
+          "rebases": 652675,
+          "binds": 8194,
+          "native_ns": 52587002,
+          "guest_ns": 0
+        },
+        {
+          "mode": "native",
+          "image": "0x400c1b8000",
+          "pages": 4,
+          "rebases": 588,
+          "binds": 498,
+          "native_ns": 242628,
+          "guest_ns": 0
+        },
+        {
+          "mode": "native",
+          "image": "0x400c1b8000",
+          "pages": 4,
+          "rebases": 1318,
+          "binds": 130,
+          "native_ns": 129365,
+          "guest_ns": 0
+        },
+        {
+          "mode": "native",
+          "image": "0x400c1f8000",
+          "pages": 16,
+          "rebases": 3037,
+          "binds": 792,
+          "native_ns": 395665,
+          "guest_ns": 0
+        },
+        {
+          "mode": "native",
+          "image": "0x400c258000",
+          "pages": 4,
+          "rebases": 201,
+          "binds": 200,
+          "native_ns": 144287,
+          "guest_ns": 0
+        },
+        {
+          "mode": "native",
+          "image": "0x400c258000",
+          "pages": 4,
+          "rebases": 481,
+          "binds": 48,
+          "native_ns": 99324,
+          "guest_ns": 0
+        },
+        {
+          "mode": "native",
+          "image": "0x400c308000",
+          "pages": 40,
+          "rebases": 5967,
+          "binds": 105,
+          "native_ns": 1122045,
+          "guest_ns": 0
+        }
+      ]
+    },
+    {
+      "name": "check-unknown-dyld",
+      "variant": "unsupported",
+      "wall_s": 2.561953515000006,
+      "cpu_s": 2.6014970000000073,
+      "returncode": 0,
+      "uptime": "22:57  2 users, load averages: 12.17 15.71 13.55",
+      "fixups": []
+    }
+  ]
+}

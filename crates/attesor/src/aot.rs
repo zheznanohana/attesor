@@ -23,7 +23,7 @@ use std::sync::{Arc, Mutex, RwLock, Weak};
 
 const MAGIC: &[u8; 8] = b"MCLAOT05";
 /// Bump when the translator's output changes.
-const TRANSLATOR_VERSION: u32 = 53;
+const TRANSLATOR_VERSION: u32 = 54;
 
 #[derive(Clone)]
 struct Image {
@@ -845,6 +845,7 @@ fn prewarm_image(path: &str, dyld: bool) -> std::io::Result<PrewarmImage> {
     let base = if dyld { crate::loader::DYLD_BASE } else { crate::loader::MAIN_BASE };
     let slide = base.wrapping_sub(lo);
     let _mapping = map_prewarm_text(path, &m, base)?;
+    if dyld { crate::nativefixups::install(path, &m, slide); }
     let mut entries = function_starts(path, &m, slide);
     if let Some(off) = m.main_entryoff { entries.push(m.text_vmaddr().wrapping_add(off).wrapping_add(slide)); }
     if let Some(pc) = m.thread_pc { entries.push(pc.wrapping_add(slide)); }
