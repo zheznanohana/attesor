@@ -559,6 +559,7 @@ fn loop_insn(rng: &mut Rng, pool: &[u32], wide: bool, i: usize) -> u32 {
 /// SVC probes. Side exits/SVC split basic blocks deliberately: those cases must
 /// remain correct even when a loop is ineligible for the region optimization.
 fn run_selftest_loops(count: usize) {
+    let counting = COUNT_LOOP_REGIONS.swap(true, Ordering::Relaxed);
     let page = unsafe {
         libc::mmap(std::ptr::null_mut(), 0x1000, libc::PROT_READ | libc::PROT_WRITE,
             libc::MAP_ANON | libc::MAP_PRIVATE, -1, 0)
@@ -692,6 +693,7 @@ fn run_selftest_loops(count: usize) {
     }
     invalidate_range(page, 0x1000);
     unsafe { libc::munmap(page as *mut libc::c_void, 0x1000); }
+    COUNT_LOOP_REGIONS.store(counting, Ordering::Relaxed);
     let loop_regions = STATS_LOOP_REGIONS.load(Ordering::Relaxed) - regions0;
     println!("jit selftest [loops]: ok={ok} mismatch={bad} skipped={skipped} native={native} loop_regions={loop_regions}");
 }
