@@ -1664,6 +1664,35 @@ pub(super) fn callret_enabled() -> bool {
 }
 
 /// Ten-register write-back region for JIT units and position-independent AOT blobs.
+/// Debugging aid: ATTESOR_LOOPRA_BISECT=lo-hi forms regions only for the lo..hi-th candidate loops
+/// (counted in translation order, per process), and logs each candidate's pc with ATTESOR_LOOPRA_LOG=1.
+fn loopra_bisect(pc: u64) -> bool {
+    static RANGE: std::sync::OnceLock<Option<(u64, u64)>> = std::sync::OnceLock::new();
+    static N: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+    let range = *RANGE.get_or_init(|| {
+        let v = std::env::var("ATTESOR_LOOPRA_BISECT").ok()?;
+        let (a, b) = v.split_once('-')?;
+        Some((a.parse().ok()?, b.parse().ok()?))
+    });
+    let i = N.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    if std::env::var_os("ATTESOR_LOOPRA_LOG").is_some() {
+        let mut body = String::new();
+        for k in 0..MAX_BLOCK_INSNS as u64 {
+            let Some(w) = crate::guestmem::read_u64((pc + 4 * k) & !7).map(|v| if (pc + 4 * k) & 4 != 0 { (v >> 32) as u32 } else { v as u32 }) else { break };
+            body += &format!("\n    {:#x}: {w:08x}  {}", pc + 4 * k, attesor_core::disasm::disasm(w));
+            if is_terminator(w) { break; }
+        }
+        eprintln!("[loopra] candidate {i} pc={pc:#x} {}{body}", crate::symbols::describe(pc));
+    }
+    static ALLOW: std::sync::OnceLock<Option<std::collections::HashSet<u64>>> = std::sync::OnceLock::new();
+    let allow = ALLOW.get_or_init(|| {
+        let f = std::env::var("ATTESOR_LOOPRA_ALLOW").ok()?;
+        Some(std::fs::read_to_string(f).ok()?.split_whitespace().filter_map(|t| u64::from_str_radix(t.trim_start_matches("0x"), 16).ok()).collect())
+    });
+    if let Some(set) = allow { return set.contains(&pc); }
+    range.is_none_or(|(a, b)| i >= a && i < b)
+}
+
 /// On by default (ATTESOR_JIT_OFF=loopra turns it off): single-block loops keep their working set in
 /// ten host registers. Measured int-hash +34%, branchy +54%, memops +45%, crc32 +19%.
 fn loopra_enabled() -> bool {
@@ -1780,7 +1809,7 @@ pub fn emit_block(u: &mut Unit, pc: u64, read: &dyn Fn(u64) -> Option<u32>) -> u
     let mut label = *u.labels.get(&pc).expect("block label");
     u.a.set_label(&mut label).unwrap();
     if u.loopra && !u.no_internal_jumps {
-        if let Some(reg) = loop_layout::<NLOOPREGS>(u, pc, read) {
+        if let Some(reg) = loop_layout::<NLOOPREGS>(u, pc, read).filter(|_| loopra_bisect(pc)) {
             // signals.rs does not deliver guest fault handlers. Register-only
             // state is therefore visible only in fatal crash dumps; revisit this
             // feature before implementing resumable guest faults.
@@ -3338,8 +3367,15 @@ impl<'a> E<'a> {
                 let index = if option == 2 { // UXTW must ignore Xrm[63:32].
                     a!(self, mov(ecx,r32_of(index))); rcx
                 } else { index };
+                let shift = if s != 0 { scale } else { 0 };
+                // x86 addressing scales only by 1, 2, 4 or 8: a Q access (LSL #4, x16) shifts a copy.
+                let index = if shift > 3 {
+                    if index != rcx { a!(self, mov(rcx, index)); }
+                    a!(self, shl(rcx, shift)); rcx
+                } else { index };
                 let base = self.src(rn,true,true,rax);
-                a!(self, lea(rax,qword_ptr(base + index * (1i32 << (if s != 0 {scale} else {0})))));
+                let mult = if shift > 3 { 1 } else { 1i32 << shift };
+                a!(self, lea(rax,qword_ptr(base + index * mult)));
                 return self.access_sized(rt,v,size,opc);
             }
             self.ldx(rcx, rm, false);
