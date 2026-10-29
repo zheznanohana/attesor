@@ -57,6 +57,15 @@ Add a differential self-test class `loops` to `crates/attesor/src/jit/selftest.r
 - Faults: guest fault signals are not delivered (`signals.rs`, `GUEST_FAULTS_FATAL` in emit.rs), so stale
   `Cpu` values are only visible in crash dumps; keep a comment/assert tying this feature to that fact.
 - Off in verification mode (`no_internal_jumps`) and in AOT builds for now. Bump `TRANSLATOR_VERSION`.
+- Review findings from step 1 (Claude): extend `loop_insn` before relying on it:
+  - LDP/STP (signed offset, pre/post-index) and LDR/STR register-offset forms: the pair templates use
+    r8/r9 as scratch, which this step makes allocatable.
+  - Scalar/vector FP and SIMD instructions in loop bodies (reuse `fp_insn` from the fpblocks generator,
+    and `init.v` values from `fp_val`): any template that uses rsi/rdi/r8/r9/r10 as scratch would silently
+    clobber an allocated guest register. Audit all of them (grep the emitter), fix or exclude them from regions.
+  - Guest registers x16-x19 and x24-x26 in the pools (not only x0-x15).
+  - Keep the sensitivity proof for the new path: break one exit write-back on purpose, show `loops`
+    with `ATTESOR_JIT_ON=loopra` reports mismatches, revert; record both results in the commit message.
 - `loops` must pass with `ATTESOR_JIT_ON=loopra` (mismatch=0, loop_regions > 0), and all existing
   classes must still pass with and without the flag. Commit, stop, report.
 
