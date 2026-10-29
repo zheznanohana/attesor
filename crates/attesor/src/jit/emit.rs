@@ -4427,6 +4427,24 @@ impl<'a> E<'a> {
         // the result so Rd==Rn/Rm and SU1's r0/r1 dependency remain exact.
         let su0 = insn & 0xFFFF_FC00 == 0x5E28_2800;
         let su1 = insn & 0xFFE0_FC00 == 0x5E00_6000;
+        if (su0 || su1) && has_sha() && !jit_off("shani") {
+            // Intel MSG1 is exactly ARM SU0. MSG2 includes SU1's r0/r1
+            // dependency but not its n1,n2,n3,m0 addend: add that first.
+            // Load every input before storing so all Rd/Rn/Rm aliases work.
+            self.vld(xmm0, rd, true);
+            self.vld(xmm1, rn, true);
+            if su0 {
+                a!(self, sha256msg1(xmm0, xmm1));
+            } else {
+                self.vld(xmm2, rm, true);
+                a!(self, movdqa(xmm3, xmm2));
+                a!(self, palignr(xmm3, xmm1, 4)); // n1,n2,n3,m0
+                a!(self, paddd(xmm0, xmm3));
+                a!(self, sha256msg2(xmm0, xmm2));
+            }
+            self.vfin(rd, true);
+            return true;
+        }
         if su0 || su1 {
             self.vld(xmm1, rd, true);
             self.vld(xmm2, rn, true);

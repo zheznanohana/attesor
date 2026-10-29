@@ -1,0 +1,13 @@
+jit selftest [ffffcc00:4e284800]: ok=12000 mismatch=0 skipped=0 native=12000
+jit selftest [bfe0fc00:0ee0e000]: ok=12000 mismatch=0 skipped=0 native=12000
+jit selftest [ffe0ec00:5e004000]: ok=12000 mismatch=0 skipped=0 native=12000
+jit selftest [fffffc00:5e282800]: ok=12000 mismatch=0 skipped=0 native=12000
+jit selftest [ffe0fc00:5e006000]: ok=12000 mismatch=0 skipped=0 native=12000
+jit selftest [ffffcc00:4e284800]: ok=12000 mismatch=0 skipped=0 native=12000
+jit selftest [bfe0fc00:0ee0e000]: ok=12000 mismatch=0 skipped=0 native=12000
+jit selftest [ffe0ec00:5e004000]: ok=12000 mismatch=0 skipped=0 native=12000
+jit selftest [fffffc00:5e282800]: ok=12000 mismatch=0 skipped=0 native=12000
+jit selftest [ffe0fc00:5e006000]: ok=12000 mismatch=0 skipped=0 native=12000
+crypto-kat: PASS
+crypto-kat: PASS
+crypto-kat: PASS
