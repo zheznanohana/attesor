@@ -80,6 +80,8 @@ pub struct Unit {
     /// The flag-setting instruction being translated feeds a fused branch/select and its NZCV bytes
     /// are dead afterwards: skip the four flag stores.
     pub dead_flags: bool,
+    /// The instruction just translated also covered the next one (a fused pair such as AESE+AESMC).
+    pub skip_next: bool,
 }
 
 pub const NCREGS: usize = 5;
@@ -154,6 +156,7 @@ impl Unit {
             rc_frozen: false,
             look: Vec::new(),
             dead_flags: false,
+            skip_next: false,
         }
     }
 
@@ -713,6 +716,24 @@ pub fn has_fma() -> bool {
     *F.get_or_init(|| std::is_x86_feature_detected!("fma"))
 }
 
+/// AES-NI on the host, for AESE/AESD/AESMC/AESIMC.
+pub fn has_aes() -> bool {
+    static F: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *F.get_or_init(|| std::is_x86_feature_detected!("aes"))
+}
+
+/// PCLMULQDQ on the host, for PMULL/PMULL2 (64-bit polynomial multiply).
+pub fn has_pclmul() -> bool {
+    static F: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *F.get_or_init(|| std::is_x86_feature_detected!("pclmulqdq"))
+}
+
+/// SHA extensions (SHA-NI) on the host, for SHA256H/H2.
+pub fn has_sha() -> bool {
+    static F: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *F.get_or_init(|| std::is_x86_feature_detected!("sha"))
+}
+
 /// F16C (half-precision conversions) on the host, for FCVTL/FCVTN between half and single.
 pub fn has_f16c() -> bool {
     static F: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
@@ -788,6 +809,13 @@ pub fn emit_block(u: &mut Unit, pc: u64, read: &dyn Fn(u64) -> Option<u32>) -> u
         count += 1;
         if term {
             return cur;
+        }
+        // a fused pair consumed the next instruction too: step over it (its pc is not a label)
+        let skips = if std::mem::take(&mut u.skip_next) { 2 } else { 1 };
+        if skips == 2 {
+            cur += 4;
+            count += 1;
+            u.look.remove(0);
         }
         // slide the lookahead window to start at the next instruction
         if !u.look.is_empty() {
@@ -3367,6 +3395,54 @@ impl<'a> E<'a> {
             return true;
         }
 
+        // ---- AESE/AESD/AESMC/AESIMC via AES-NI ----
+        // ARM splits a round differently from x86: AESE = ShiftRows+SubBytes of (d ^ n) = AESENCLAST with
+        // a zero key; AESD likewise with AESDECLAST; MixColumns alone = AESENC(AESDECLAST(x, 0), 0)
+        // (the inverse SubBytes/ShiftRows undoes AESENC's own); AESIMC is InvMixColumns directly.
+        // Chromium's BoringSSL assumes the ARMv8 crypto extension on Apple arm64, so this runs on TLS paths.
+        if insn & 0xFFFF_CC00 == 0x4E28_4800 && has_aes() && !jit_off("aes") {
+            let op = bits(insn, 13, 12); // 0 AESE, 1 AESD, 2 AESMC, 3 AESIMC
+            // The usual round pairs (fused on Apple CPUs) are one x86 instruction each:
+            // AESE Vd,Vn; AESMC Vd,Vd = AESENC(d ^ n, 0) and AESD Vd,Vn; AESIMC Vd,Vd = AESDEC(d ^ n, 0).
+            let next = self.u.look.first().copied();
+            let pair = |mc: u32| next == Some(mc | (rd << 5) | rd) && !self.u.labels.contains_key(&(self.pc + 4));
+            if (op == 0 && pair(0x4E28_6800)) || (op == 1 && pair(0x4E28_7800)) {
+                self.vld(xmm0, rn, true);
+                self.vld(xmm2, rd, true);
+                a!(self, pxor(xmm0, xmm2));
+                a!(self, pxor(xmm1, xmm1));
+                if op == 0 { a!(self, aesenc(xmm0, xmm1)); } else { a!(self, aesdec(xmm0, xmm1)); }
+                self.vfin(rd, true);
+                self.u.skip_next = true;
+                return true;
+            }
+            self.vld(xmm0, rn, true);
+            a!(self, pxor(xmm1, xmm1));
+            match op {
+                0 | 1 => {
+                    self.vld(xmm2, rd, true);
+                    a!(self, pxor(xmm0, xmm2));
+                    if op == 0 { a!(self, aesenclast(xmm0, xmm1)); } else { a!(self, aesdeclast(xmm0, xmm1)); }
+                }
+                2 => {
+                    a!(self, aesdeclast(xmm0, xmm1));
+                    a!(self, aesenc(xmm0, xmm1));
+                }
+                _ => a!(self, aesimc(xmm0, xmm0)),
+            }
+            self.vfin(rd, true);
+            return true;
+        }
+
+        // ---- PMULL/PMULL2 (64x64 -> 128 carry-less multiply) via PCLMULQDQ ----
+        if insn & 0xBFE0_FC00 == 0x0EE0_E000 && has_pclmul() && !jit_off("pmull") {
+            self.vld(xmm0, rn, true);
+            self.vld(xmm1, rm, true);
+            a!(self, pclmulqdq(xmm0, xmm1, if q { 0x11 } else { 0x00 }));
+            self.vfin(rd, true);
+            return true;
+        }
+
         // ---- EXT: bytes imm.. of the pair Vm:Vn ----
         if insn & 0xBFE0_8400 == 0x2E00_0000 && !jit_off("ext") {
             let imm = bits(insn, 14, 11);
@@ -3496,8 +3572,29 @@ impl<'a> E<'a> {
             return true;
         }
 
-        // SHA256H/H2: four rounds, with state kept in two XMM registers.
-        // Use ordinary rotates/Boolean operations, not the optional SHA ISA.
+        // SHA256H/H2 with SHA-NI: ARM keeps X = (a,b,c,d) and Y = (e,f,g,h) in lanes 0..3, x86 keeps
+        // ABEF = (f,e,b,a) and CDGH = (h,g,d,c); shuffle in, two SHA256RNDS2 (two rounds each, W+K in
+        // xmm0), shuffle out. SHA256H returns the new X, SHA256H2 the new Y.
+        if insn & 0xFFE0_EC00 == 0x5E00_4000 && has_sha() && !jit_off("shani") {
+            let h2 = bit(insn, 12) != 0;
+            let (x, y) = if h2 { (rn, rd) } else { (rd, rn) };
+            self.vld(xmm3, x, true);
+            self.vld(xmm4, y, true);
+            self.vld(xmm0, rm, true);                 // W+K for the four rounds
+            a!(self, movaps(xmm1, xmm4));
+            a!(self, shufps(xmm1, xmm3, 0x11));       // ABEF
+            a!(self, movaps(xmm2, xmm4));
+            a!(self, shufps(xmm2, xmm3, 0xBB));       // CDGH
+            a!(self, sha256rnds2(xmm2, xmm1));        // xmm2 = ABEF after 2 rounds; CDGH is now old ABEF
+            a!(self, pshufd(xmm0, xmm0, 0x0E));       // W+K of rounds 3 and 4
+            a!(self, sha256rnds2(xmm1, xmm2));        // xmm1 = ABEF after 4 rounds; CDGH = xmm2
+            a!(self, movaps(xmm0, xmm1));
+            a!(self, shufps(xmm0, xmm2, if h2 { 0x11 } else { 0xBB }));
+            self.vfin(rd, true);
+            return true;
+        }
+        // SHA256H/H2 without SHA-NI: four rounds, with state kept in two XMM registers,
+        // using ordinary rotates/Boolean operations.
         if insn & 0xFFE0_EC00 == 0x5E00_4000 {
             let h2 = bit(insn, 12) != 0;
             self.vld(xmm0, if h2 { rn } else { rd }, true);

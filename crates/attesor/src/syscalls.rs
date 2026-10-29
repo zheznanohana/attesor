@@ -305,6 +305,37 @@ fn bsd_inner(cpu: &mut Cpu, n: u64, mut args: [u64; 8]) {
                 write_sysctl_str(cpu, args[2], args[3], "arm64");
                 return;
             }
+            // libc's sysctlbyname() resolves the name first (name2oid, mib {0,3}) and then queries the
+            // OID, so overrides must answer both steps: overridden names get a private OID
+            // {FAKE_OID, index}, which the second step maps back. Before, only SYS_SYSCTLBYNAME was
+            // overridden, which arm64 libc never uses: every hw.optional.arm.* answered ENOENT and
+            // hw.pagesize the host's 4096.
+            if args[1] == 2 && mib == [0, 3] && args[4] != 0 {
+                let len = (args[5] as usize).min(256);
+                let raw = unsafe { std::slice::from_raw_parts(args[4] as *const u8, len) };
+                let name = String::from_utf8_lossy(raw.split(|&b| b == 0).next().unwrap_or(&[])).into_owned();
+                if name == "hw.machine" || sysctl_override(&name).is_some() {
+                    let mut names = FAKE_OID_NAMES.lock().unwrap();
+                    let idx = names.iter().position(|n| *n == name).unwrap_or_else(|| { names.push(name.clone()); names.len() - 1 });
+                    unsafe {
+                        if args[2] != 0 && args[3] != 0 && *(args[3] as *const u64) >= 8 {
+                            *(args[2] as *mut [i32; 2]) = [FAKE_OID, idx as i32];
+                            *(args[3] as *mut u64) = 8;
+                        }
+                    }
+                    set_ok(cpu, 0, 0);
+                    return;
+                }
+            }
+            if args[1] == 2 && mib[0] == FAKE_OID {
+                let name = FAKE_OID_NAMES.lock().unwrap().get(mib[1] as usize).cloned();
+                match name.as_deref() {
+                    Some("hw.machine") => write_sysctl_str(cpu, args[2], args[3], "arm64"),
+                    Some(n) => write_sysctl_int(cpu, args[2], args[3], sysctl_override(n).unwrap_or(0)),
+                    None => set_err(cpu, libc::ENOENT as u64),
+                }
+                return;
+            }
             let r = hostsys::unix(n, &args);
             set_res(cpu, r);
         }
@@ -497,6 +528,10 @@ fn write_sysctl_int(cpu: &mut Cpu, oldp: u64, oldlenp: u64, v: i64) {
     set_ok(cpu, 0, 0);
 }
 
+/// Private sysctl OID namespace (mib[0]) for overridden names; real top-level ids are small.
+const FAKE_OID: i32 = 0x4154;
+static FAKE_OID_NAMES: std::sync::Mutex<Vec<String>> = std::sync::Mutex::new(Vec::new());
+
 /// sysctls whose answer must describe the emulated arm64 machine.
 fn sysctl_override(name: &str) -> Option<i64> {
     Some(match name {
@@ -516,10 +551,15 @@ fn sysctl_override(name: &str) -> Option<i64> {
         | "hw.optional.arm.FEAT_RDM" | "hw.optional.arm.FEAT_SHA3" | "hw.optional.arm.FEAT_SHA512"
         | "hw.optional.arm.FEAT_SME" | "hw.optional.arm.FEAT_SME2" | "hw.optional.arm.FEAT_BF16"
         | "hw.optional.arm.FEAT_I8MM" | "hw.optional.armv8_2_fhm" | "hw.optional.armv8_2_sha512"
-        | "hw.optional.armv8_2_sha3" | "hw.optional.armv8_3_compnum" | "hw.optional.arm.FEAT_SHA256"
-        | "hw.optional.arm.FEAT_AES" | "hw.optional.arm.FEAT_PMULL" | "hw.optional.arm.FEAT_SHA1"
+        | "hw.optional.armv8_2_sha3" | "hw.optional.armv8_3_compnum" | "hw.optional.arm.FEAT_SHA1"
         | "hw.optional.arm.FEAT_AFP" | "hw.optional.arm.FEAT_RPRES" | "hw.optional.arm.FEAT_ECV"
         | "hw.optional.arm.FEAT_WFxT" | "hw.optional.arm.FEAT_CSSC" | "hw.optional.arm.FEAT_HBC" => 0,
+        // crypto extensions the JIT translates natively (AES-NI / PCLMULQDQ when the host has them;
+        // SHA256H/SU0/SU1 use only SSE4.1). SHA1/SHA512/SHA3 stay unadvertised: interpreted, they would be
+        // slower than the software paths programs pick without them.
+        "hw.optional.arm.FEAT_SHA256" => 1,
+        "hw.optional.arm.FEAT_AES" => crate::jit::emit::has_aes() as i64,
+        "hw.optional.arm.FEAT_PMULL" => (crate::jit::emit::has_aes() && crate::jit::emit::has_pclmul()) as i64,
         "hw.pagesize" | "hw.pagesize32" | "vm.pagesize" => 16384,
         "hw.cpufamily" => crate::commpage::CPUFAMILY as i64,
         "hw.optional.x86_64" | "hw.optional.sse" | "hw.optional.sse2" | "hw.optional.sse3"

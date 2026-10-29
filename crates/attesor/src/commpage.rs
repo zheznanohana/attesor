@@ -17,6 +17,8 @@ const K_HAS_VFP: u64 = 0x400;
 const K_HAS_UC_NORMAL_MEMORY: u64 = 0x800;
 const K_HAS_EVENT: u64 = 0x1000;
 const K_HAS_FMA: u64 = 0x2000;
+/// kHasARMv8Crypto: AES/PMULL/SHA1/SHA256 instructions (set only when the JIT translates AES and PMULL natively).
+const K_HAS_ARMV8_CRYPTO: u64 = 0x0100_0000;
 const K_HAS_FEAT_LSE: u64 = 0x0200_0000;
 const K_HAS_CRC32: u64 = 0x0400_0000;
 const K_HAS_FLAGM: u64 = 0x0000_0100_0000_0000;
@@ -101,7 +103,8 @@ impl CommPage {
         let caps: u64 = K_CACHE64 | K_FAST_TLS | K_HAS_ADVSIMD | K_HAS_ADVSIMD_HPFPCVT | K_HAS_VFP | K_HAS_UC_NORMAL_MEMORY
             | K_HAS_EVENT | K_HAS_FMA | K_HAS_FEAT_LSE | K_HAS_CRC32 | K_HAS_FLAGM | K_HAS_FLAGM2 | K_HAS_DOTPROD
             | K_HAS_SB | K_HAS_FRINTTS | K_HAS_LRCPC | K_HAS_LRCPC2 | K_HAS_JSCVT | K_HAS_PAUTH | K_HAS_DPB | K_HAS_DPB2
-            | K_HAS_LSE2 | K_HAS_CSV2 | K_HAS_CSV3 | ((ncpu as u64) << 16) | if ncpu == 1 { 0x8000 } else { 0 };
+            | K_HAS_LSE2 | K_HAS_CSV2 | K_HAS_CSV3 | ((ncpu as u64) << 16) | if ncpu == 1 { 0x8000 } else { 0 }
+            | if crate::jit::emit::has_aes() && crate::jit::emit::has_pclmul() { K_HAS_ARMV8_CRYPTO } else { 0 };
         std::ptr::copy_nonoverlapping(b"commpage 64-bit\0".as_ptr(), self.rw(0), 16);
         (self.rw(0x10) as *mut u64).write_unaligned(caps);
         (self.rw(0x1e) as *mut u16).write_unaligned(3);
