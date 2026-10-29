@@ -1142,7 +1142,110 @@ fn run_selftest_calls(count: usize) {
     println!("jit selftest [calls]: ok={ok} mismatch={bad} skipped=0 native={native} callret={} deep={}", emit::callret_enabled() as u8, count / 8);
 }
 
+/// Whole-unit relocation: short/near branches, patchable slots, indirect calls,
+/// RET, integer/FP constants, chaining, invalidation, and retranslation. Check
+/// stub label metadata before execution so a missing continuation rebase reports
+/// mismatches rather than jumping into the middle of an instruction.
+fn run_selftest_jitcode(count: usize, seed: u64) {
+    let page = unsafe { libc::mmap(std::ptr::null_mut(), 0x4000,
+        libc::PROT_READ | libc::PROT_WRITE, libc::MAP_ANON | libc::MAP_PRIVATE, -1, 0) as u64 };
+    assert_ne!(page, libc::MAP_FAILED as u64);
+    let mut rng = Rng(seed.max(1));
+    let (mut ok, mut bad) = (0, 0);
+    let mut residues = [0usize; 8];
+    for it in 0..count {
+        invalidate_range(page, 0x4000);
+        ibtc_clear();
+        let mut init = Cpu::new();
+        init.set_pc(page);
+        for n in 0..32 { init.x[n] = rng.val(); }
+        init.set_nzcv((rng.next() & 15) as u32);
+        let mut p = Vec::new();
+        // Change both encoding size and branch displacement. > 127 host bytes
+        // requires near conditional transfers, including constant pool operands.
+        for n in 0..it % 40 {
+            let rd = (n % 5) as u32;
+            p.push(0x9100_0000 | ((rng.next() as u32 & 4095) << 10) | (rd << 5) | rd);
+        }
+        p.push(0xd280_0000 | ((it as u32 & 1) << 5)); // movz x0, #0/1
+        p.push(0xb100_0421); // adds x1, x1, #1
+        p.push(0x9a84_0062 | (((it % 14) as u32) << 12)); // csel x2,x3,x4,cc
+        p.push(0x1e6e_1000); // fmov d0,#1.0
+        p.push(0x6ee0_f801); // fneg v1.2d,v0.2d: RIP-relative sign constant
+        p.push(0x4ee1_c402); // fminnm v2.2d,v0.2d,v1.2d: cold paths/pool
+        p.push(0x3500_0040); // cbnz w0,+8
+        p.push(0x9100_24a5); // add x5,x5,#9
+        let call = p.len(); p.push(0);
+        p.push(0xca04_0063); // eor x3,x3,x4
+        p.push(0xd400_1001); // svc #0x80
+        let callee = p.len();
+        p.push(0x9100_0442); // add x2,x2,#1
+        p.push(0xd65f_03c0); // ret x30
+        let rn = 6 + (it % 24) as u32;
+        p[call] = if it & 1 == 0 { 0x9400_0000 | (callee - call) as u32 }
+            else { init.x[rn as usize] = page + callee as u64 * 4; 0xd63f_0000 | (rn << 5) };
+        unsafe { std::ptr::copy_nonoverlapping(p.as_ptr(), page as *mut u32, p.len()); }
+        let mut reference = clone_cpu(&init);
+        let mut stopped = false;
+        for _ in 0..128 {
+            let insn = unsafe { *(reference.pc() as *const u32) };
+            match interp::exec(&mut reference, insn) {
+                Ok(()) => {}, Err(Exit::Svc(_)) => { stopped = true; break },
+                Err(e) => panic!("invalid jitcode reference {e:?}"),
+            }
+        }
+        assert!(stopped);
+        let mut translated = clone_cpu(&init);
+        setup_cpu(&mut translated);
+        let mut host = lookup_or_translate(page);
+        residues[(host & 7) as usize] += 1;
+        let mut metadata_ok = true;
+        // Translate both callee and continuation up front. Repeated passes below
+        // then exercise IBTC hits and already-chained direct exits.
+        for pc in [page + callee as u64 * 4, page + (call + 1) as u64 * 4] {
+            let h = lookup_or_translate(pc); ibtc_insert(pc, h);
+        }
+        for (&slot, &cont) in INDEX.lock().unwrap().as_ref().unwrap().slot_cont.iter() {
+            // Restrict the audit to newly allocated units in this test iteration.
+            if cont < host { continue; }
+            let bytes = unsafe { std::slice::from_raw_parts(cont as *const u8, 15) };
+            // mmap guest PCs exceed imm32: MOV RAX, imm64 = 48 B8 + 8 bytes.
+            let target = u64::from_le_bytes(bytes[2..10].try_into().unwrap());
+            if slot & 7 != 0 || bytes[..2] != [0x48, 0xb8]
+                || !(page..page + 0x4000).contains(&target) {
+                metadata_ok = false;
+            }
+        }
+        if metadata_ok {
+            for _ in 0..3 {
+                translated = clone_cpu(&init); setup_cpu(&mut translated);
+                host = lookup_or_translate(page);
+                let mut exited = false;
+                for _ in 0..32 {
+                    unsafe { attesor_jit_enter(&mut translated, host); }
+                    if translated.exit_reason == EXIT_SVC { exited = true; break; }
+                    if translated.exit_reason == EXIT_PENDING { break; }
+                    let pc = translated.pc();
+                    let target = lookup_or_translate(pc);
+                    ibtc_insert(pc, target);
+                    if translated.exit_data != 0 { chain_slot(translated.exit_data, pc, target); }
+                    host = target;
+                }
+                if !exited || snapshot(&reference) != snapshot(&translated) { metadata_ok = false; break; }
+            }
+        }
+        if metadata_ok { ok += 1; }
+        else { bad += 1; if bad <= 5 { println!("MISMATCH jitcode #{it}: seed={seed:#x} call_reg=x{rn}"); } }
+    }
+    invalidate_range(page, 0x4000); ibtc_clear();
+    unsafe { libc::munmap(page as *mut _, 0x4000); }
+    println!("jit selftest [jitcode]: ok={ok} mismatch={bad} seed={seed:#x} host-residues={residues:?}");
+    assert_eq!(bad, 0, "whole-unit relocation differential mismatch");
+    if slot_reuse() && count >= 256 { assert!(residues.iter().all(|n| *n > 0), "exercise all eight prefix alignments"); }
+}
+
 pub fn run_selftest(class: &str, count: usize, seed: Option<u64>) {
+    if class == "jitcode" { return run_selftest_jitcode(count, seed.unwrap_or(0xc0de_1234_5678_9abc)); }
     if class == "calls" { return run_selftest_calls(count); }
     if class == "loops" { return run_selftest_loops(count, seed.unwrap_or(0x100f_5e1f_7e57_cafe)); }
     if class == "tbiblocks" { return run_selftest_tbiblocks(count); }

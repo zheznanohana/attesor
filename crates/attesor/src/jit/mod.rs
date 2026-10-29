@@ -303,6 +303,11 @@ fn translate(pc: u64) -> u64 {
     r
 }
 
+fn slot_reuse() -> bool {
+    static ON: OnceLock<bool> = OnceLock::new();
+    *ON.get_or_init(|| std::env::var("ATTESOR_JIT_ON").unwrap_or_default().split(',').any(|s| s == "slotreuse"))
+}
+
 fn translate_inner(pc: u64, runtime: bool) -> u64 {
     let _g = TRANSLATE.lock().unwrap();
     if let Some(h) = lookup(pc) {
@@ -312,14 +317,16 @@ fn translate_inner(pc: u64, runtime: bool) -> u64 {
     let _retranslate_timer = retranslated.then(|| cost::Timer::new("retranslate.ns"));
     let cc = code_cache();
     let ip = cc.cursor();
-    // Slots must be 8-byte aligned for atomic patches; regenerate with padding.
+    let mut prefix = 0u64;
+    // Slots must be 8-byte aligned for atomic patches. The default path
+    // regenerates with internal padding; slotreuse moves the entire unit.
     let mut u = {
         let _timer = cost::Timer::new("translate.emit.ns");
         emit_unit(pc, 0)
     };
     let mut res = {
         let _timer = cost::Timer::new("translate.assemble.ns");
-        u.a.assemble_options(ip, BlockEncoderOptions::RETURN_NEW_INSTRUCTION_OFFSETS).expect("assemble")
+        u.a.assemble_options(ip, BlockEncoderOptions::RETURN_NEW_INSTRUCTION_OFFSETS | if slot_reuse() { BlockEncoderOptions::RETURN_RELOC_INFOS } else { 0 }).expect("assemble")
     };
     if let Some(first) = u.first_slot {
         let at = res.label_ip(&first).expect("slot label");
@@ -327,22 +334,34 @@ fn translate_inner(pc: u64, runtime: bool) -> u64 {
             let pad = (8 - (at % 8)) as usize;
             cost::add("translate.alignment-retries", 1);
             let _timer = cost::Timer::new("translate.alignment-retry.ns");
-            u = emit_unit(pc, pad);
-            res = u.a.assemble_options(ip, BlockEncoderOptions::RETURN_NEW_INSTRUCTION_OFFSETS).expect("assemble");
+            if slot_reuse() {
+                // Moving the WHOLE unit preserves every unit-local relative
+                // displacement (including RIP-relative slots/constants). Keep the
+                // first assembly's bytes and add prefix to all resolved host labels.
+                // There must be no external branch relocation requiring rebasing.
+                assert!(res.inner.reloc_infos.is_empty());
+                prefix = pad as u64;
+                assert_eq!((res.label_ip(&first).unwrap() + prefix) % 8, 0);
+                cost::add("translate.reused-emission", 1);
+            } else {
+                u = emit_unit(pc, pad);
+                res = u.a.assemble_options(ip, BlockEncoderOptions::RETURN_NEW_INSTRUCTION_OFFSETS).expect("assemble");
+            }
         }
     }
     STATS_BLOCKS.fetch_add(1, Ordering::Relaxed);
     STATS_INSNS.fetch_add(u.insns_translated, Ordering::Relaxed);
     STATS_FALLBACK.fetch_add(u.insns_fallback, Ordering::Relaxed);
     let bytes = &res.inner.code_buffer;
-    let at = cc.alloc(bytes.len() as u64);
-    assert_eq!(at, ip, "code cache raced");
+    let base = cc.alloc(bytes.len() as u64 + prefix);
+    assert_eq!(base, ip, "code cache raced");
+    let at = base + prefix;
     unsafe { std::ptr::copy_nonoverlapping(bytes.as_ptr(), at as *mut u8, bytes.len()) };
     let mut ix_guard = INDEX.lock().unwrap();
     let ix = ix_guard.get_or_insert_with(JitIndex::default);
     for s in &u.finished_stubs {
-        let cont = res.label_ip(&s.cont).expect("stub label");
-        let slot = res.label_ip(&s.slot).expect("slot label");
+        let cont = res.label_ip(&s.cont).expect("stub label") + prefix;
+        let slot = res.label_ip(&s.slot).expect("slot label") + prefix;
         assert_eq!(slot % 8, 0, "unaligned chain slot");
         unsafe { std::ptr::write_volatile(slot as *mut u64, cont) };
         ix.slot_cont.insert(slot, cont);

@@ -28,6 +28,7 @@ use std::sync::atomic::Ordering;
 fn usage() -> ! {
     eprintln!("usage: attesor [options] <arm64-program> [args...]");
     eprintln!("       attesor --prewarm [options] <arm64-program|App.app>...  translate without running guest code");
+    eprintln!("       attesor --selftest-jit jitcode [count] [seed]  whole-unit relocation differential test");
     eprintln!("       attesor --selftest-jit loops [count] [seed]  differential loop test (decimal/0x seed)");
     eprintln!("                  --aot is an alias; app bundles include ARM executable helpers");
     eprintln!("options:");

@@ -23,7 +23,7 @@ use std::sync::{Arc, Mutex, RwLock, Weak};
 
 const MAGIC: &[u8; 8] = b"MCLAOT05";
 /// Bump when the translator's output changes.
-const TRANSLATOR_VERSION: u32 = 54;
+const TRANSLATOR_VERSION: u32 = 55;
 
 #[derive(Clone)]
 struct Image {
