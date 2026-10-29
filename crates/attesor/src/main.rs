@@ -217,7 +217,7 @@ fn main() {
     let gpu_active = std::env::var_os("ATTESOR_GPU").is_some()
         && std::env::var("ATTESOR_GPU_ONLY").map(|o| args.iter().skip(1).any(|a| a.contains(&o))).unwrap_or(true);
     let mut envp: Vec<String> = std::env::vars()
-        .filter(|(k, _)| !k.starts_with("ATTESOR_") || matches!(k.as_str(), "ATTESOR_DUMP_ON_FAULT" | "ATTESOR_GPU_BRIDGE" | "ATTESOR_GPU" | "ATTESOR_GPU_ONLY" | "ATTESOR_GPU_DIR" | "ATTESOR_DYLD" | "ATTESOR_SYSROOT" | "ATTESOR_UI_TRACE" | "ATTESOR_NO_DOCK_ICON" | "ATTESOR_STDERR_LOG" | "ATTESOR_CACHE" | "ATTESOR_NO_AOT_BUILD" | "ATTESOR_AOT_CHECKPOINT" | "ATTESOR_AOT_SYNC" | "ATTESOR_JIT_DISABLE" | "ATTESOR_JIT_THRESHOLD" | "ATTESOR_JIT_OFF" | "ATTESOR_JIT_ON" | "ATTESOR_PROFILE" | "ATTESOR_STATS" | "ATTESOR_FALLBACK_HIST" | "ATTESOR_NATIVE_LIBS" | "ATTESOR_NATIVE_DIR"))
+        .filter(|(k, _)| !k.starts_with("ATTESOR_") || matches!(k.as_str(), "ATTESOR_DUMP_ON_FAULT" | "ATTESOR_GPU_BRIDGE" | "ATTESOR_GPU" | "ATTESOR_GPU_ONLY" | "ATTESOR_GPU_DIR" | "ATTESOR_GPU_VT" | "ATTESOR_DYLD" | "ATTESOR_SYSROOT" | "ATTESOR_UI_TRACE" | "ATTESOR_NO_DOCK_ICON" | "ATTESOR_STDERR_LOG" | "ATTESOR_CACHE" | "ATTESOR_NO_AOT_BUILD" | "ATTESOR_AOT_CHECKPOINT" | "ATTESOR_AOT_SYNC" | "ATTESOR_JIT_DISABLE" | "ATTESOR_JIT_THRESHOLD" | "ATTESOR_JIT_OFF" | "ATTESOR_JIT_ON" | "ATTESOR_PROFILE" | "ATTESOR_STATS" | "ATTESOR_FALLBACK_HIST" | "ATTESOR_NATIVE_LIBS" | "ATTESOR_NATIVE_DIR"))
         .map(|(k, v)| format!("{k}={v}"))
         .collect();
     // Native middlemen restart Attesor without Rust's FORWARD argv. Publish the

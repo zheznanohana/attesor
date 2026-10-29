@@ -62,7 +62,7 @@ Measuring actual copies will require dedicated accounting after this baseline
 gate works. Verification/readbacks are included in workload time; results are
 for this deliberately small-command, correctness-heavy workload, not app FPS.
 
-## Current gate result (2026-10-29)
+## Initial sandbox gate result (before Round 2)
 
 In the restricted development environment, native `MTLCreateSystemDefaultDevice`
 returns nil. Native and bridged guest `families.m` match only the null-device
@@ -78,3 +78,12 @@ Do not interpret this measurement infrastructure as completion of those items.
 The next gate is a usable headless Metal/VT execution environment and a valid
 baseline; then implement/version/test candidates, including real path mutation
 sensitivity, before claiming performance or hardware acceleration.
+
+
+## Round 2 implementation and handoff
+
+See [ROUND2.md](ROUND2.md) for the implementation, limitations, CPU-only test gate,
+and exact outside-sandbox commands. The initial-gate statements above describe
+history, not the current implementation. The external baseline supplied by Claude
+is native 339.9 fps and guest 259.4/270.5/246.3 fps; checksum fc302ac9fe269bef.
+No after throughput or VT hardware result is claimed from the sandbox.

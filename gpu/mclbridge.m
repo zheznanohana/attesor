@@ -789,6 +789,12 @@ static void *execCall(const uint8_t *rec, uint32_t reclen, uint8_t kind, uint32_
             [inv setArgument:&arr atIndex:idx];
             break;
         }
+        case MCL_A_SHARED: {
+            if (alen != sizeof(MclSharedData)) return NULL;
+            MclSharedData data; memcpy(&data, pl, sizeof data);
+            const void *p = (const void *)(uintptr_t)data.address;
+            [inv setArgument:&p atIndex:idx]; break;
+        }
         case MCL_A_DATA: { const void *p = pl; [inv setArgument:&p atIndex:idx]; break; }
         }
     }
@@ -846,10 +852,11 @@ static void *execCall(const uint8_t *rec, uint32_t reclen, uint8_t kind, uint32_
 
 static void *doBatch(const uint8_t *in, uint64_t len, uint64_t *outlen) {
     void *reply = NULL;
-    if (len < sizeof(MclMsgHdr)) return NULL;
+    if (!mcl_batch_valid(in, len)) return NULL;
     MclMsgHdr h;
     memcpy(&h, in, sizeof h);
-    if (h.magic != MCL_MAGIC) return NULL;
+    if (h.magic != MCL_MAGIC || (h.version != 0 && h.version != MCL_VERSION) ||
+        h.cmdbytes != len - sizeof h) return NULL;
     const uint8_t *p = in + sizeof h, *end = in + len;
     while (p + 32 <= end) {
         uint64_t w0, w1, th, rh;
@@ -918,13 +925,19 @@ static void statDump(void) {
     }
 }
 
+#include "mclvthost.m"
+
 MCL_EXPORT void *mcl_call(uint64_t op, const void *in, uint64_t inlen, uint64_t *outlen) {
     ensureInit();
     *outlen = 0;
 #ifdef MCL_LOOPBACK
     int savedInHost = mcl_in_host;
-    if (op == 1) mcl_in_host = 1;
+    if (op == 1 || op == MCL_OP_VT) mcl_in_host = 1;
 #endif
+    if (op == MCL_OP_CAPS) {
+        static const MclCaps caps = {MCL_VERSION, MCL_CAP_SHARED_UPLOAD | MCL_CAP_VT};
+        *outlen = sizeof caps; return (void *)&caps;
+    }
     if (op == 2) { free((void *)in); return NULL; }
     if (op == MCL_OP_DEFSEL) {
         if (inlen > 4) { uint32_t id_; memcpy(&id_, in, 4); defSel(id_, (const char *)in + 4); }
@@ -943,11 +956,16 @@ MCL_EXPORT void *mcl_call(uint64_t op, const void *in, uint64_t inlen, uint64_t 
     }
     @autoreleasepool {
         NSDictionary *reply = nil;
-        if (op == 1) {
+        if (op == 1 || op == MCL_OP_VT) {
             NSData *d = [NSData dataWithBytesNoCopy:(void *)in length:inlen freeWhenDone:NO];
             NSError *e = nil;
             NSDictionary *req = [NSPropertyListSerialization propertyListWithData:d options:NSPropertyListImmutable format:NULL error:&e];
             if (!req) reply = @{@"x": @"bad plist"};
+            else if (op == MCL_OP_VT) {
+                if (gProfileCallback) gProfileCallback(0, [[@"VT." stringByAppendingString:req[@"op"] ?: @"unknown"] UTF8String]);
+                @try { reply = mcl_vt_handle(req); }
+                @finally { if (gProfileCallback) gProfileCallback(1, NULL); }
+            }
             else {
                 uint64_t t0 = gStats ? mach_absolute_time() : 0;
                 TRACE("%s %s h=%s", [req[@"c"] UTF8String], [(req[@"sel"] ?: @"") UTF8String], [[req[@"h"] description] UTF8String]);
@@ -990,6 +1008,13 @@ MCL_EXPORT void *mcl_call(uint64_t op, const void *in, uint64_t inlen, uint64_t 
 MCL_EXPORT void mcl_warmup(void) {
     ensureInit();
     @autoreleasepool {
+        // Resolve VT/XPC on the scratch thread before any guest code, even without Metal.
+        if (getenv("ATTESOR_GPU_VT") && !strcmp(getenv("ATTESOR_GPU_VT"), "1")) {
+            (void)VTCompressionSessionGetTypeID(); (void)VTDecompressionSessionGetTypeID();
+            (void)VTIsHardwareDecodeSupported(kCMVideoCodecType_H264);
+            CFArrayRef encoders = NULL;
+            if (!VTCopyVideoEncoderList(NULL, &encoders) && encoders) CFRelease(encoders);
+        }
         id<MTLDevice> d = MTLCreateSystemDefaultDevice();
         if (!d) return;
         static id keep;

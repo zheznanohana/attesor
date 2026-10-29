@@ -70,9 +70,22 @@ static void *mcl_raw(uint64_t op, const void *in, uint64_t len, uint64_t *outlen
 }
 
 static void tq_flush_current(void);
+static void mcl_require_v2(void) {
+    static dispatch_once_t once;
+    dispatch_once(&once, ^{
+        uint64_t n = 0;
+        const MclCaps *caps = mcl_raw(MCL_OP_CAPS, NULL, 0, &n);
+        if (!caps || n != sizeof *caps || caps->version != MCL_VERSION ||
+            !(caps->capabilities & MCL_CAP_SHARED_UPLOAD)) {
+            fprintf(stderr, "[mclmetal] incompatible bridge: protocol v2 required\n");
+            abort();
+        }
+    });
+}
 
 static NSDictionary *mcl_op(uint64_t op, NSDictionary *req) {
     mcl_init();
+    mcl_require_v2();
     NSData *d = nil;
     if (req) {
         tq_flush_current();   // queued (batched) commands must run before this synchronous request
@@ -387,6 +400,8 @@ static NSLock *gBlockLock;
 static uint64_t gNextBlock = 1;
 static void *pump(void *arg);
 static _Atomic uint64_t gEvHandled;
+static __thread BOOL gInPump;
+static void mcl_vt_event(NSDictionary *event);
 
 struct BlockLayout { void *isa; int flags; int reserved; void *invoke; struct { unsigned long reserved, size; void *rest[]; } *desc; };
 
@@ -404,8 +419,7 @@ static NSArray *blockArgTypes(id blk) {
     return @[@"@", @"@"];
 }
 
-static id encodeBlock(id blk, NSString *selName) {
-    if (!blk) return NILV();
+static void start_pump(void) {
     static dispatch_once_t once;
     dispatch_once(&once, ^{
         gBlocks = [NSMutableDictionary new];
@@ -415,8 +429,13 @@ static id encodeBlock(id blk, NSString *selName) {
         pthread_attr_init(&at);
         pthread_attr_setstacksize(&at, 1 << 20);
         pthread_create(&th, &at, pump, NULL);
+        pthread_attr_destroy(&at);
         pthread_detach(th);
     });
+}
+static id encodeBlock(id blk, NSString *selName) {
+    if (!blk) return NILV();
+    start_pump();
     id copy = [blk copy];
     [gBlockLock lock];
     uint64_t bid = gNextBlock++;
@@ -431,6 +450,12 @@ static void *pump(void *arg) {
     for (;;) {
         @autoreleasepool {
             NSDictionary *ev = mcl_op(3, nil);
+            if (ev[@"vt"]) {
+                gInPump = YES;
+                @try { mcl_vt_event(ev); }
+                @finally { gInPump = NO; atomic_fetch_add(&gEvHandled, 1); }
+                continue;
+            }
             if (!ev[@"blk"]) continue;
             [gBlockLock lock];
             NSDictionary *ent = [[gBlocks[ev[@"blk"]] retain] autorelease]; // survive removal below
@@ -453,8 +478,9 @@ static void *pump(void *arg) {
                 }
             }
             void (^b)(void *, void *, void *, void *) = (void (^)(void *, void *, void *, void *))ent[@"b"];
-            b(a[0], a[1], a[2], a[3]);
-            atomic_fetch_add(&gEvHandled, 1);
+            gInPump = YES;
+            @try { b(a[0], a[1], a[2], a[3]); }
+            @finally { gInPump = NO; atomic_fetch_add(&gEvHandled, 1); }
         }
     }
     return NULL;
@@ -543,6 +569,7 @@ static Plan *gPlanList[PLAN_TAB];
 static unsigned gNPlans;
 static uint32_t gNextSelId = 1;
 static uint64_t gNBatched, gNSync, gNAsync, gNFlush, gNBytes, gNCommit, gNCacheHit;
+static uint64_t gNUploadSnapshot, gNUploadBorrowed, gNInlineUpload;
 static uint64_t gLastDump;
 extern void mcl_tramp(void);
 extern void _objc_msgForward(void);
@@ -570,12 +597,15 @@ static NSDictionary *classreg_get(uint32_t id_) {
 // Each thread encodes a record into its own scratch buffer (TQ), then appends it to the one global,
 // ordered queue G under a short lock. Ordering across threads therefore stays exactly the order in
 // which the calls returned. Waits that can block on other GPU work are sent outside the lock.
-typedef struct { uint8_t *buf; uint32_t len, cap; uint8_t busy; uint64_t *defer; uint32_t nDefer, capDefer; } TQ;
-static struct { pthread_mutex_t lock; uint8_t *buf; uint32_t len, cap, ndrop; } G = {PTHREAD_MUTEX_INITIALIZER, NULL, 0, 0, 0};
+typedef struct Upload { struct Upload *next; size_t len; uint8_t bytes[]; } Upload;
+static void uploads_free(Upload *u) { while (u) { Upload *n = u->next; free(u); u = n; } }
+typedef struct { uint8_t *buf; uint32_t len, cap; Upload *uploads; uint8_t busy; uint64_t *defer; uint32_t nDefer, capDefer; } TQ;
+static struct { pthread_mutex_t lock; uint8_t *buf; uint32_t len, cap, ndrop; Upload *uploads; size_t uploadBytes; } G = {.lock = PTHREAD_MUTEX_INITIALIZER};
 static pthread_key_t gTQKey;
 static pthread_once_t gTQOnce = PTHREAD_ONCE_INIT;
 static void tq_destroy(void *p) {
     TQ *q = p;
+    uploads_free(q->uploads);
     free(q->buf);
     free(q->defer);
     free(q);
@@ -639,11 +669,13 @@ static void *g_flush_locked(uint64_t *ol) {
     uint64_t dummy = 0;
     if (ol) *ol = 0;
     if (!G.buf || G.len <= 16) return NULL;
-    MclMsgHdr h = {MCL_MAGIC, G.len - 16, 0, 0};
+    MclMsgHdr h = {MCL_MAGIC, G.len - 16, 0, MCL_VERSION};
     memcpy(G.buf, &h, sizeof h);
     gNFlush++;
     gNBytes += G.len;
     void *r = mcl_raw(MCL_OP_BATCH, G.buf, G.len, ol ?: &dummy);
+    uploads_free(G.uploads);
+    G.uploads = NULL; G.uploadBytes = 0;
     G.len = 16;
     G.ndrop = 0;
     return r;
@@ -1154,11 +1186,11 @@ uint64_t mcl_fast_dispatch(uint64_t *R, uint8_t *stk) {
         cnt[i] = (uint32_t)c;
         if (a->cls == AK_DATA && R[a->xi] && c * a->elem > 4096) bigData = YES;
     }
-    BOOL sync = pl->retKind != RK_VOID || pl->forceSync || bigData || gNoBatch;
-    BOOL async = !sync ? NO : (!gNoAsync && pl->asyncOK && pl->resClass && !bigData && !pl->forceSync);
+    BOOL sync = pl->retKind != RK_VOID || pl->forceSync || gNoBatch;
+    BOOL async = !sync ? NO : (!gNoAsync && !gNoBatch && pl->asyncOK && pl->resClass && !pl->forceSync);
     uint64_t newh = 0;
     uint8_t kind = MCL_R_MSG;
-    if (async) { newh = atomic_fetch_add(&gNextGuestHandle, 1); kind = MCL_R_CREATE; }
+    if (async) { sync = NO; newh = atomic_fetch_add(&gNextGuestHandle, 1); kind = MCL_R_CREATE; }
     else if (sync) kind = MCL_R_SYNC;
     uint32_t off = rec_begin(q, kind, pl->selid, self_h, newh);
     for (int i = 0; i < pl->nargs; i++) {
@@ -1203,8 +1235,27 @@ uint64_t mcl_fast_dispatch(uint64_t *R, uint8_t *stk) {
         case AK_DATA: {
             const void *p = (const void *)R[a->xi];
             if (!p) qarg(q, MCL_A_NIL, NULL, 0);
-            else if (bigData) qarg(q, MCL_A_SCALAR, &p, 8);   // synchronous call: the host reads the caller's memory directly
-            else qarg(q, MCL_A_DATA, p, cnt[i] * a->elem);
+            else if (bigData) {
+                size_t n = (size_t)cnt[i] * a->elem;
+                const void *snapshot = p;
+                if (!sync) {
+                    // One snapshot, no TQ->G payload copies. The queue owns it until acknowledgement.
+                    Upload *u = malloc(sizeof *u + n);
+                    if (!u) abort();
+                    u->len = n; memcpy(u->bytes, p, n);
+                    u->next = q->uploads; q->uploads = u; snapshot = u->bytes;
+                    __atomic_fetch_add(&gNUploadSnapshot, n, __ATOMIC_RELAXED);
+                } else {
+                    // A result is needed anyway: borrow directly until the synchronous acknowledgement.
+                    __atomic_fetch_add(&gNUploadBorrowed, n, __ATOMIC_RELAXED);
+                }
+                MclSharedData data = {(uintptr_t)snapshot, n};
+                qarg(q, MCL_A_SHARED, &data, sizeof data);
+            }
+            else {
+                __atomic_fetch_add(&gNInlineUpload, cnt[i] * a->elem, __ATOMIC_RELAXED);
+                qarg(q, MCL_A_DATA, p, cnt[i] * a->elem);
+            }
             break;
         }
         }
@@ -1220,17 +1271,22 @@ uint64_t mcl_fast_dispatch(uint64_t *R, uint8_t *stk) {
     if (pl->forceSync) {   // may block on other GPU work: push everything queued so far, then wait outside the lock
         g_flush_locked(NULL);
     } else {
+        while (q->uploads) {
+            Upload *u = q->uploads; q->uploads = u->next;
+            u->next = G.uploads; G.uploads = u; G.uploadBytes += u->len;
+        }
         g_append_locked(q->buf + 16, q->len - 16);
         if (sync) rp = g_flush_locked(&ol);
-        else if (pl->flushAfter || G.len > (96u << 10)) g_flush_locked(NULL);
+        else if (pl->flushAfter || G.len > (96u << 10) || G.uploadBytes >= (4u << 20)) g_flush_locked(NULL);
     }
     for (uint32_t i = 0; i < q->nDefer; i++) drop_locked(q->defer[i]);
     q->nDefer = 0;
     pthread_mutex_unlock(&G.lock);
     if (pl->forceSync) {
-        MclMsgHdr h = {MCL_MAGIC, q->len - 16, 0, 0};
+        MclMsgHdr h = {MCL_MAGIC, q->len - 16, 0, MCL_VERSION};
         memcpy(q->buf, &h, sizeof h);
         rp = mcl_raw(MCL_OP_BATCH, q->buf, q->len, &ol);
+        uploads_free(q->uploads); q->uploads = NULL;
         gNFlush++;
     }
     if (async) {
@@ -1341,6 +1397,10 @@ static void stats_maybe_dump(void) {
     fprintf(stderr, "[mclguest] %.1fs calls=%llu (batched=%llu sync=%llu async=%llu legacy=%llu cachehit=%llu) flushes=%llu KB=%llu commits=%llu | per commit: %.1f calls %.1f flushes | guest-ms=%.0f\n",
             secs, totCalls, gNBatched, gNSync, gNAsync, gLegacyCalls, gNCacheHit, gNFlush, gNBytes / 1024, gNCommit,
             gNCommit ? (double)(totCalls + gLegacyCalls) / gNCommit : 0, gNCommit ? (double)gNFlush / gNCommit : 0, totNs * toMs);
+    fprintf(stderr, "[mclupload] snapshot_bytes=%llu borrowed_bytes=%llu inline_bytes=%llu\n",
+            __atomic_exchange_n(&gNUploadSnapshot, 0, __ATOMIC_RELAXED),
+            __atomic_exchange_n(&gNUploadBorrowed, 0, __ATOMIC_RELAXED),
+            __atomic_exchange_n(&gNInlineUpload, 0, __ATOMIC_RELAXED));
     for (unsigned i = 0; i < n; i++) {
         Plan *p = gPlanList[idx[i]];
         fprintf(stderr, "   %-56s n=%-7llu sync=%-6llu ms=%.1f\n", p->name, p->nCalls, p->nSync, p->nNs * toMs);
@@ -1401,3 +1461,5 @@ __attribute__((used)) static const struct mcl_interpose mcl_interposers[] __attr
 };
 
 static void stats_atexit(void) { tq_flush_current(); stats_dump_force(); }
+
+#include "mclvtguest.m"

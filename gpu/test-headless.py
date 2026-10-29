@@ -51,6 +51,13 @@ class Guards(unittest.TestCase):
         for bad in ('', line * 2, line.replace('seconds=1.000', 'seconds=0.000'), line.replace('120.0', '0.0')):
             with self.assertRaises(ValueError): measure.parse_measure(bad)
 
+    def test_upload_counters(self):
+        self.assertIsNone(measure.parse_upload_counters('baseline has no counters'))
+        self.assertEqual(measure.parse_upload_counters(
+            '[mclupload] snapshot_bytes=7 borrowed_bytes=8 inline_bytes=9\n'
+            '[mclupload] snapshot_bytes=1 borrowed_bytes=2 inline_bytes=3\n'),
+            dict(snapshot_bytes=8, borrowed_bytes=10, inline_bytes=12))
+
     def test_differential_sensitivity(self):
         good = reference(2, 1)
         self.assertTrue(measure.equivalent(good, good))

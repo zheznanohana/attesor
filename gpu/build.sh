@@ -9,10 +9,11 @@
 set -e
 cd "$(dirname "$0")"
 OUT=${OUT:-out}
-mkdir -p $OUT
-clang -arch x86_64 -dynamiclib -fobjc-arc -O2 -framework Foundation -framework Metal -framework IOSurface -framework CoreGraphics \
+mkdir -p "$OUT"
+VT="-framework VideoToolbox -framework CoreMedia -framework CoreVideo -framework IOSurface"
+clang -arch x86_64 -dynamiclib -fobjc-arc -O2 $VT -framework Foundation -framework Metal -framework IOSurface -framework CoreGraphics \
   -install_name @rpath/libmclbridge.dylib mclbridge.m -o $OUT/libmclbridge.dylib
-clang -arch arm64 -dynamiclib -fno-objc-arc -O2 -framework Foundation -framework Metal -framework IOSurface \
+clang -arch arm64 -dynamiclib -fno-objc-arc -O2 $VT -framework Foundation -framework Metal -framework IOSurface \
   -install_name @rpath/libmclmetal.dylib mclmetal.m -o $OUT/libmclmetal.dylib
 clang -arch arm64 -dynamiclib -fno-objc-arc -O2 -framework Foundation \
   -install_name @rpath/libattesorui.dylib attesorui.m -o $OUT/libattesorui.dylib
@@ -21,7 +22,7 @@ codesign -f -s - $OUT/libmclbridge.dylib $OUT/libmclmetal.dylib $OUT/libattesoru
 if [ "$(uname -m)" = arm64 ]; then
   clang -arch arm64 -c -fobjc-arc -O2 -DMCL_LOOPBACK mclbridge.m -o $OUT/bridge_loop.o
   clang -arch arm64 -c -fno-objc-arc -O2 -DMCL_LOOPBACK mclmetal.m -o $OUT/shim_loop.o
-  clang -arch arm64 -dynamiclib -framework Foundation -framework Metal -framework QuartzCore \
+  clang -arch arm64 -dynamiclib $VT -framework Foundation -framework Metal -framework QuartzCore \
     -install_name @rpath/libmclloop.dylib $OUT/bridge_loop.o $OUT/shim_loop.o -o $OUT/libmclloop.dylib
   clang -arch arm64 -fobjc-arc -O1 -DMCL_LOOPBACK -Wno-deprecated-declarations -Wl,-rpath,@executable_path -framework Foundation -framework Metal ../tests/guest/metaltri.m $OUT/libmclloop.dylib -o $OUT/metaltri_loop
   codesign -f -s - $OUT/libmclloop.dylib $OUT/metaltri_loop

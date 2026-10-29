@@ -39,6 +39,14 @@ def parse_measure(stdout):
                 submitted_upload_bytes=int(uploads))
 
 
+def parse_upload_counters(stderr):
+    rows = re.findall(r'^\[mclupload\] snapshot_bytes=(\d+) borrowed_bytes=(\d+) inline_bytes=(\d+)$', stderr, re.M)
+    if not rows:
+        return None  # Old baselines have no counters; do not interpret missing as zero.
+    return dict(zip(('snapshot_bytes', 'borrowed_bytes', 'inline_bytes'),
+                    (sum(int(row[i]) for row in rows) for i in range(3))))
+
+
 def equivalent(a, b):
     return all(a[key] == b[key] for key in ('frames', 'seed', 'checksum', 'checked_bytes'))
 
@@ -101,7 +109,7 @@ def main():
         (output / directory).mkdir()
     env = clean_env(output, args.sysroot)
     summary = dict(status='incomplete', variants={k: str(v) for k, v in variants}, runs=[],
-                   byte_accounting='submitted_upload_bytes is workload input, not measured bridge copies')
+                   byte_accounting='submitted_upload_bytes is workload input; upload counters cover fastpath pointer payload only, not framework/driver copies')
 
     def finish(status, code, reason=None):
         summary['status'] = status
@@ -149,6 +157,7 @@ def main():
             if result['mode'] != 'gpu' or not equivalent(result, oracle):
                 return finish('failed', 1, 'guest GPU differs from byte oracle')
             record.update(parse_measure(stdout), **result)
+            record['fastpath_upload_bytes'] = parse_upload_counters((directory / 'stderr.txt').read_text())
             p = subprocess.run([sys.executable, str(ROOT / 'tools/profile-report.py'), str(profile)],
                                env=env, text=True, capture_output=True, timeout=args.timeout)
             (directory / 'profile-report.txt').write_text(p.stdout + p.stderr)
