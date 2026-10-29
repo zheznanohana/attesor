@@ -231,8 +231,7 @@ fn bsd_inner(cpu: &mut Cpu, n: u64, mut args: [u64; 8]) {
             // fork (not the raw syscall) so the host libSystem re-initialises in the child
             // (mach_task_self, MIG reply ports, ...); the JIT reads guest memory through
             // mach_vm_read with the cached task port.
-            crate::engine::flush_profile();
-            let pid = unsafe { libc::fork() };
+            let pid = crate::aot::fork_guest();
             if pid < 0 {
                 set_err(cpu, unsafe { *libc::__error() } as u64);
             } else if pid == 0 {

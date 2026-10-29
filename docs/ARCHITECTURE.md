@@ -25,7 +25,7 @@ Workspace: `crates/core` (CPU state, interpreter, softfloat, mem), `crates/attes
 - `attesor/jit/{mod,emit,selftest}.rs` — x86-64 JIT (iced-x86), tiering (interpret cold
   blocks, translate after `ATTESOR_JIT_THRESHOLD`, default 24), block chaining via patchable
   slots, per-thread IBTC (32768 entries), per-unit precise invalidation (`INDEX`).
-- `attesor/aot.rs` — persistent translation cache (`MCLAOT04`); see below.
+- `attesor/aot.rs` — persistent translation cache (`MCLAOT05`); see below.
 - `attesor/engine.rs` — run loop, fault/USR1/USR2 dump handlers. `signals.rs`, `threads.rs`.
 
 ### AOT cache
@@ -38,11 +38,14 @@ writes `<key>.aot` (position-independent x86 + index). Loaded by **copying into 
 cache** — do NOT mmap the files PROT_EXEC (macOS Gatekeeper pops "Apple could not verify…"
 dialogs for every file). The file header carries a code generator id: `TRANSLATOR_VERSION` mixed with attesor's own
 `LC_UUID`, so a cache written by any other build is ignored (an intermediate build's stale cache once hung a guest),
-plus a flags word with the commpage-check mode and the host FMA/F16C bits the JIT relies on. Still bump
+plus code-generation ON/OFF/DISABLE options, and a flags word with the commpage-check mode and host FMA/F16C/AES/PCLMUL/SHA bits the JIT relies on. The header also identifies the exact saved profile used by the builder, so interrupted rebuilds retry rather than leaving stale coverage indefinitely. Still bump
 `TRANSLATOR_VERSION` when codegen changes. Builds that differ keep overwriting each other's cache files, so A/B-test
 translators with `--no-aot` or separate `ATTESOR_CACHE` dirs (`bench/app-startup.sh` does).
-Processes that are killed (`kill -9`) do not save profiles; quit gracefully (e.g. DevTools
-`Browser.close`, see `wsonly.py`) to build the cache. Rebuilds can take several minutes.
+A background checkpoint first runs after 60 seconds (`ATTESOR_AOT_CHECKPOINT`, 0 disables it),
+then every ten minutes. It publishes partial batches from all threads and builds changed images,
+so a later `kill -9` retains completed checkpoint output. Graceful exit also saves immediately.
+Rebuilds can take several minutes. See [AOT-CHECKPOINTS.md](AOT-CHECKPOINTS.md) for fork safety,
+cache compatibility and isolated regression tests.
 
 ### Emulation notes / important decisions
 - **Page size 16 KiB**: `mmap` returns 16K-aligned, 16K-rounded regions (`mmap_16k`), sysctl

@@ -18,10 +18,10 @@ use crate::jit::emit::{self, StubKind, Unit};
 use iced_x86::BlockEncoderOptions;
 use std::collections::{BTreeSet, HashSet};
 use std::io::{Read, Write};
-use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::Mutex;
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::{Arc, Mutex, RwLock, Weak};
 
-const MAGIC: &[u8; 8] = b"MCLAOT04";
+const MAGIC: &[u8; 8] = b"MCLAOT05";
 /// Bump when the translator's output changes.
 const TRANSLATOR_VERSION: u32 = 36;
 
@@ -41,6 +41,10 @@ static IMAGES: Mutex<Vec<Image>> = Mutex::new(Vec::new());
 static SEEN: Mutex<Vec<HashSet<u64>>> = Mutex::new(Vec::new());
 static ENABLED: AtomicBool = AtomicBool::new(true);
 static SAVED: AtomicBool = AtomicBool::new(false);
+static CHECKPOINT_STARTED: AtomicBool = AtomicBool::new(false);
+// Avoid inheriting another thread's open flock descriptor across fork. Taking
+// the write side waits only for profile/cache publication, not translation.
+static FILE_LOCKS: RwLock<()> = RwLock::new(());
 
 pub fn set_enabled(on: bool) {
     ENABLED.store(on, Ordering::SeqCst);
@@ -75,7 +79,12 @@ fn fnv(parts: &[&[u8]]) -> String {
 /// Code generation options baked into translations: commpage checks and the optional host ISA
 /// extensions the JIT uses when present (a cache built with FMA must not load on a host without it).
 fn flags_word() -> u32 {
-    crate::jit::commpage_checks() as u32 | (crate::jit::emit::has_fma() as u32) << 1 | (crate::jit::emit::has_f16c() as u32) << 2
+    crate::jit::commpage_checks() as u32
+        | (emit::has_fma() as u32) << 1
+        | (emit::has_f16c() as u32) << 2
+        | (emit::has_aes() as u32) << 3
+        | (emit::has_pclmul() as u32) << 4
+        | (emit::has_sha() as u32) << 5
 }
 
 /// Identifies the code generator: TRANSLATOR_VERSION mixed with this attesor binary's LC_UUID, so a
@@ -106,6 +115,15 @@ fn codegen_id() -> u32 {
         for &b in TRANSLATOR_VERSION.to_le_bytes().iter().chain(uuid.iter()) {
             h ^= b as u64;
             h = h.wrapping_mul(0x100_0000_01b3);
+        }
+        // These switches change emitted code too. Keep diagnostic/experimental
+        // translations separate from default translations of this same binary.
+        for name in ["ATTESOR_JIT_ON", "ATTESOR_JIT_OFF", "ATTESOR_JIT_DISABLE"] {
+            let value = std::env::var(name).unwrap_or_default();
+            for &b in name.as_bytes().iter().chain(value.as_bytes()).chain([0u8].iter()) {
+                h ^= b as u64;
+                h = h.wrapping_mul(0x100_0000_01b3);
+            }
         }
         (h ^ (h >> 32)) as u32 | 1
     })
@@ -203,7 +221,45 @@ fn add_image(img: Image) {
 thread_local! {
     /// (start, end, image index) of the image this thread last recorded a block in.
     static LAST_IMG: std::cell::Cell<(u64, u64, usize)> = const { std::cell::Cell::new((1, 0, 0)) };
-    static PENDING: std::cell::RefCell<Vec<(usize, u64)>> = const { std::cell::RefCell::new(Vec::new()) };
+    static PENDING: Arc<PendingBatch> = {
+        let batch = Arc::new(PendingBatch(Mutex::new(Vec::new())));
+        PENDING_THREADS.lock().unwrap().push(Arc::downgrade(&batch));
+        batch
+    };
+}
+
+// Checkpoints must see even a sleeping thread's partial batch. A weak registry
+// preserves batching without retaining terminated threads; Drop publishes their
+// final tail. No registry lock is held while taking a batch or SEEN lock.
+struct PendingBatch(Mutex<Vec<(usize, u64)>>);
+static PENDING_THREADS: Mutex<Vec<Weak<PendingBatch>>> = Mutex::new(Vec::new());
+
+fn publish_batch(batch: Vec<(usize, u64)>) {
+    if batch.is_empty() {
+        return;
+    }
+    let mut seen = SEEN.lock().unwrap();
+    for (i, pc) in batch {
+        seen[i].insert(pc);
+    }
+}
+
+impl Drop for PendingBatch {
+    fn drop(&mut self) {
+        publish_batch(std::mem::take(self.0.get_mut().unwrap()));
+    }
+}
+
+fn flush_all_pending() {
+    let batches: Vec<_> = {
+        let mut threads = PENDING_THREADS.lock().unwrap();
+        let live: Vec<_> = threads.iter().filter_map(Weak::upgrade).collect();
+        threads.retain(|t| t.strong_count() != 0);
+        live
+    };
+    for batch in batches {
+        publish_batch(std::mem::take(&mut *batch.0.lock().unwrap()));
+    }
 }
 
 /// Record that the guest block at `pc` executed (JIT-translated or cold-interpreted), so the
@@ -227,7 +283,7 @@ pub fn note_translated(pc: u64) {
     };
     // Batch inserts so the global lock is taken once per 256 blocks.
     let flush = PENDING.with(|p| {
-        let mut p = p.borrow_mut();
+        let mut p = p.0.lock().unwrap();
         p.push((idx, pc));
         if p.len() >= 256 {
             Some(std::mem::take(&mut *p))
@@ -236,20 +292,14 @@ pub fn note_translated(pc: u64) {
         }
     });
     if let Some(batch) = flush {
-        let mut seen = SEEN.lock().unwrap();
-        for (i, pc) in batch {
-            seen[i].insert(pc);
-        }
+        publish_batch(batch);
     }
 }
 
 /// Publish this thread's not-yet-flushed blocks (called before saving the profile).
 pub fn flush_pending() {
-    let batch = PENDING.with(|p| std::mem::take(&mut *p.borrow_mut()));
-    let mut seen = SEEN.lock().unwrap();
-    for (i, pc) in batch {
-        seen[i].insert(pc);
-    }
+    let batch = PENDING.with(|p| std::mem::take(&mut *p.0.lock().unwrap()));
+    publish_batch(batch);
 }
 
 fn file_for(img: &Image, ext: &str) -> std::path::PathBuf {
@@ -280,13 +330,17 @@ pub fn ensure_loaded() {
 
 const CODE_ALIGN: usize = 0x4000;
 
+fn checked_code_offset(n: usize) -> Option<usize> {
+    Some(n.checked_mul(16)?.checked_add(40)?.checked_add(CODE_ALIGN - 1)? & !(CODE_ALIGN - 1))
+}
+
 fn code_offset(n: usize) -> usize {
-    (32 + n * 16 + CODE_ALIGN - 1) & !(CODE_ALIGN - 1)
+    checked_code_offset(n).expect("AOT index too large")
 }
 
 fn load_file(path: &std::path::Path) -> std::io::Result<usize> {
     let mut f = std::fs::File::open(path)?;
-    let mut head = [0u8; 32];
+    let mut head = [0u8; 40];
     if f.read_exact(&mut head).is_err() || &head[..8] != MAGIC {
         return Ok(0);
     }
@@ -297,10 +351,15 @@ fn load_file(path: &std::path::Path) -> std::io::Result<usize> {
     }
     let n = rd64(&head, 16) as usize;
     let code_len = rd64(&head, 24) as usize;
-    let code_off = code_offset(n);
+    let Some(code_off) = checked_code_offset(n) else { return Ok(0) };
+    let Some(end) = code_off.checked_add(code_len) else { return Ok(0) };
+    if n == 0 || code_len == 0 || f.metadata()?.len() < end as u64 {
+        return Ok(0);
+    }
     let mut idx = vec![0u8; n * 16];
     f.read_exact(&mut idx)?;
-    if f.metadata()?.len() < (code_off + code_len) as u64 {
+    // Reject corrupted offsets before registering even one executable block.
+    if (0..n).any(|i| rd64(&idx, i * 16 + 8) >= code_len as u64) {
         return Ok(0);
     }
     // Copy the code into the JIT code cache. (Mapping the file itself PROT_EXEC makes macOS
@@ -325,6 +384,7 @@ fn load_file(path: &std::path::Path) -> std::io::Result<usize> {
 /// library at the same base and so share its profile and translation file; without the lock a
 /// read-merge-write of one process could drop the blocks another had just merged.
 fn with_image_lock<T>(img: &Image, f: impl FnOnce() -> T) -> T {
+    let _files = FILE_LOCKS.read().unwrap();
     use std::os::unix::io::AsRawFd;
     let lock = std::fs::OpenOptions::new().create(true).write(true).open(file_for(img, "lock"));
     if let Ok(l) = &lock {
@@ -350,6 +410,7 @@ fn read_profile(path: &std::path::Path) -> BTreeSet<u64> {
 /// Merge the blocks seen so far into each image's on-disk profile; returns the images whose profile
 /// grew (or that have no translation file yet), i.e. the ones worth (re)building.
 fn update_profiles() -> Vec<(Image, BTreeSet<u64>)> {
+    flush_all_pending();
     let imgs = IMAGES.lock().unwrap().clone();
     let seen = SEEN.lock().unwrap().clone();
     let _ = std::fs::create_dir_all(cache_dir());
@@ -360,8 +421,11 @@ fn update_profiles() -> Vec<(Image, BTreeSet<u64>)> {
             let mut prof = read_profile(&path);
             let before = prof.len();
             prof.extend(seen[i].iter().copied());
-            let aot_missing = !file_for(img, "aot").exists();
-            if prof.len() == before && !(aot_missing && (!prof.is_empty() || !img.entries.is_empty())) {
+            let cached = compatible_header(&file_for(img, "aot"));
+            // A profile can have been published just before a builder was killed.
+            // File existence/count does not prove that those blocks were built.
+            let aot_stale = cached.is_none_or(|(_, hash)| hash != profile_fingerprint(&prof));
+            if prof.len() == before && !(aot_stale && (!prof.is_empty() || !img.entries.is_empty())) {
                 return None;
             }
             let mut buf = Vec::with_capacity(prof.len() * 8);
@@ -390,10 +454,10 @@ pub fn start_checkpoints() {
         return;
     }
     let first: u64 = std::env::var("ATTESOR_AOT_CHECKPOINT").ok().and_then(|v| v.parse().ok()).unwrap_or(60);
-    if first == 0 {
+    if first == 0 || CHECKPOINT_STARTED.swap(true, Ordering::SeqCst) {
         return;
     }
-    let _ = std::thread::Builder::new().name("attesor-aot".into()).spawn(move || {
+    let spawned = std::thread::Builder::new().name("attesor-aot".into()).spawn(move || {
         extern "C" {
             fn pthread_set_qos_class_self_np(qos: u32, relpri: i32) -> i32;
         }
@@ -410,12 +474,55 @@ pub fn start_checkpoints() {
             for (img, prof) in changed {
                 let r = build(&img, &prof);
                 if std::env::var_os("ATTESOR_STATS").is_some() {
-                    eprintln!("[attesor] aot checkpoint: {} ({} profiled blocks): {:?}", img.name, prof.len(), r.as_ref().map(|_| ()));
+                    eprintln!("[attesor] aot checkpoint: {} ({} profiled blocks): {:?} pid={}", img.name, prof.len(), r.as_ref().map(|_| ()), std::process::id());
                 }
             }
             std::thread::sleep(std::time::Duration::from_secs(600));
         }
     });
+    if spawned.is_err() {
+        CHECKPOINT_STARTED.store(false, Ordering::SeqCst);
+    }
+}
+
+// Lock order: registry -> all batches -> IMAGES -> SEEN -> FILE_LOCKS.
+// Recording releases its batch before SEEN; profile updates release all memory
+// locks before opening a file lock. Drop every guard in BOTH fork branches
+// before running guest code or starting a new checkpoint worker.
+fn fork_safely() -> libc::pid_t {
+    let (pid, error) = {
+        let registry = PENDING_THREADS.lock().unwrap();
+        let batches: Vec<_> = registry.iter().filter_map(Weak::upgrade).collect();
+        let mut guards: Vec<_> = batches.iter().map(|b| b.0.lock().unwrap()).collect();
+        let _images = IMAGES.lock().unwrap();
+        let mut seen = SEEN.lock().unwrap();
+        for batch in &mut guards {
+            for (i, pc) in batch.drain(..) {
+                seen[i].insert(pc);
+            }
+        }
+        let _files = FILE_LOCKS.write().unwrap();
+        let pid = unsafe { libc::fork() };
+        (pid, if pid < 0 { unsafe { *libc::__error() } } else { 0 })
+    };
+    if pid < 0 {
+        unsafe { *libc::__error() = error };
+    }
+    pid
+}
+
+/// A guest fork is not a process exit: do not set SAVED or stop the parent's
+/// checkpoint worker. Only the calling thread survives in the child.
+pub fn fork_guest() -> libc::pid_t {
+    let pid = fork_safely();
+    if pid == 0 {
+        PENDING_THREADS.lock().unwrap().clear();
+        PENDING.with(|batch| PENDING_THREADS.lock().unwrap().push(Arc::downgrade(batch)));
+        SAVED.store(false, Ordering::SeqCst);
+        CHECKPOINT_STARTED.store(false, Ordering::SeqCst);
+        start_checkpoints();
+    }
+    pid
 }
 
 pub fn save_profile() {
@@ -430,7 +537,7 @@ pub fn save_profile() {
     let sync = std::env::var_os("ATTESOR_AOT_SYNC").is_some();
     // Fork: the child still has the guest's memory mapped, so it can read
     // the code it needs to translate.
-    let pid = if sync { 0 } else { unsafe { libc::fork() } };
+    let pid = if sync { 0 } else { fork_safely() };
     if pid != 0 {
         return;
     }
@@ -541,7 +648,9 @@ fn build(img: &Image, profile: &BTreeSet<u64>) -> std::io::Result<()> {
     }
     let path = file_for(img, "aot");
     // per-process temporary: several processes may build the same image concurrently
-    let tmp = path.with_extension(format!("aot.tmp.{}", std::process::id()));
+    // A checkpoint and the exit builder can overlap in one process as well.
+    static NEXT_BUILD: AtomicU64 = AtomicU64::new(0);
+    let tmp = path.with_extension(format!("aot.tmp.{}.{}", std::process::id(), NEXT_BUILD.fetch_add(1, Ordering::Relaxed)));
     let mut f = std::fs::File::create(&tmp)?;
     let mut hdr = Vec::new();
     hdr.extend_from_slice(MAGIC);
@@ -549,6 +658,7 @@ fn build(img: &Image, profile: &BTreeSet<u64>) -> std::io::Result<()> {
     hdr.extend_from_slice(&flags_word().to_le_bytes());
     hdr.extend_from_slice(&(index.len() as u64).to_le_bytes());
     hdr.extend_from_slice(&(code.len() as u64).to_le_bytes());
+    hdr.extend_from_slice(&profile_fingerprint(profile).to_le_bytes());
     for (pc, off) in &index {
         hdr.extend_from_slice(&pc.to_le_bytes());
         hdr.extend_from_slice(&off.to_le_bytes());
@@ -562,12 +672,16 @@ fn build(img: &Image, profile: &BTreeSet<u64>) -> std::io::Result<()> {
     // keep whichever translation covers more blocks: a builder that started from a smaller profile
     // and finishes last must not replace a larger file another process wrote meanwhile
     with_image_lock(img, || {
-        let existing = std::fs::File::open(&path).ok().and_then(|mut e| {
-            let mut h = [0u8; 24];
-            e.read_exact(&mut h).ok()?;
-            (&h[..8] == MAGIC).then(|| u64::from_le_bytes(h[16..24].try_into().unwrap()) as usize)
-        });
-        if existing.is_some_and(|n| n > index.len()) {
+        let latest = read_profile(&file_for(img, "profile"));
+        let hash = profile_fingerprint(profile);
+        let existing = compatible_header(&path);
+        // A newer profile arrived while translating. Never replace a file that
+        // already covers it with this older build. Otherwise partial coverage
+        // is useful now; the fingerprint mismatch schedules another rebuild.
+        let latest_hash = profile_fingerprint(&latest);
+        if (hash != latest_hash && existing.is_some_and(|(_, old_hash)| old_hash == latest_hash))
+            || existing.is_some_and(|(n, old_hash)| old_hash == hash && n > index.len())
+        {
             let _ = std::fs::remove_file(&tmp);
             Ok(())
         } else {
@@ -610,6 +724,40 @@ pub fn build_standalone(path: &str) -> std::io::Result<usize> {
     Ok(n)
 }
 
+// An older/incompatible file must not suppress a rebuild or win the
+// larger-profile race: it cannot be loaded by this code generator anyway.
+fn compatible_header(path: &std::path::Path) -> Option<(usize, u64)> {
+    let mut f = std::fs::File::open(path).ok()?;
+    let mut h = [0u8; 40];
+    f.read_exact(&mut h).ok()?;
+    if &h[..8] != MAGIC
+        || u32::from_le_bytes(h[8..12].try_into().unwrap()) != codegen_id()
+        || u32::from_le_bytes(h[12..16].try_into().unwrap()) != flags_word()
+    {
+        return None;
+    }
+    let n = usize::try_from(u64::from_le_bytes(h[16..24].try_into().unwrap())).ok()?;
+    let bytes = usize::try_from(u64::from_le_bytes(h[24..32].try_into().unwrap())).ok()?;
+    let end = checked_code_offset(n)?.checked_add(bytes)?;
+    let hash = u64::from_le_bytes(h[32..40].try_into().unwrap());
+    (f.metadata().ok()?.len() >= end as u64).then_some((n, hash))
+}
+
+fn compatible_count(path: &std::path::Path) -> Option<usize> {
+    compatible_header(path).map(|(n, _)| n)
+}
+
+fn profile_fingerprint(profile: &BTreeSet<u64>) -> u64 {
+    let mut hash = 0xcbf2_9ce4_8422_2325u64;
+    for pc in profile {
+        for byte in pc.to_le_bytes() {
+            hash ^= byte as u64;
+            hash = hash.wrapping_mul(0x100_0000_01b3);
+        }
+    }
+    hash
+}
+
 fn load_count(p: &std::path::Path) -> usize {
     std::fs::read(p).ok().filter(|d| d.len() >= 32).map(|d| u64::from_le_bytes(d[16..24].try_into().unwrap()) as usize).unwrap_or(0)
 }
@@ -627,4 +775,59 @@ pub fn function_starts(path: &str, m: &crate::macho::MachO, slide: u64) -> Vec<u
         return vec![];
     }
     crate::macho::decode_function_starts(&buf, m.text_vmaddr()).into_iter().map(|a| a.wrapping_add(slide)).collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn checkpoints_publish_idle_and_exited_thread_tails() {
+        let start = 0x1234_0000;
+        add_image(Image { name: "tail-test".into(), key: "tail-test".into(),
+            start, end: start + 0x1000, entries: vec![], loaded: false });
+        let idx = IMAGES.lock().unwrap().iter().position(|i| i.key == "tail-test").unwrap();
+        let (ready_tx, ready_rx) = std::sync::mpsc::channel();
+        let (done_tx, done_rx) = std::sync::mpsc::channel();
+        let worker = std::thread::spawn(move || {
+            note_translated(start);
+            ready_tx.send(()).unwrap();
+            done_rx.recv().unwrap();
+            note_translated(start + 4);
+        });
+        ready_rx.recv().unwrap();
+        assert!(!SEEN.lock().unwrap()[idx].contains(&start));
+        flush_all_pending();
+        assert!(SEEN.lock().unwrap()[idx].contains(&start));
+        done_tx.send(()).unwrap();
+        worker.join().unwrap();
+        assert!(SEEN.lock().unwrap()[idx].contains(&(start + 4)));
+    }
+
+    #[test]
+    fn incompatible_larger_cache_does_not_block_replacement() {
+        let path = std::env::temp_dir().join(format!("attesor-aot-header-{}", std::process::id()));
+        let mut h = Vec::new();
+        h.extend_from_slice(MAGIC);
+        h.extend_from_slice(&codegen_id().to_le_bytes());
+        h.extend_from_slice(&flags_word().to_le_bytes());
+        h.extend_from_slice(&100u64.to_le_bytes());
+        h.extend_from_slice(&16u64.to_le_bytes());
+        h.resize(code_offset(100) + 16, 0);
+        std::fs::write(&path, &h).unwrap();
+        assert_eq!(compatible_count(&path), Some(100));
+        h[8] ^= 0x80;
+        std::fs::write(&path, &h).unwrap();
+        assert_eq!(compatible_count(&path), None);
+        h[8] ^= 0x80;
+        h[12] ^= 0x80;
+        std::fs::write(&path, &h).unwrap();
+        assert_eq!(compatible_count(&path), None);
+        h[12] ^= 0x80;
+        h[16..24].copy_from_slice(&u64::MAX.to_le_bytes());
+        std::fs::write(&path, &h).unwrap();
+        assert_eq!(compatible_count(&path), None);
+        assert_eq!(load_file(&path).unwrap(), 0);
+        std::fs::remove_file(path).unwrap();
+    }
 }
