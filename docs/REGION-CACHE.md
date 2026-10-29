@@ -54,7 +54,11 @@ The standalone checker runs randomized differential instruction/block gates,
 then compares an explicit ARM natural-loop recurrence and compiler-generated
 register-pressure recurrence against independently compiled native x86 C. It
 checks baseline JIT, region JIT, commpage redirection, old next-use policy, and
-cold/warm AOT execution. It deliberately does not time performance. Public-entry
+cold/warm AOT execution in a private temporary cache. The checker disables
+background builds, proves the cold cache has no main-image artifact, explicitly
+prewarms the main image, and requires nonzero main-image loaded diagnostics in
+two new processes. It also verifies that baseline code rejects the opt-in cache.
+It deliberately does not time performance. Public-entry
 preloads and selecting only five fixed registers can cost more than they save;
 serial representative measurements must decide whether the experiment should
 be enabled or expanded.
