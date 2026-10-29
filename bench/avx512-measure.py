@@ -11,7 +11,9 @@ p.add_argument('attesor', type=Path)
 p.add_argument('output', type=Path)
 p.add_argument('--mode', choices=['baseline', 'compare'], default='baseline')
 p.add_argument('--runs', type=int, default=3)
+p.add_argument('--flags', nargs='+', help='explicit ATTESOR_JIT_ON variants; empty string = off')
 a = p.parse_args()
+variants = a.flags if a.flags is not None else ([''] if a.mode == 'baseline' else ['', 'avx512'])
 root = a.output.resolve(); root.mkdir(parents=True, exist_ok=True)
 env = {k:v for k,v in os.environ.items() if not k.startswith('ATTESOR_')}
 env.update(TMPDIR='/private/tmp', ATTESOR_CACHE=str(root/'cache'))
@@ -46,7 +48,7 @@ for func,label,needle in [('matmul','matmul','fmadd'),('neon_dot','neon-dot','um
     blocks[label]=f[start:end+1]
 (root/'guest-blocks.json').write_text(json.dumps({k:[raw[x[0]] for x in v] for k,v in blocks.items()},indent=2)+'\n')
 counts=[]
-for flag in ([''] if a.mode=='baseline' else ['', 'avx512']):
+for flag in variants:
     for label,block in blocks.items():
         stem=label+'-'+(flag.replace(',','-') or 'off')
         dump=run([binary,'--jit-dump',*[raw[x[0]] for x in block]], {'ATTESOR_JIT_ON':flag,'ATTESOR_DUMP_BYTES':'16384'})
@@ -73,7 +75,7 @@ for flag in ([''] if a.mode=='baseline' else ['', 'avx512']):
 (root/'counts.json').write_text(json.dumps(counts,indent=2)+'\n')
 rows=[]
 for i in range(a.runs):
-    for flag in ([''] if a.mode=='baseline' else ['', 'avx512']):
+    for flag in variants:
         row={'run':i+1,'flag':flag,'uptime':run(['uptime']).strip(),'stdout':run([binary,'--no-aot',guest],{'ATTESOR_JIT_ON':flag})}
         rows.append(row); print(json.dumps(row),flush=True)
         (root/'timings.json').write_text(json.dumps(rows,indent=2)+'\n')

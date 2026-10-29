@@ -23,7 +23,7 @@ use std::sync::{Arc, Mutex, RwLock, Weak};
 
 const MAGIC: &[u8; 8] = b"MCLAOT05";
 /// Bump when the translator's output changes.
-const TRANSLATOR_VERSION: u32 = 54;
+const TRANSLATOR_VERSION: u32 = 55;
 
 #[derive(Clone)]
 struct Image {
@@ -87,6 +87,7 @@ fn flags_word() -> u32 {
         | (emit::has_sha() as u32) << 5
         | (emit::has_avx512() as u32) << 6
         | (emit::avx512_enabled() as u32) << 7
+        | (emit::avx512_nan_enabled() as u32) << 8
 }
 
 /// Identifies the code generator: TRANSLATOR_VERSION mixed with this attesor binary's LC_UUID, so a
@@ -1043,6 +1044,8 @@ mod tests {
         assert_eq!((flags_word() >> 6) & 1, emit::has_avx512() as u32);
         assert_eq!((flags_word() >> 7) & 1, emit::avx512_enabled() as u32);
         assert!(!emit::avx512_enabled() || emit::has_avx512());
+        assert_eq!((flags_word() >> 8) & 1, emit::avx512_nan_enabled() as u32);
+        assert!(!emit::avx512_nan_enabled() || emit::has_avx512());
         let path = std::env::temp_dir().join(format!("attesor-aot-avx512-{}", std::process::id()));
         let mut h = Vec::new();
         h.extend_from_slice(MAGIC);
@@ -1051,13 +1054,13 @@ mod tests {
         h.extend_from_slice(&1u64.to_le_bytes());
         h.extend_from_slice(&16u64.to_le_bytes());
         h.resize(code_offset(1) + 16, 0);
-        for bit in [6, 7] {
+        for bit in [6, 7, 8] {
             std::fs::write(&path, &h).unwrap();
             assert_eq!(compatible_count(&path), Some(1));
-            h[12] ^= 1 << bit;
+            h[12 + bit / 8] ^= 1 << (bit % 8);
             std::fs::write(&path, &h).unwrap();
             assert_eq!(compatible_count(&path), None, "host/selected AVX-512 choice must reject cache");
-            h[12] ^= 1 << bit;
+            h[12 + bit / 8] ^= 1 << (bit % 8);
         }
         std::fs::remove_file(path).unwrap();
     }

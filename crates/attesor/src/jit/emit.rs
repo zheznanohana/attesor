@@ -121,6 +121,8 @@ pub struct Unit {
     pool_avx: bool,
     /// Opt-in 128-bit EVEX cache bank; never enable without host/OS support.
     avx512: bool,
+    /// Independently opt-in AVX-512 NaN selection / range instructions.
+    avx512_nan: bool,
     #[cfg(any(debug_assertions, test))]
     cold_ranges: Vec<(std::ops::Range<usize>, bool)>,
 }
@@ -370,10 +372,19 @@ pub fn x86_cc(kind: FuseKind, cond: u32) -> Option<Cc> {
     }
 }
 
+#[cfg(test)]
+thread_local! {
+    // Only used by the native self-test matrix after explicit host authorization.
+    static TEST_AVX512_FEATURES: std::cell::Cell<Option<(bool, bool)>> = const { std::cell::Cell::new(None) };
+}
+
 impl Unit {
     pub fn new(stub_kind: StubKind, commpage_checks: bool) -> Unit {
         let mut a = CodeAssembler::new(64).unwrap();
         let exit_label = a.create_label();
+        let features = (avx512_enabled(), avx512_nan_enabled());
+        #[cfg(test)]
+        let features = TEST_AVX512_FEATURES.with(|f| f.get()).unwrap_or(features);
         Unit {
             a,
             labels: HashMap::new(),
@@ -411,7 +422,8 @@ impl Unit {
             constants: HashMap::new(),
             constant_pool: Vec::new(),
             pool_avx: has_avx(),
-            avx512: avx512_enabled(),
+            avx512: features.0,
+            avx512_nan: features.1,
             #[cfg(any(debug_assertions, test))]
             cold_ranges: Vec::new(),
         }
@@ -613,7 +625,8 @@ fn check_cold_registers(instructions: &[iced_x86::Instruction], tbi_mask_live: b
             let allowed = if reg.is_vector_register() {
                 reg.number() < 8
             } else {
-                matches!(reg.full_register(), Register::RAX | Register::RCX | Register::RDX)
+                // k1 is a dead scratch at every guest boundary and cold resume.
+                matches!(reg.full_register(), Register::RAX | Register::RCX | Register::RDX | Register::K1)
                     || (reg.full_register() == Register::R11 && !tbi_mask_live)
             };
             if !allowed {
@@ -1005,7 +1018,8 @@ impl<'a> E<'a> {
         }
     }
     /// Register contracts are the same as the hot FP helper: only xmm0-xmm7
-    /// and rax/rcx/rdx/r11 may be scratched, with no cache fills or helper calls.
+    /// and rax/rcx/rdx/r11 plus dead opmask k1 may be scratched, with no cache
+    /// fills or helper calls. r11 must be preserved while the TBI mask is live.
     fn cold_path(&mut self, mut cold: CodeLabel, emit: impl FnOnce(&mut E<'_>) + 'static) {
         let mut resume = self.u.a.create_label();
         self.u.a.set_label(&mut resume).unwrap();
@@ -1822,6 +1836,12 @@ pub fn avx512_enabled() -> bool {
     static F: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
     *F.get_or_init(|| has_avx512() && !jit_off("avx512")
         && std::env::var("ATTESOR_JIT_ON").unwrap_or_default().split(',').any(|g| g == "avx512"))
+}
+
+pub fn avx512_nan_enabled() -> bool {
+    static F: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *F.get_or_init(|| has_avx512() && !jit_off("avx512nan")
+        && std::env::var("ATTESOR_JIT_ON").unwrap_or_default().split(',').any(|g| g == "avx512nan"))
 }
 
 /// FMA3 (fused multiply-add) on the host: FMLA/FMADD are translated natively only with it, since an
@@ -3766,6 +3786,16 @@ impl<'a> E<'a> {
         // x86's "real indefinite" NaN has the sign bit set; ARM's default NaN does not.
         let indefinite = self.vconstant(if double { 0xFFF8_0000_0000_0000 } else { 0xFFC0_0000_FFC0_0000 });
         let default = self.vconstant(if double { 0x7FF8_0000_0000_0000 } else { 0x7FC0_0000_7FC0_0000 });
+        if self.u.avx512_nan {
+            if double {
+                a!(self, vpcmpeqq(k1, xmm0, indefinite));
+                a!(self, vmovdqu64(xmm0.k1(), default));
+            } else {
+                a!(self, vpcmpeqd(k1, xmm0, indefinite));
+                a!(self, vmovdqu32(xmm0.k1(), default));
+            }
+            return;
+        }
         a!(self, movdqa(xmm3, xmm0));
         if double { pool_op!(self, pcmpeqq, vpcmpeqq, xmm3, indefinite, xmm2); } else { pool_op!(self, pcmpeqd, vpcmpeqd, xmm3, indefinite, xmm2); }
         a!(self, movdqa(xmm5, xmm3));
@@ -3778,6 +3808,22 @@ impl<'a> E<'a> {
     /// Overlay a quieted NaN source onto xmm0, using xmm3-xmm5 only. Sources
     /// are visited in reverse priority; a second pass selects signalling NaNs.
     fn select_nan(&mut self, double: bool, src: AsmRegisterXmm, signalling: bool) {
+        if self.u.avx512_nan {
+            // VFPCLASS: bit 0 = qNaN, bit 7 = sNaN. VFIXUPIMM response
+            // 2 quiets the source (including sign/payload); other categories
+            // preserve DEST. imm8=0 requests no extra host exception flags.
+            // Keep the ARM reverse-priority qNaN pass, then the sNaN pass.
+            let table = self.vconstant(if double { 0x22 } else { 0x0000_0022_0000_0022 });
+            let classes = if signalling { 0x80 } else { 0x81 };
+            if double {
+                a!(self, vfpclasspd(k1, src, classes));
+                a!(self, vfixupimmpd(xmm0.k1(), src, table, 0));
+            } else {
+                a!(self, vfpclassps(k1, src, classes));
+                a!(self, vfixupimmps(xmm0.k1(), src, table, 0));
+            }
+            return;
+        }
         a!(self, movdqa(xmm3, src));
         if double { a!(self, cmppd(xmm3, xmm3, 3)); } else { a!(self, cmpps(xmm3, xmm3, 3)); }
         let quiet = self.vconstant(if double { 0x0008_0000_0000_0000 } else { 0x0040_0000_0040_0000 });
@@ -3953,6 +3999,28 @@ impl<'a> E<'a> {
     /// propagate the first NaN, quietened; a signalling NaN always wins (FPProcessNaNs: sNaN a, sNaN b,
     /// then the quiet ones), quietened. Exact for every input. Uses xmm2-xmm7.
     fn fp_maxmin(&mut self, double: bool, max: bool, nm: bool, scalar: bool, q: bool) {
+        if self.u.avx512_nan {
+            // VRANGE min/max (imm[1:0]=0/1), sign from the selected result
+            // (imm[3:2]=1). Unlike MIN/MAX it handles opposite-signed zero
+            // ties correctly, flushes inputs under DAZ, and implements ARM's
+            // NM NaN priorities. Propagating variants still need ARM qNaNs.
+            if !nm { a!(self, movdqa(xmm6, xmm0)); }
+            if double { a!(self, vrangepd(xmm0, xmm0, xmm1, 4 | max as i32)); }
+            else { a!(self, vrangeps(xmm0, xmm0, xmm1, 4 | max as i32)); }
+            if !nm {
+                let cold = self.u.a.create_label();
+                if double { a!(self, vcmppd(k1, xmm6, xmm1, 3)); }
+                else { a!(self, vcmpps(k1, xmm6, xmm1, 3)); }
+                a!(self, kortestw(k1, k1));
+                a!(self, jnz(cold));
+                self.cold_path(cold, move |e| {
+                    for signalling in [false, true] {
+                        for src in [xmm1, xmm6] { e.select_nan(double, src, signalling); }
+                    }
+                });
+            }
+            return;
+        }
         let cold = self.u.a.create_label();
         if scalar {
             if double { a!(self, ucomisd(xmm0, xmm1)); } else { a!(self, ucomiss(xmm0, xmm1)); }
@@ -7668,7 +7736,8 @@ mod fp_cold_tests {
                 let block = [0xf9400083, word, 0xd4001001]; // ldr x3,[x4]; FP; svc
                 emit_block(&mut u, PC, &|p| block.get(((p - PC) / 4) as usize).copied());
                 assert_eq!(u.insns_fallback, 0, "word={word:08x}");
-                assert_eq!(u.cold_ranges.len(), 1, "word={word:08x}");
+                assert!(u.cold_ranges.len() == 1 || (u.avx512_nan && u.a.instructions().iter().any(|i|
+                    matches!(i.mnemonic(), iced_x86::Mnemonic::Vrangeps | iced_x86::Mnemonic::Vrangepd))), "word={word:08x}");
                 for (range, live) in &u.cold_ranges {
                     assert!(*live, "word={word:08x}");
                     check_cold_registers(&u.a.instructions()[range.clone()], *live).unwrap();
@@ -8391,11 +8460,16 @@ mod avx512_tests {
     }
 
     fn compile(words: &[u32], extended: bool, kind: StubKind) -> Unit {
+        compile_features(words, extended, false, kind)
+    }
+
+    fn compile_features(words: &[u32], extended: bool, nan: bool, kind: StubKind) -> Unit {
         let mut u = Unit::new(kind, false);
         // Encoder-only tests may select the new bank even on unsupported hosts.
         // Execution tests below must separately check has_avx512(). No user-facing
         // override can bypass the host/OS detector.
         u.avx512 = extended;
+        u.avx512_nan = nan;
         u.no_internal_jumps = true;
         let l = u.a.create_label(); u.labels.insert(PC, l);
         emit_block(&mut u, PC, &|p| words.get(((p-PC)/4) as usize).copied());
@@ -8534,6 +8608,161 @@ mod avx512_tests {
                 }
             }
         }}}
+    }
+
+    #[test]
+    fn nan_templates_encode_xmm_only_and_preserve_cold_registers() {
+        for double in [false, true] {
+            let ty = if double { 1 << 22 } else { 0 };
+            for (name, word) in [("add", 0x1e222820), ("max", 0x1e224820),
+                                 ("maxnm", 0x1e226820), ("fma", 0x1f020c20)] {
+                if name == "fma" && !has_fma() { continue; }
+                let words = [word | ty, 0xd4001001];
+                let mut before = compile_features(&words, false, false, StubKind::Plain);
+                let mut after = compile_features(&words, false, true, StubKind::Plain);
+                assert_xmm_only(&after);
+                let cold_count = |u: &Unit| u.cold_ranges.iter().map(|(r,_)| r.len()).sum::<usize>();
+                eprintln!("AVX512 static fixup: double={double} template={name} cold_instructions={} -> {}",
+                    cold_count(&before), cold_count(&after));
+                assert!(cold_count(&after) < cold_count(&before));
+                assert!(after.a.instructions().iter().any(|i| i.encoding() == EncodingKind::EVEX));
+                before.a.assemble(0).unwrap(); after.a.assemble(0).unwrap();
+            }
+        }
+        // k1 is scratch only; no other opmask is admitted by the cold ABI.
+        let mut a = CodeAssembler::new(64).unwrap();
+        a.kmovw(k1, eax).unwrap();
+        assert!(check_cold_registers(a.instructions(), true).is_ok());
+        a.kmovw(k2, eax).unwrap();
+        assert!(check_cold_registers(a.instructions(), true).is_err());
+    }
+
+    #[test]
+    fn native_feature_selftest_matrix() {
+        if !execution_available() {
+            eprintln!("AVX512_EXECUTION_UNAVAILABLE: native feature matrix NOT RUN");
+            return;
+        }
+        struct Reset;
+        impl Drop for Reset { fn drop(&mut self) { TEST_AVX512_FEATURES.with(|f| f.set(None)); } }
+        let _reset = Reset;
+        for features in [(true, false), (false, true), (true, true)] {
+            TEST_AVX512_FEATURES.with(|f| f.set(Some(features)));
+            eprintln!("AVX512 native selftest features={features:?} seed=1 count=20000");
+            for class in ["fpblocks", "fpnan", "0E20D400:0E20D400", "0F800000:0F800000", "1F000000:1F000000"] {
+                crate::jit::selftest::run_selftest(class, 20000, Some(1));
+            }
+        }
+    }
+
+    #[test]
+    fn nan_range_results_and_mutants_match_interpreter() {
+        if !execution_available() {
+            eprintln!("AVX512_EXECUTION_UNAVAILABLE: NaN/range differential and sensitivity NOT RUN");
+            return;
+        }
+        let mut total = 0;
+        for double in [false, true] {
+            let ty = if double { 1 << 22 } else { 0 };
+            let mut words = Vec::new();
+            for op in [0x0800, 0x1800, 0x2800, 0x3800, 0x4800, 0x5800, 0x6800, 0x7800] {
+                words.push(0x1e220020 | ty | op);
+            }
+            words.push(0x1e21c020 | ty);
+            if has_fma() {
+                for variant in 0..4 {
+                    words.push(0x1f020c20 | ty | ((variant >> 1) << 21) | ((variant & 1) << 15));
+                }
+            }
+            for q in [false, true].into_iter().filter(|&q| q || !double) {
+                let qbit = if q { 1 << 30 } else { 0 };
+                for base in [0x0e20d400, 0x0ea0d400, 0x2e20dc00, 0x2e20fc00,
+                             0x0e20f400, 0x0ea0f400, 0x0e20c400, 0x0ea0c400] {
+                    words.push(base | qbit | ty | (2 << 16) | (1 << 5));
+                }
+                if has_fma() {
+                    for base in [0x0f801000, 0x0f805000, 0x0e20cc00, 0x0ea0cc00] {
+                        words.push(base | qbit | ty | (2 << 16) | (1 << 5));
+                    }
+                }
+            }
+            // Cartesian triples plus rotated packed lanes cover both NaN passes,
+            // FMA addend priority, all signed-zero ties, payload/sign preservation,
+            // exact negative indefinite inputs, and denormals with FZ on/off.
+            let values: &[u64] = if double {
+                &[0, 0x8000000000000000, 1, 0x8000000000000001, 0x0010000000000000,
+                  0x3ff0000000000000, 0xbff0000000000000, 0x7ff0000000000000,
+                  0xfff0000000000000, 0x7ff8000000001234, 0xfff8000000005678,
+                  0xfff8000000000000, 0x7ff0000000001234, 0xfff0000000005678]
+            } else {
+                &[0, 0x80000000, 1, 0x80000001, 0x00800000, 0x3f800000, 0xbf800000,
+                  0x7f800000, 0xff800000, 0x7fc01234, 0xffc05678, 0xffc00000,
+                  0x7f801234, 0xff805678]
+            };
+            for word in words {
+                for mutant in [0, 1, 2] {
+                    let mut u = compile_features(&[word, 0xd4001001], true, true, StubKind::Plain);
+                    assert_xmm_only(&u);
+                    let target = u.a.instructions().iter().position(|i| match mutant {
+                        1 => matches!(i.mnemonic(), iced_x86::Mnemonic::Vfixupimmps | iced_x86::Mnemonic::Vfixupimmpd),
+                        2 => matches!(i.mnemonic(), iced_x86::Mnemonic::Vrangeps | iced_x86::Mnemonic::Vrangepd),
+                        _ => false,
+                    });
+                    if mutant != 0 && target.is_none() { continue; }
+                    let host = crate::jit::code_cache().alloc(16384);
+                    let res = u.a.assemble_options(host, iced_x86::BlockEncoderOptions::RETURN_NEW_INSTRUCTION_OFFSETS).unwrap();
+                    let mut bytes = res.inner.code_buffer.clone();
+                    if let Some(idx) = target {
+                        let mut broken = u.a.instructions()[idx];
+                        if mutant == 1 {
+                            broken.set_op1_register(Register::XMM0); // lose original NaN payload/priority
+                            let table = if double { 0x22 } else { 0x0000_0022_0000_0022 };
+                            let label = u.constant_pool.iter().find(|(_, v)| *v == table).unwrap().0;
+                            broken.set_memory_displacement64(res.label_ip(&label).unwrap());
+                        }
+                        else { broken.set_immediate8(broken.immediate8() ^ 1); } // invert min/max
+                        let offset = res.inner.new_instruction_offsets[idx] as usize;
+                        let mut encoder = iced_x86::Encoder::new(64);
+                        encoder.encode(&broken, host + offset as u64).unwrap();
+                        let patch = encoder.take_buffer();
+                        bytes[offset..offset+patch.len()].copy_from_slice(&patch);
+                    }
+                    unsafe { std::ptr::copy_nonoverlapping(bytes.as_ptr(), host as *mut u8, bytes.len()); }
+                    let mut mismatches = 0;
+                    for mode in [0, 1 << 24] {
+                    for ia in 0..values.len() { for ib in 0..values.len() { for ic in 0..values.len() {
+                        let mut c = Cpu::new(); crate::jit::setup_cpu(&mut c);
+                        c.set_pc(PC); c.fpcr = mode; c.set_nzcv(11);
+                        for (r, j) in [(0,ic), (1,ia), (2,ib), (3,ic)] {
+                            let at = |n: usize| values[n % values.len()];
+                            c.v[r] = if double { [at(j),at(j+3)] }
+                                else { [at(j)|(at(j+1)<<32), at(j+2)|(at(j+3)<<32)] };
+                        }
+                        let mut expected = Cpu::new(); expected.v = c.v;
+                        expected.fpcr = mode; expected.set_pc(PC); expected.set_nzcv(11);
+                        interp::sys_sync_host_fp_mode(mode);
+                        interp::exec(&mut expected, word).unwrap();
+                        interp::sys_sync_host_fp_mode(mode);
+                        unsafe { crate::jit::attesor_jit_enter(&mut *c, host); }
+                        assert_eq!(c.exit_reason, EXIT_SVC);
+                        assert_eq!(c.x, expected.x); assert_eq!(c.nzcv(), expected.nzcv());
+                        assert_eq!(c.fpcr, mode);
+                        if c.v != expected.v {
+                            mismatches += 1;
+                            assert!(mutant != 0, "word={word:08x} mode={mode:x} a={:x} b={:x} c={:x}: {:?} != {:?}",
+                                values[ia], values[ib], values[ic], c.v, expected.v);
+                        }
+                        if mutant == 0 { total += 1; }
+                    }}}}
+                    if mutant != 0 {
+                        assert!(mismatches > 0, "insensitive mutant={mutant} word={word:08x}");
+                        eprintln!("AVX512 NaN sensitivity: mutant={mutant} word={word:08x} mismatch={mismatches}");
+                    }
+                }
+            }
+        }
+        interp::sys_sync_host_fp_mode(0);
+        eprintln!("AVX512 NaN/range directed: cases={total} mismatch=0 FZ=off/on");
     }
 
     fn execute_cases(host: u64, words: &[u32], single: bool, mutant: bool) -> usize {
