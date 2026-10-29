@@ -8,6 +8,7 @@ from pathlib import Path
 class Report:
     def __init__(self):
         self.states = Counter()
+        self.jit_metrics = Counter()
         self.images = defaultdict(lambda: [0, 0])
         self.symbols = Counter()
         # samples, idle samples, calls, idle calls, total ns, host kernel ns
@@ -18,6 +19,7 @@ class Report:
 
     def add(self, other):
         self.states.update(other.states)
+        self.jit_metrics.update(other.jit_metrics)
         self.symbols.update(other.symbols)
         self.bridge_selectors.update(other.bridge_selectors)
         self.mmap_attempts += other.mmap_attempts
@@ -61,6 +63,10 @@ def read_profile(path):
             name = process_type(fields[1], fields[2:])
         elif kind == 'translation':
             report.blocks, report.ms = map(int, fields[1:])
+        elif kind == 'jit-metric':
+            n = int(fields[2])
+            if n < 0: raise ValueError('negative JIT metric')
+            report.jit_metrics[fields[1]] += n
         elif kind == 'state':
             report.states[fields[1]] += int(fields[2])
         elif kind == 'image':
@@ -128,9 +134,14 @@ def render(label, r):
     print(f'{label} ({r.processes} process files)')
     print(f'Total samples: {total}')
     print(f'Translation: {r.blocks} blocks, {r.ms} ms')
-    print('\nState                 Samples   % total')
+    print('\nState                 Samples   % total  % active (excluding idle)')
+    active = total - r.states['idle']
     for state, n in sorted(r.states.items(), key=lambda x: (-x[1], x[0])):
-        print(f'{state:<20} {n:>8} {pct(n, total):>9.2f}')
+        active_share = 'n/a' if state == 'idle' else f'{pct(n, active):.2f}'
+        print(f'{state:<20} {n:>8} {pct(n, total):>9.2f} {active_share:>9}')
+    if r.jit_metrics:
+        print("\nJIT metrics (ns = nested elapsed thread wall time; bytes = sums, not unique):")
+        for key, n in sorted(r.jit_metrics.items()): print(f"{key:<45} {n:>15}")
     render_calls(r)
     if r.mmap_attempts:
         print(f'\nmmap first-try aligned: {r.mmap_hits}/{r.mmap_attempts} '

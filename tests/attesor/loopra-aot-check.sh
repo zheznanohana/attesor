@@ -9,7 +9,8 @@ python3 - "$ATTESOR" <<'PY'
 import os, re, subprocess, sys, tempfile
 from pathlib import Path
 binary = Path(sys.argv[1]).resolve()
-clean = {k: v for k, v in os.environ.items() if not k.startswith('ATTESOR_')}
+# Preserve only the explicitly requested opt-in translator features.
+clean = {k: v for k, v in os.environ.items() if not k.startswith('ATTESOR_') or k == 'ATTESOR_JIT_ON'}
 def run(cmd, extra=None):
     return subprocess.run([str(x) for x in cmd], env={**clean, **(extra or {})},
                           text=True, capture_output=True, check=True, timeout=300)

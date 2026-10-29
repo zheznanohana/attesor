@@ -245,6 +245,12 @@ fn mapped_exports(header: u64) -> Vec<(u64, String)> {
     syms
 }
 
+/// An unmapped-image PC is runtime-generated/anonymous code, not necessarily V8.
+pub fn is_image_pc(pc: u64) -> bool {
+    load_cache_images();
+    IMAGES.lock().unwrap().iter().any(|i| pc >= i.start && pc < i.end)
+}
+
 pub fn attribute(pc: u64) -> (String, String) {
     load_cache_images();
     let mut images = IMAGES.lock().unwrap();

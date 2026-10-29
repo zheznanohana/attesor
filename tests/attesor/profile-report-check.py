@@ -76,3 +76,21 @@ with tempfile.TemporaryDirectory(prefix='profile-report-v2-') as td:
         else:
             raise AssertionError('accepted invalid counters: ' + bad)
 print('profile-report: PASS v1/v2, syscall time splits, zero-sample idle calls, selector names across processes, invalid counters')
+
+with tempfile.TemporaryDirectory(prefix='profile-jit-cost-') as td:
+    path = Path(td) / 'jit-1.txt'
+    path.write_text('Attesor guest profile v2\nprocess\tnode\nstate\ttranslate-runtime\t7\n'
+                    'state\tinvalidate\t3\nstate\tindirect\t2\nstate\tcall-return\t1\n'
+                    'jit-metric\ttranslate.runtime.ns\t12345678\n'
+                    'jit-metric\tinvalidate.ic-ivau.calls\t45\n')
+    _, a = module.read_profile(path)
+    _, b = module.read_profile(path)
+    a.add(b)
+    assert a.jit_metrics['translate.runtime.ns'] == 24691356
+    assert a.jit_metrics['invalidate.ic-ivau.calls'] == 90
+    assert a.states['translate-runtime'] == 14
+    path.write_text('Attesor guest profile v2\nprocess\tnode\nstate\tjit\t1\njit-metric\tbad\t-1\n')
+    try: module.read_profile(path)
+    except ValueError: pass
+    else: raise AssertionError('negative JIT metric accepted')
+print('profile-report: PASS JIT phases, nanoseconds, counters, merge and validation')

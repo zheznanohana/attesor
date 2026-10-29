@@ -1808,6 +1808,9 @@ pub fn emit_block(u: &mut Unit, pc: u64, read: &dyn Fn(u64) -> Option<u32>) -> u
     }
     let mut label = *u.labels.get(&pc).expect("block label");
     u.a.set_label(&mut label).unwrap();
+    if super::cost::probes() {
+        u.a.mov(qword_ptr(r15 + off::PROFILE_STATE), crate::profile::State::Jit as i32).unwrap();
+    }
     if u.loopra && !u.no_internal_jumps {
         if let Some(reg) = loop_layout::<NLOOPREGS>(u, pc, read).filter(|_| loopra_bisect(pc)) {
             // signals.rs does not deliver guest fault handlers. Register-only
@@ -2820,6 +2823,10 @@ impl<'a> E<'a> {
         if insn & 0x7C00_0000 == 0x1400_0000 {
             let target = pc.wrapping_add((sext((insn & 0x03ff_ffff) as u64, 26) << 2) as u64);
             if insn & 0x8000_0000 != 0 {
+                if super::cost::probes() {
+                    a!(self, inc(qword_ptr(r15 + off::JIT_COST + 16)));
+                    a!(self, mov(qword_ptr(r15 + off::PROFILE_STATE), crate::profile::State::CallReturn as i32));
+                }
                 self.st_imm(30, next);
                 if self.u.callret {
                     self.host_call(next, |e| e.goto(target));
@@ -2912,6 +2919,11 @@ impl<'a> E<'a> {
                 8 | 9 => rn,
                 _ => return false,
             };
+            if super::cost::probes() && (opc == 2 || opc & 1 != 0) {
+                let offset = if opc == 2 { 24 } else { 16 };
+                a!(self, inc(qword_ptr(r15 + off::JIT_COST + offset)));
+                a!(self, mov(qword_ptr(r15 + off::PROFILE_STATE), crate::profile::State::CallReturn as i32));
+            }
             self.ldx(rax, reg, false);
             if opc & 1 != 0 {
                 self.st_imm(30, next);
@@ -3103,8 +3115,14 @@ impl<'a> E<'a> {
 
     /// Indirect branch to the guest address in rax via the per-thread
     /// indirect-branch table; misses go to the dispatcher.
-    fn indirect(&mut self, _is_ret: bool) {
+    fn indirect(&mut self, is_ret: bool) {
         self.writeback();
+        if super::cost::probes() {
+            a!(self, inc(qword_ptr(r15 + off::JIT_COST)));
+        }
+        if super::cost::probes() && !is_ret {
+            a!(self, mov(qword_ptr(r15 + off::PROFILE_STATE), crate::profile::State::Indirect as i32));
+        }
         let mut l_miss = self.new_label();
         a!(self, mov(rcx, rax));
         a!(self, shr(ecx, 2));
@@ -3113,8 +3131,12 @@ impl<'a> E<'a> {
         a!(self, add(rcx, qword_ptr(r15 + off::IBTC)));
         a!(self, cmp(rax, qword_ptr(rcx)));
         a!(self, jne(l_miss));
+        // The destination's public block entry restores Jit state. Keep the
+        // lookup state through the transfer, including target-load latency and
+        // branch misprediction, rather than charging those to guest execution.
         a!(self, jmp(qword_ptr(rcx + 8)));
         self.u.a.set_label(&mut l_miss).unwrap();
+        if super::cost::probes() { a!(self, inc(qword_ptr(r15 + off::JIT_COST + 8))); }
         a!(self, mov(qword_ptr(r15 + off::PC), rax));
         a!(self, mov(qword_ptr(r15 + off::EXIT_REASON), EXIT_CONTINUE as i32));
         a!(self, mov(qword_ptr(r15 + off::EXIT_DATA), 0));

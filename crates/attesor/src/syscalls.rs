@@ -321,7 +321,7 @@ fn bsd_inner(cpu: &mut Cpu, n: u64, mut args: [u64; 8]) {
             args[2] &= !PROT_EXEC;
             let r = hostsys::unix(n, &args);
             if !r.carry && exec {
-                crate::engine::invalidate_range(args[0], args[1]);
+                crate::jit::invalidate_for(args[0], args[1], "mprotect-exec");
             }
             set_res(cpu, r);
         }

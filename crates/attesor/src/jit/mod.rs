@@ -1,6 +1,7 @@
 //! JIT runtime: code cache, dispatcher, block chaining, indirect-branch
 //! cache, invalidation. Blocks can also come from the AOT cache (`aot.rs`).
 
+pub mod cost;
 pub mod emit;
 pub mod selftest;
 
@@ -103,6 +104,7 @@ struct UnitRec {
     lo: u64,
     hi: u64,
     alive: bool,
+    host_bytes: u64,
 }
 
 /// Bookkeeping that makes invalidation precise: which units cover which guest
@@ -111,6 +113,7 @@ struct UnitRec {
 #[derive(Default)]
 struct JitIndex {
     units: Vec<UnitRec>,
+    invalidated_entries: FastMap<u64, ()>,
     /// 16 KiB guest page -> unit ids overlapping it.
     pages: FastMap<u64, Vec<u32>>,
     /// unit entry host address -> chain slots currently pointing at it.
@@ -290,28 +293,40 @@ fn emit_unit(pc: u64, slot_padding: usize) -> Unit {
 }
 
 fn translate(pc: u64) -> u64 {
-    let _profile = crate::profile::enter(crate::profile::State::Translate);
+    let runtime = cost::enabled() && !crate::symbols::is_image_pc(pc);
+    let _profile = crate::profile::enter(if runtime { crate::profile::State::TranslateRuntime } else { crate::profile::State::Translate });
+    let _timer = cost::Timer::new(if runtime { "translate.runtime.ns" } else { "translate.image.ns" });
+    cost::add(if runtime { "translate.runtime.requests" } else { "translate.image.requests" }, 1);
     let t0 = std::time::Instant::now();
-    let r = translate_inner(pc);
+    let r = translate_inner(pc, runtime);
     STATS_TRANSLATE_NS.fetch_add(t0.elapsed().as_nanos() as u64, Ordering::Relaxed);
     r
 }
 
-fn translate_inner(pc: u64) -> u64 {
+fn translate_inner(pc: u64, runtime: bool) -> u64 {
     let _g = TRANSLATE.lock().unwrap();
     if let Some(h) = lookup(pc) {
         return h;
     }
+    let retranslated = cost::enabled() && INDEX.lock().unwrap().as_ref().is_some_and(|ix| ix.invalidated_entries.contains_key(&pc));
+    let _retranslate_timer = retranslated.then(|| cost::Timer::new("retranslate.ns"));
     let cc = code_cache();
     let ip = cc.cursor();
-    // Assemble; if the slot table isn't 8-byte aligned, redo with padding so
-    // slot patches are single aligned stores.
-    let mut u = emit_unit(pc, 0);
-    let mut res = u.a.assemble_options(ip, BlockEncoderOptions::RETURN_NEW_INSTRUCTION_OFFSETS).expect("assemble");
+    // Slots must be 8-byte aligned for atomic patches; regenerate with padding.
+    let mut u = {
+        let _timer = cost::Timer::new("translate.emit.ns");
+        emit_unit(pc, 0)
+    };
+    let mut res = {
+        let _timer = cost::Timer::new("translate.assemble.ns");
+        u.a.assemble_options(ip, BlockEncoderOptions::RETURN_NEW_INSTRUCTION_OFFSETS).expect("assemble")
+    };
     if let Some(first) = u.first_slot {
         let at = res.label_ip(&first).expect("slot label");
         if at % 8 != 0 {
             let pad = (8 - (at % 8)) as usize;
+            cost::add("translate.alignment-retries", 1);
+            let _timer = cost::Timer::new("translate.alignment-retry.ns");
             u = emit_unit(pc, pad);
             res = u.a.assemble_options(ip, BlockEncoderOptions::RETURN_NEW_INSTRUCTION_OFFSETS).expect("assemble");
         }
@@ -328,6 +343,7 @@ fn translate_inner(pc: u64) -> u64 {
     for s in &u.finished_stubs {
         let cont = res.label_ip(&s.cont).expect("stub label");
         let slot = res.label_ip(&s.slot).expect("slot label");
+        assert_eq!(slot % 8, 0, "unaligned chain slot");
         unsafe { std::ptr::write_volatile(slot as *mut u64, cont) };
         ix.slot_cont.insert(slot, cont);
     }
@@ -340,7 +356,14 @@ fn translate_inner(pc: u64) -> u64 {
     // The last block can run up to MAX_BLOCK_INSNS instructions past its label.
     let hi = hi + (emit::MAX_BLOCK_INSNS as u64 + 1) * 4;
     let id = ix.units.len() as u32;
-    ix.units.push(UnitRec { entry: pc, host: at, lo, hi, alive: true });
+    if ix.invalidated_entries.remove(&pc).is_some() {
+        cost::add("retranslate.units", 1);
+        cost::add("retranslate.host-bytes", bytes.len() as u64);
+    }
+    cost::add("translate.host-bytes", bytes.len() as u64);
+    cost::add(if runtime { "translate.runtime.units" } else { "translate.image.units" }, 1);
+    cost::add(if runtime { "translate.runtime.host-bytes" } else { "translate.image.host-bytes" }, bytes.len() as u64);
+    ix.units.push(UnitRec { entry: pc, host: at, lo, hi, alive: true, host_bytes: bytes.len() as u64 });
     for page in (lo >> 14)..=((hi - 1) >> 14) {
         ix.pages.entry(page).or_default().push(id);
     }
@@ -358,7 +381,15 @@ fn lookup_or_translate(pc: u64) -> u64 {
 /// JIT-generated code being rewritten). Chained jumps into dropped units are reset to
 /// return to the dispatcher; threads currently inside old code leave it through their
 /// exit slots.
-pub fn invalidate_range(addr: u64, len: u64) {
+pub fn invalidate_range(addr: u64, len: u64) { invalidate_for(addr, len, "other"); }
+
+pub fn invalidate_for(addr: u64, len: u64, source: &'static str) {
+    let _profile = crate::profile::enter(crate::profile::State::Invalidate);
+    let _timer = cost::Timer::new("invalidate.ns");
+    if cost::enabled() {
+        cost::add(&format!("invalidate.{source}.calls"), 1);
+        cost::add(&format!("invalidate.{source}.requested-bytes"), len);
+    }
     let _g = TRANSLATE.lock().unwrap();
     let mut ix_guard = INDEX.lock().unwrap();
     let Some(ix) = ix_guard.as_mut() else { return };
@@ -387,6 +418,7 @@ pub fn invalidate_range(addr: u64, len: u64) {
     }
     victims.sort_unstable();
     victims.dedup();
+    if cost::enabled() { cost::add(&format!("invalidate.{source}.units"), victims.len() as u64); }
     if std::env::var_os("ATTESOR_TRACE").is_some() {
         eprintln!("[attesor] invalidating {} units ({:#x}+{:#x})", victims.len(), addr, len);
     }
@@ -395,6 +427,9 @@ pub fn invalidate_range(addr: u64, len: u64) {
         let (entry, host) = {
             let u = &mut ix.units[id as usize];
             u.alive = false;
+            cost::add("invalidate.units", 1);
+            cost::add("invalidate.host-bytes", u.host_bytes);
+            if cost::enabled() { ix.invalidated_entries.insert(u.entry, ()); }
             (u.entry, u.host)
         };
         if let Some(m) = blocks.as_mut() {
