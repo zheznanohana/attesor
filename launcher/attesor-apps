@@ -189,6 +189,7 @@ def inject(app):
         for path in [app, exe]:
             subprocess.run(['xattr', '-d', 'com.apple.quarantine', str(path)], capture_output=True)
     finish(app, inject_icon=True)
+    forget_duplicates([app])
     print('  +', app)
     return True
 
@@ -260,17 +261,61 @@ def unwrap(app, checked=False):
             shutil.rmtree(stage)
 
 
-def forget_stale_inner():
-    """Once: unregister LaunchServices records of old launchers' inner bundles that no longer exist
-    (left by conversions before unwrap unregistered them)."""
-    done = SUPPORT / 'ls-inner-forgotten'
+def ls_records():
+    """(path, bundle id) of every LaunchServices bundle record."""
+    dump = subprocess.run([LSREGISTER, '-dump'], capture_output=True, text=True, errors='replace').stdout
+    for block in dump.split('\n-----'):
+        p = re.search(r'^path:\s+(.+?) \(0x[0-9a-f]+\)$', block, re.M)
+        i = re.search(r'^identifier:\s+(\S+)$', block, re.M)
+        if p and i:
+            yield p.group(1), i.group(1)
+
+
+def arm_only(app):
+    try:
+        archs = arches(main_exe(app))
+    except (OSError, ValueError, subprocess.CalledProcessError):
+        return False
+    return 'arm64' in archs and 'x86_64' not in archs
+
+
+def forget_duplicates(apps, records=None):
+    """Unregister LaunchServices records sharing a handled app's bundle id that no longer exist (old
+    launchers' inner bundles, unmounted installer images, deleted copies) or are arm64-only copies: the
+    Dock resolves tiles by bundle id and may otherwise pick one and draw the app "prohibited"."""
+    if not DESKTOP:
+        return
+    ids = {}
+    for app in apps:
+        try:
+            ident = info(app).get('CFBundleIdentifier')
+        except OSError:
+            continue
+        if ident:
+            ids[ident] = app
+    if not ids:
+        return
+    for path, ident in (records if records is not None else ls_records()):
+        app = ids.get(ident)
+        if app is None or Path(path) == app:
+            continue
+        if not Path(path).exists() or arm_only(Path(path)):
+            subprocess.run([LSREGISTER, '-u', path], capture_output=True)
+            print('  ~ unregistered', path)
+
+
+def forget_once(apps):
+    """First scan after an update: clean up records left before forget_duplicates existed."""
+    done = SUPPORT / 'ls-duplicates-forgotten'
     if not DESKTOP or done.exists():
         return
-    dump = subprocess.run([LSREGISTER, '-dump'], capture_output=True, text=True, errors='replace').stdout
-    for m in re.finditer(r'^path:\s+(.+/Contents/Resources/Original/.+?\.app) \(0x[0-9a-f]+\)$', dump, re.M):
-        if not Path(m.group(1)).exists():
-            subprocess.run([LSREGISTER, '-u', m.group(1)], capture_output=True)
-            print('  ~ unregistered stale', m.group(1))
+    records = list(ls_records())
+    # inner bundles of old launchers, whatever their id
+    for path, _ in records:
+        if '/Contents/Resources/Original/' in path and not Path(path).exists():
+            subprocess.run([LSREGISTER, '-u', path], capture_output=True)
+            print('  ~ unregistered', path)
+    forget_duplicates(apps, records)
     done.write_text('1\n')
 
 
@@ -332,7 +377,14 @@ def main():
                 print(f'  ! {app}: {e}', file=sys.stderr)
                 failed = True
         if command == 'scan':
-            forget_stale_inner()
+            handled = []
+            for app in apps:
+                try:
+                    if marker(main_exe(app)):
+                        handled.append(app)
+                except (OSError, ValueError, subprocess.CalledProcessError, plistlib.InvalidFileException):
+                    pass
+            forget_once(handled)
             logs = Path.home() / 'Library/Logs/Attesor/stderr'
             cutoff = time.time() - 3 * 86400
             for log in logs.glob('*.log'):
