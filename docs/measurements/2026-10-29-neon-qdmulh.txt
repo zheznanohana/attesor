@@ -1,0 +1,5 @@
+PASS JIT qdmulh digest 4d92fd0ec98359f5 qc_cases 12708 boundary PASS
+PASS interpreter qdmulh digest 4d92fd0ec98359f5 qc_cases 12708 boundary PASS
+jit selftest [9fe0fc00:0e60b400]: ok=20000 mismatch=0 skipped=0 native=20000
+jit selftest [9fe0fc00:0ea0b400]: ok=20000 mismatch=0 skipped=0 native=20000
+PASS benchmark checksum checksum 93579ade5b97531f 01c691828ef0017b

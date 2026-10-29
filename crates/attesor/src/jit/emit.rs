@@ -4316,25 +4316,57 @@ impl<'a> E<'a> {
             return true;
         }
 
-        // ---- SQDMULH / SQRDMULH (vector, 16-bit lanes) ----
-        // Both results only reach -32768 for (-32768)*(-32768), which saturates to 32767.
-        if insn & 0x9F20_FC00 == 0x0E20_B400 && size == 1 && !jit_off("qdmulh") {
+        // ---- SQDMULH / SQRDMULH (vector, 16/32-bit lanes) ----
+        // The only overflow is INT_MIN * INT_MIN. Its wrapped result is INT_MIN,
+        // while every valid negative result is larger, so that value identifies
+        // both the lanes to saturate and whether sticky FPSR.QC must be set.
+        if insn & 0x9F20_FC00 == 0x0E20_B400 && (size == 1 || size == 2) && !jit_off("qdmulh") {
             self.vld(xmm0, rn, q);
             self.vld(xmm1, rm, q);
-            if u {
-                a!(self, pmulhrsw(xmm0, xmm1)); // (2ab + 0x8000) >> 16
+            if size == 1 {
+                if u {
+                    a!(self, pmulhrsw(xmm0, xmm1)); // (2ab + 0x8000) >> 16
+                } else {
+                    // (2ab) >> 16 = (high16(ab) << 1) | bit 15 of low16(ab)
+                    a!(self, movdqa(xmm2, xmm0));
+                    a!(self, pmulhw(xmm0, xmm1));
+                    a!(self, pmullw(xmm2, xmm1));
+                    a!(self, psllw(xmm0, 1));
+                    a!(self, psrlw(xmm2, 15));
+                    a!(self, por(xmm0, xmm2));
+                }
+                self.vconst(xmm1, 0x8000_8000_8000_8000);
+                a!(self, pcmpeqw(xmm1, xmm0));
             } else {
-                // (2ab) >> 16 = (high16(ab) << 1) | bit 15 of low16(ab)
+                // PMULDQ multiplies dwords 0 and 2. Shift copies for dwords 1/3,
+                // then interleave the low halves of (ab + rounding) >> 31.
+                // Logical qword shift is sufficient: only the low 32 bits survive.
                 a!(self, movdqa(xmm2, xmm0));
-                a!(self, pmulhw(xmm0, xmm1));
-                a!(self, pmullw(xmm2, xmm1));
-                a!(self, psllw(xmm0, 1));
-                a!(self, psrlw(xmm2, 15));
-                a!(self, por(xmm0, xmm2));
+                a!(self, movdqa(xmm3, xmm1));
+                a!(self, psrldq(xmm2, 4));
+                a!(self, psrldq(xmm3, 4));
+                a!(self, pmuldq(xmm0, xmm1));
+                a!(self, pmuldq(xmm2, xmm3));
+                if u {
+                    self.vconst(xmm1, 0x4000_0000);
+                    a!(self, paddq(xmm0, xmm1));
+                    a!(self, paddq(xmm2, xmm1));
+                }
+                a!(self, psrlq(xmm0, 31));
+                a!(self, psrlq(xmm2, 31));
+                a!(self, pshufd(xmm0, xmm0, 0x88));
+                a!(self, pshufd(xmm2, xmm2, 0x88));
+                a!(self, punpckldq(xmm0, xmm2));
+                self.vconst(xmm1, 0x8000_0000_8000_0000);
+                a!(self, pcmpeqd(xmm1, xmm0));
             }
-            self.vconst(xmm1, 0x8000_8000_8000_8000);
-            a!(self, pcmpeqw(xmm1, xmm0));
-            a!(self, pxor(xmm0, xmm1));
+            a!(self, pxor(xmm0, xmm1)); // INT_MIN -> INT_MAX, all other lanes unchanged
+            let mut no_sat = self.new_label();
+            a!(self, ptest(xmm1, xmm1));
+            a!(self, jz(no_sat));
+            a!(self, or(dword_ptr(r15 + off::FPSR as i32), 1 << 27));
+            self.u.a.set_label(&mut no_sat).unwrap();
+            a!(self, nop());
             self.vfin(rd, q);
             return true;
         }
