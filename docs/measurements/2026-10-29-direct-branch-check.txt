@@ -1,0 +1,6 @@
+PASS direct-jcc: direct-branch PASS cases=196608 checksum 581343f670cdf383
+PASS direct-jcc: throughput workload checksum 02146e960ebb2a24 2ed0b1c930fae8a4
+direct-jcc jit selftest [branch]: ok=10625 mismatch=0 skipped=9375 native=10625
+PASS setcc-test-baseline: direct-branch PASS cases=196608 checksum 581343f670cdf383
+PASS setcc-test-baseline: throughput workload checksum 02146e960ebb2a24 2ed0b1c930fae8a4
+setcc-test-baseline jit selftest [branch]: ok=10625 mismatch=0 skipped=9375 native=10625

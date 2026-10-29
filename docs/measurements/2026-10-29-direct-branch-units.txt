@@ -1,0 +1,15 @@
+direct-jcc
+running 2 tests
+test jit::emit::direct_branch_tests::compare_and_test_branches_preserve_nzcv_and_all_registers ... ok
+test jit::emit::direct_branch_tests::direct_conditions_reach_both_internal_successor_labels ... ok
+
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 4 filtered out; finished in 0.02s
+
+
+setcc-test-baseline
+running 2 tests
+test jit::emit::direct_branch_tests::compare_and_test_branches_preserve_nzcv_and_all_registers ... ok
+test jit::emit::direct_branch_tests::direct_conditions_reach_both_internal_successor_labels ... ok
+
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 4 filtered out; finished in 0.02s
+

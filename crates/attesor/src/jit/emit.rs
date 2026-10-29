@@ -1907,6 +1907,11 @@ impl<'a> E<'a> {
             let target = pc.wrapping_add((sext(bits(insn, 23, 5) as u64, 19) << 2) as u64);
             let rt = bits(insn, 4, 0);
             let nz = bit(insn, 24) != 0;
+            if rt == 31 && !jit_off("directbranch") {
+                // XZR/WZR are architectural zero, independent of Cpu::x[31] (SP).
+                self.goto(if nz { next } else { target });
+                return true;
+            }
             if rt == 31 {
                 a!(self, xor(eax, eax));
             } else if sf {
@@ -1914,8 +1919,13 @@ impl<'a> E<'a> {
             } else {
                 a!(self, cmp(dword_ptr(r15 + xoff(rt)), 0));
             }
-            if nz { a!(self, setne(al)) } else { a!(self, sete(al)) }
-            self.cond_branch(target, next);
+            if !jit_off("directbranch") {
+                // CMP already produced ZF; branch before goto/chaining can clobber it.
+                self.flags_branch(target, next, if nz { Cc::E } else { Cc::Ne });
+            } else {
+                if nz { a!(self, setne(al)) } else { a!(self, sete(al)) }
+                self.cond_branch(target, next);
+            }
             return true;
         }
         if insn & 0x7E00_0000 == 0x3600_0000 {
@@ -1923,10 +1933,19 @@ impl<'a> E<'a> {
             let target = pc.wrapping_add((sext(bits(insn, 18, 5) as u64, 14) << 2) as u64);
             let rt = bits(insn, 4, 0);
             let nz = bit(insn, 24) != 0;
+            if rt == 31 && !jit_off("directbranch") {
+                self.goto(if nz { next } else { target });
+                return true;
+            }
             self.ldx(rax, rt, false);
             a!(self, bt(rax, b));
-            if nz { a!(self, setc(al)) } else { a!(self, setnc(al)) }
-            self.cond_branch(target, next);
+            if !jit_off("directbranch") {
+                // BT reports the selected bit in CF. No SETcc/TEST round trip.
+                self.flags_branch(target, next, if nz { Cc::Ae } else { Cc::B });
+            } else {
+                if nz { a!(self, setc(al)) } else { a!(self, setnc(al)) }
+                self.cond_branch(target, next);
+            }
             return true;
         }
         if insn & 0xFE00_0000 == 0xD600_0000 {
@@ -2088,6 +2107,17 @@ impl<'a> E<'a> {
         callee(self);
         self.u.a.set_label(&mut l_plain).unwrap();
         callee(self);
+    }
+
+    /// Branch while the producer's host flags are still live. The condition is
+    /// for the not-taken edge; successors retain the existing intra-unit/slot paths.
+    /// Guest NZCV is in Cpu and is not modified by CBZ/TBZ or these host flags.
+    fn flags_branch(&mut self, taken: u64, not_taken: u64, cc_not_taken: Cc) {
+        let mut l_nt = self.new_label();
+        self.jcc(cc_not_taken, l_nt);
+        self.goto(taken);
+        self.u.a.set_label(&mut l_nt).unwrap();
+        self.goto(not_taken);
     }
 
     /// al holds the condition; emit taken/not-taken successors.
@@ -5749,6 +5779,131 @@ impl<'a> E<'a> {
 }
 
 const XMM_TMP: [AsmRegisterXmm; 4] = [xmm0, xmm1, xmm2, xmm3];
+
+#[cfg(test)]
+mod direct_branch_tests {
+    use super::*;
+    use attesor_core::cpu::Cpu;
+
+    fn compile(word: u32, pc: u64, internal: bool) -> u64 {
+        let mut u = Unit::new(StubKind::Plain, false);
+        u.no_internal_jumps = !internal;
+        let label = u.a.create_label();
+        u.labels.insert(pc, label);
+        let displacement = if word & 0x7e00_0000 == 0x3400_0000 {
+            sext(bits(word, 23, 5) as u64, 19)
+        } else {
+            sext(bits(word, 18, 5) as u64, 14)
+        };
+        let target = pc.wrapping_add((displacement << 2) as u64);
+        if internal {
+            for address in [target, pc + 4] {
+                let label = u.a.create_label();
+                u.labels.insert(address, label);
+            }
+        }
+        emit_block(&mut u, pc, &|address| if address == pc { Some(word) } else { None });
+        if !jit_off("directbranch") {
+            assert!(!u.a.instructions().iter().any(|i| matches!(i.mnemonic(),
+                iced_x86::Mnemonic::Sete | iced_x86::Mnemonic::Setne |
+                iced_x86::Mnemonic::Setb | iced_x86::Mnemonic::Setae |
+                iced_x86::Mnemonic::Test)));
+        }
+        if internal {
+            for address in [target, pc + 4] {
+                let mut label = u.labels[&address];
+                u.a.set_label(&mut label).unwrap();
+                let mut e = E { u: &mut u, pc: address, fuse_in: None, scalar_inputs: None };
+                e.st_imm(9, address);
+                e.st_pc_and_exit(address);
+            }
+        }
+        u.finish();
+        let host = crate::jit::code_cache().alloc(4096);
+        let code = u.a.assemble(host).unwrap();
+        assert!(code.len() <= 4096);
+        unsafe { std::ptr::copy_nonoverlapping(code.as_ptr(), host as *mut u8, code.len()); }
+        host
+    }
+
+    #[test]
+    fn compare_and_test_branches_preserve_nzcv_and_all_registers() {
+        const PC: u64 = 0x1000_0000;
+        let values = [0, 1, u64::MAX, 1 << 31, 1 << 32, 1 << 63,
+                      0xffff_ffff_0000_0000, 0x5555_5555_aaaa_aaaa];
+        let mut cpu = Cpu::new();
+        crate::jit::setup_cpu(&mut cpu);
+        // Both signed displacement extremes, negative, fallthrough, and self.
+        for tb in [false, true] {
+            let width_or_bits: Vec<u32> = if tb { (0..64).collect() } else { vec![0, 1] };
+            for width_or_bit in width_or_bits {
+                for nz in [false, true] {
+                    for rt in [0, 7, 31] {
+                        let offsets = if tb { [-8192, -1, 0, 1, 8191] }
+                                      else { [-262144, -1, 0, 1, 262143] };
+                        for displacement in offsets {
+                            let word = if tb {
+                                0x3600_0000 | ((width_or_bit >> 5) << 31) |
+                                ((width_or_bit & 31) << 19) | ((nz as u32) << 24) |
+                                (((displacement as u32) & 0x3fff) << 5) | rt
+                            } else {
+                                0x3400_0000 | (width_or_bit << 31) | ((nz as u32) << 24) |
+                                (((displacement as u32) & 0x7ffff) << 5) | rt
+                            };
+                            let host = compile(word, PC, false);
+                            for value in values {
+                                for flags in 0..16 {
+                                    cpu.x = std::array::from_fn(|i| 0xfedc_ba98_7654_3210 ^ i as u64);
+                                    cpu.x[rt as usize] = value;
+                                    let original = cpu.x;
+                                    cpu.set_nzcv(flags);
+                                    cpu.pc = PC;
+                                    cpu.exit_reason = 0;
+                                    let input = if rt == 31 { 0 } else { value };
+                                    let nonzero = if tb { (input >> width_or_bit) & 1 != 0 }
+                                        else if width_or_bit != 0 { input != 0 } else { input as u32 != 0 };
+                                    let expected = if nonzero == nz {
+                                        PC.wrapping_add((displacement as i64 * 4) as u64)
+                                    } else { PC + 4 };
+                                    unsafe { crate::jit::attesor_jit_enter(&mut *cpu, host); }
+                                    assert_eq!(cpu.pc, expected, "word={word:08x} value={value:x}");
+                                    assert_eq!(cpu.nzcv(), flags, "word={word:08x}");
+                                    assert_eq!(cpu.x, original, "word={word:08x}");
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn direct_conditions_reach_both_internal_successor_labels() {
+        const PC: u64 = 0x1000_0000;
+        let mut cpu = Cpu::new();
+        crate::jit::setup_cpu(&mut cpu);
+        for (word, tested_bit) in [(0xb4ff_ff00u32, None), (0xb5ff_ff00, None),
+                            (0xb6ff_ff00, Some(63)), (0xb7ff_ff00, Some(63))] {
+            // Every instruction branches -32 bytes, keeping target and next distinct.
+            let word = (word & !0x0007_ffe0) | ((0x3ff8u32 & 0x3fff) << 5);
+            let word = if tested_bit.is_none() { (word & !0x00ff_ffe0) | (0x7fff8 << 5) } else { word };
+            let host = compile(word, PC, true);
+            for value in [0, 1, 1u64 << 63] {
+                cpu.x[0] = value;
+                cpu.x[9] = 0;
+                cpu.set_nzcv(0b1011);
+                let nz = bit(word, 24) != 0;
+                let nonzero = if let Some(b) = tested_bit { value & (1 << b) != 0 } else { value != 0 };
+                let expected = if nonzero == nz { PC - 32 } else { PC + 4 };
+                unsafe { crate::jit::attesor_jit_enter(&mut *cpu, host); }
+                assert_eq!(cpu.pc, expected);
+                assert_eq!(cpu.x[9], expected);
+                assert_eq!(cpu.nzcv(), 0b1011);
+            }
+        }
+    }
+}
 
 #[cfg(test)]
 mod tbi_mask_tests {
