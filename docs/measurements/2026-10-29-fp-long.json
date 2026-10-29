@@ -1,0 +1,199 @@
+{
+  "host": "zhezdeMacBook-Pro.local",
+  "samples": [
+    {
+      "round": 0,
+      "build": "before",
+      "command": [
+        "/private/tmp/attesor-perf/baseline",
+        "--no-aot",
+        "/Users/zhez/attesor/bench/native-ratio/fp-arm64"
+      ],
+      "wall_ms": 1994.504697,
+      "metrics": {},
+      "stdout": "",
+      "stderr": ""
+    },
+    {
+      "round": 0,
+      "build": "after",
+      "command": [
+        "/Users/zhez/attesor/target/release/attesor",
+        "--no-aot",
+        "/Users/zhez/attesor/bench/native-ratio/fp-arm64"
+      ],
+      "wall_ms": 1886.8888880000002,
+      "metrics": {},
+      "stdout": "",
+      "stderr": ""
+    },
+    {
+      "round": 1,
+      "build": "after",
+      "command": [
+        "/Users/zhez/attesor/target/release/attesor",
+        "--no-aot",
+        "/Users/zhez/attesor/bench/native-ratio/fp-arm64"
+      ],
+      "wall_ms": 1909.4285519999996,
+      "metrics": {},
+      "stdout": "",
+      "stderr": ""
+    },
+    {
+      "round": 1,
+      "build": "before",
+      "command": [
+        "/private/tmp/attesor-perf/baseline",
+        "--no-aot",
+        "/Users/zhez/attesor/bench/native-ratio/fp-arm64"
+      ],
+      "wall_ms": 1960.1023059999995,
+      "metrics": {},
+      "stdout": "",
+      "stderr": ""
+    },
+    {
+      "round": 2,
+      "build": "before",
+      "command": [
+        "/private/tmp/attesor-perf/baseline",
+        "--no-aot",
+        "/Users/zhez/attesor/bench/native-ratio/fp-arm64"
+      ],
+      "wall_ms": 1954.6291659999993,
+      "metrics": {},
+      "stdout": "",
+      "stderr": ""
+    },
+    {
+      "round": 2,
+      "build": "after",
+      "command": [
+        "/Users/zhez/attesor/target/release/attesor",
+        "--no-aot",
+        "/Users/zhez/attesor/bench/native-ratio/fp-arm64"
+      ],
+      "wall_ms": 1902.7772120000002,
+      "metrics": {},
+      "stdout": "",
+      "stderr": ""
+    },
+    {
+      "round": 3,
+      "build": "after",
+      "command": [
+        "/Users/zhez/attesor/target/release/attesor",
+        "--no-aot",
+        "/Users/zhez/attesor/bench/native-ratio/fp-arm64"
+      ],
+      "wall_ms": 1892.83131,
+      "metrics": {},
+      "stdout": "",
+      "stderr": ""
+    },
+    {
+      "round": 3,
+      "build": "before",
+      "command": [
+        "/private/tmp/attesor-perf/baseline",
+        "--no-aot",
+        "/Users/zhez/attesor/bench/native-ratio/fp-arm64"
+      ],
+      "wall_ms": 1988.3835350000006,
+      "metrics": {},
+      "stdout": "",
+      "stderr": ""
+    },
+    {
+      "round": 4,
+      "build": "before",
+      "command": [
+        "/private/tmp/attesor-perf/baseline",
+        "--no-aot",
+        "/Users/zhez/attesor/bench/native-ratio/fp-arm64"
+      ],
+      "wall_ms": 2036.255455000001,
+      "metrics": {},
+      "stdout": "",
+      "stderr": ""
+    },
+    {
+      "round": 4,
+      "build": "after",
+      "command": [
+        "/Users/zhez/attesor/target/release/attesor",
+        "--no-aot",
+        "/Users/zhez/attesor/bench/native-ratio/fp-arm64"
+      ],
+      "wall_ms": 1916.6655139999982,
+      "metrics": {},
+      "stdout": "",
+      "stderr": ""
+    },
+    {
+      "round": 5,
+      "build": "after",
+      "command": [
+        "/Users/zhez/attesor/target/release/attesor",
+        "--no-aot",
+        "/Users/zhez/attesor/bench/native-ratio/fp-arm64"
+      ],
+      "wall_ms": 1883.5688140000002,
+      "metrics": {},
+      "stdout": "",
+      "stderr": ""
+    },
+    {
+      "round": 5,
+      "build": "before",
+      "command": [
+        "/private/tmp/attesor-perf/baseline",
+        "--no-aot",
+        "/Users/zhez/attesor/bench/native-ratio/fp-arm64"
+      ],
+      "wall_ms": 1995.7330490000018,
+      "metrics": {},
+      "stdout": "",
+      "stderr": ""
+    },
+    {
+      "round": 6,
+      "build": "before",
+      "command": [
+        "/private/tmp/attesor-perf/baseline",
+        "--no-aot",
+        "/Users/zhez/attesor/bench/native-ratio/fp-arm64"
+      ],
+      "wall_ms": 1963.5424730000004,
+      "metrics": {},
+      "stdout": "",
+      "stderr": ""
+    },
+    {
+      "round": 6,
+      "build": "after",
+      "command": [
+        "/Users/zhez/attesor/target/release/attesor",
+        "--no-aot",
+        "/Users/zhez/attesor/bench/native-ratio/fp-arm64"
+      ],
+      "wall_ms": 1877.2914139999984,
+      "metrics": {},
+      "stdout": "",
+      "stderr": ""
+    }
+  ],
+  "medians": {
+    "wall_ms": {
+      "before": 1988.3835350000006,
+      "after": 1892.83131,
+      "time_reduction_percent": 4.805522843961818
+    }
+  },
+  "sha256": {
+    "before": "f8d87bd8bf693b134c07b40d2b596a78cf6a1cba52c5348cda85f2a3f72b6df1",
+    "after": "36fc7882e7229d8eb00f01df5a2360d30747a4efc8f2b8152890aeabe6b7c9f0",
+    "guest": "48c4ed1f76df4be40c3e73d32b44d0abc2cb5d185249a6854c1e88dcd3b3d69d"
+  }
+}

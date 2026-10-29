@@ -55,6 +55,7 @@ attesor --selftest-jit fpblocks 100000 # random scalar/vector FP + SIMD&FP load/
                                         #   single instructions. Expected: only NaN-sign mismatches (a propagated
                                         #   NaN equal to the x86 indefinite pattern is turned into the default NaN)
 ```
+`ATTESOR_JIT_OFF=scalaralias` disables reuse of pre-write cached scalar FP inputs.
 `ATTESOR_JIT_OFF=vcache` disables the V-register cache, `selflags` the select-chain flag elimination
 (`ATTESOR_JIT_ON=callret` enables the experimental host call/ret translation of BL/BLR/RET, measured slower).
 `ldst` centres pc in a 4MB window so the `ldr <v>, literal` pool (±1MB) stays mapped: expect `mismatch=0`.

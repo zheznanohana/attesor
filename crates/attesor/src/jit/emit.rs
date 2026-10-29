@@ -336,6 +336,9 @@ struct E<'a> {
     pc: u64,
     /// Flag producer of the immediately preceding instruction (see `Unit::fuse`).
     fuse_in: Option<FuseKind>,
+    // Snapshot before destination invalidation. Only scalar FP operand loads use this:
+    // they all precede stores, cache fills and helper calls in their instruction.
+    scalar_inputs: Option<VCache>,
 }
 
 /// Callee-saved x86 registers the JIT keeps guest registers in (see `RegCache`).
@@ -412,7 +415,12 @@ impl<'a> E<'a> {
     }
     /// Scalar FP operand Vn into `x` (64-bit lane for double, 32-bit otherwise), rest of `x` zero.
     fn fld_scalar(&mut self, x: AsmRegisterXmm, n: u32, double: bool) {
-        match self.vsrc(n) {
+        let cached = self.vsrc(n).or_else(|| {
+            self.scalar_inputs.as_ref()
+                .and_then(|vc| vc.reg.iter().position(|&r| r as u32 == n))
+                .map(|s| VREGS[s])
+        });
+        match cached {
             Some(c) if double => a!(self, movq(x, c)),
             Some(c) => {
                 a!(self, xorps(x, x));
@@ -940,7 +948,7 @@ pub fn emit_block(u: &mut Unit, pc: u64, read: &dyn Fn(u64) -> Option<u32>) -> u
             let mut body = u.a.create_label();
             u.a.test(dword_ptr(r15 + off::FPCR), FPCR_NONDEFAULT as i32).unwrap();
             u.a.jz(body).unwrap();
-            let mut e = E { u, pc, fuse_in: None };
+            let mut e = E { u, pc, fuse_in: None, scalar_inputs: None };
             e.mov_imm(rax, pc);
             a!(e, mov(qword_ptr(r15 + off::PC), rax));
             a!(e, mov(qword_ptr(r15 + off::EXIT_REASON), EXIT_INTERP as i32));
@@ -956,7 +964,7 @@ pub fn emit_block(u: &mut Unit, pc: u64, read: &dyn Fn(u64) -> Option<u32>) -> u
     loop {
         let Some(insn) = read(cur) else {
             // Unreadable: let the dispatcher fault properly.
-            let mut e = E { u, pc: cur, fuse_in: None };
+            let mut e = E { u, pc: cur, fuse_in: None, scalar_inputs: None };
             e.st_pc_and_exit(cur);
             return cur;
         };
@@ -989,6 +997,7 @@ pub fn emit_block(u: &mut Unit, pc: u64, read: &dyn Fn(u64) -> Option<u32>) -> u
                 DEAD_FLAG_SKIPS.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
             }
         }
+        let scalar_inputs = if jit_off("scalaralias") { None } else { Some(u.vc) };
         let vw = v_writes(insn);
         match vw {
             Some([0xfe, _]) => u.vc = VCache::new(),
@@ -1003,7 +1012,7 @@ pub fn emit_block(u: &mut Unit, pc: u64, read: &dyn Fn(u64) -> Option<u32>) -> u
         }
         u.vc_dest = match vw { Some([0xfe, _]) => [0xff; 2], Some(r) => r, None => [0xff; 2] };
         let code_start = u.a.instructions().len();
-        let mut e = E { u, pc: cur, fuse_in };
+        let mut e = E { u, pc: cur, fuse_in, scalar_inputs };
         let term = is_terminator(insn);
         e.u.insns_translated += 1;
         let translated = e.translate(insn);
@@ -1042,13 +1051,13 @@ pub fn emit_block(u: &mut Unit, pc: u64, read: &dyn Fn(u64) -> Option<u32>) -> u
             }
         }
         if count >= MAX_BLOCK_INSNS {
-            let mut e = E { u, pc: cur, fuse_in: None };
+            let mut e = E { u, pc: cur, fuse_in: None, scalar_inputs: None };
             e.goto(cur);
             return cur;
         }
         // Stop before running into another block of this unit: jump to it.
         if u.labels.contains_key(&cur) {
-            let mut e = E { u, pc: cur, fuse_in: None };
+            let mut e = E { u, pc: cur, fuse_in: None, scalar_inputs: None };
             e.goto(cur);
             return cur;
         }
@@ -2635,7 +2644,7 @@ impl<'a> E<'a> {
     }
 
     /// Fused multiply-add with ARM NaN selection: xmm0 = op1 (already negated for FMLS-like forms),
-    /// xmm1 = op2, xmm2 = addend (negated as needed); result in xmm0, before the default-NaN fixup.
+    /// xmm1 = op2, xmm2 = addend (negated as needed); result in xmm0, including the default-NaN fixup.
     /// x86 picks a NaN operand in the order op1, op2, addend; ARM (FPProcessNaNs3) takes the addend
     /// first, and a quiet-NaN addend with op1*op2 = inf*0 gives the default NaN. Uses xmm2-xmm7.
     fn fma_arm(&mut self, double: bool) {
@@ -2678,6 +2687,9 @@ impl<'a> E<'a> {
         a!(self, pandn(xmm7, xmm0));
         a!(self, por(xmm7, xmm3));
         a!(self, movdqa(xmm0, xmm7));
+        // The fast path already proved every result lane ordered. Canonicalize only
+        // here, avoiding a second NaN test on every ordinary fused operation.
+        self.vfix_default_nan(double);
         self.u.a.set_label(&mut l_end).unwrap();
         a!(self, nop());
     }
@@ -4130,7 +4142,7 @@ impl<'a> E<'a> {
                     self.vld(xmm2, rd, q);
                     self.fma_arm(double);
                 }
-                self.vfix_default_nan(double);
+                if mul { self.vfix_default_nan(double); }
                 self.vfin(rd, q);
                 return true;
             }
@@ -4149,7 +4161,6 @@ impl<'a> E<'a> {
             }
             self.vld(xmm2, rd, q);
             self.fma_arm(double);
-            self.vfix_default_nan(double);
             self.vfin(rd, q);
             return true;
         }
@@ -4173,7 +4184,6 @@ impl<'a> E<'a> {
             // packed on purpose: the upper lanes are zero (movss/movsd loads) and are cleared again below
             self.fma_arm(double);
             if double { a!(self, movq(xmm0, xmm0)); } else { a!(self, insertps(xmm0, xmm0, 0x0E)); }
-            self.fix_default_nan(double);
             a!(self, movdqu(xmmword_ptr(r15 + voff(rd)), xmm0));
             self.vfill(rd, xmm0);
             return true;
