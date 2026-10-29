@@ -836,7 +836,9 @@ pub fn dump_block(words: &[u32]) {
     }
     unsafe { *((page + 4 * words.len() as u64) as *mut u32) = 0xD400_1001 };
     let host = translate(page);
-    let bytes = unsafe { std::slice::from_raw_parts(host as *const u8, 512) };
+    // ATTESOR_DUMP_BYTES: how much to print (default 512; whole loops of FP code are larger)
+    let n = std::env::var("ATTESOR_DUMP_BYTES").ok().and_then(|v| v.parse().ok()).unwrap_or(512usize).min(1 << 20);
+    let bytes = unsafe { std::slice::from_raw_parts(host as *const u8, n) };
     let hex: String = bytes.iter().map(|b| format!("{b:02x}")).collect();
     println!("{hex}");
 }
