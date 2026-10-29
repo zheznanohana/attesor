@@ -74,8 +74,11 @@ pub struct Unit {
     /// Write-through cache of guest general registers in callee-saved x86 registers that the JIT
     /// never uses otherwise (see `CREGS`). Memory stays authoritative, so faults, signals and
     /// helper calls always see current values; the cache only saves reloads. Compile-time state,
-    /// reset at every block start.
+    /// reset at every public block entry (natural-loop private entries reconcile it).
     pub rc: RegCache,
+    // Private loop entry, never published in Unit labels or AOT registration.
+    loop_cache: Option<LoopCache>,
+    regioncache: bool,
     /// Set once an instruction has created an internal label (conditional code follows): cached
     /// state may then be used but not extended, or paths could disagree about what is cached.
     pub rc_frozen: bool,
@@ -248,6 +251,9 @@ fn next_cache_use(look: &[u32], n: u32, vector: bool) -> Option<usize> {
 }
 
 
+#[derive(Clone, Copy)]
+struct LoopCache { pc: u64, fast: CodeLabel, reg: [u8; NCREGS] }
+
 #[derive(Clone, Copy, Default)]
 pub struct RegCache {
     /// Guest register held in each slot (0xff = empty).
@@ -313,6 +319,8 @@ impl Unit {
             insns_fallback: 0,
             fuse: None,
             rc: RegCache::new(),
+            loop_cache: None,
+            regioncache: regioncache_enabled(),
             rc_frozen: false,
             look: Vec::new(),
             cache_uses: [[u8::MAX; 32]; 2],
@@ -458,13 +466,16 @@ impl<'a> E<'a> {
         self.u.rc.tick += 1;
         self.u.rc.stamp[s] = self.u.rc.tick;
     }
-    /// Slot for `n`: furthest next use, LRU tie-break (memory stays up to date).
+    /// Region members use fixed slots; ordinary blocks use next-use/LRU.
+    /// Memory stays authoritative in both cases.
     fn rc_alloc(&mut self, n: u32) -> usize {
+        let fixed = self.u.loop_cache.and_then(|l| l.reg.iter().position(|&r| r as u32 == n));
+        debug_assert!(self.u.loop_cache.is_none() || fixed.is_some());
         let rc = &self.u.rc;
-        let s = (0..NCREGS).find(|&i| rc.reg[i] == 0xff).unwrap_or_else(|| {
+        let s = fixed.unwrap_or_else(|| (0..NCREGS).find(|&i| rc.reg[i] == 0xff).unwrap_or_else(|| {
             if jit_off("nextuse") { (0..NCREGS).min_by_key(|&i| rc.stamp[i]).unwrap() }
             else { (0..NCREGS).max_by_key(|&i| (self.u.cache_uses[0][rc.reg[i] as usize], u32::MAX - rc.stamp[i])).unwrap() }
-        });
+        }));
         self.u.rc.reg[s] = n as u8;
         self.rc_touch(s);
         s
@@ -541,6 +552,9 @@ impl<'a> E<'a> {
     /// Is the current bank-local value read before a known overwrite in the
     /// lookahead? Unknown encodings are conservative; this affects speed only.
     fn used_soon_bank(&self, n: u32, vector: bool) -> bool {
+        if !vector {
+            if let Some(l) = self.u.loop_cache { return l.reg.contains(&(n as u8)); }
+        }
         if !jit_off("nextuse") { return self.u.cache_uses[vector as usize][n as usize] != u8::MAX; }
         self.u.look.iter().any(|&w| (w & 31) == n || ((w >> 5) & 31) == n || ((w >> 10) & 31) == n || ((w >> 16) & 31) == n)
     }
@@ -786,6 +800,17 @@ impl<'a> E<'a> {
     /// Jump to a direct successor: inside the unit, or through a stub.
     fn goto(&mut self, target: u64) {
         if !self.u.no_internal_jumps {
+            if let Some(l) = self.u.loop_cache.filter(|l| l.pc == target) {
+                // Cpu remains authoritative. Reload only absent/mismatched slots; no
+                // register shuffles, scratch clobbers or compile-state changes on this edge.
+                for (s, &n) in l.reg.iter().enumerate() {
+                    if n != 0xff && self.u.rc.reg[s] != n {
+                        a!(self, mov(CREGS[s], qword_ptr(r15 + xoff(n as u32))));
+                    }
+                }
+                a!(self, jmp(l.fast));
+                return;
+            }
             if let Some(l) = self.u.labels.get(&target).copied() {
                 a!(self, jmp(l));
                 return;
@@ -1005,6 +1030,46 @@ fn callret_enabled() -> bool {
     *F.get_or_init(|| std::env::var("ATTESOR_JIT_ON").unwrap_or_default().split(',').any(|g| g == "callret"))
 }
 
+/// Experimental write-through natural-loop region; public entries remain canonical.
+fn regioncache_enabled() -> bool {
+    static F: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *F.get_or_init(|| std::env::var("ATTESOR_JIT_ON").unwrap_or_default().split(',').any(|g| g == "regioncache"))
+}
+
+// Discover only a single-entry basic block ending in a direct natural backedge.
+// Stop at other Unit labels exactly as emit_block does; joins and other edges
+// continue through public entries, never through this private cache contract.
+fn loop_layout(u: &Unit, pc: u64, read: &dyn Fn(u64) -> Option<u32>) -> Option<[u8; NCREGS]> {
+    let mut counts = [0u32; 32];
+    for i in 0..MAX_BLOCK_INSNS {
+        let p = pc + i as u64 * 4;
+        if i != 0 && u.labels.contains_key(&p) { return None; }
+        let w = read(p)?;
+        let a = cache_access(w);
+        // Unknown decodings advertise every read conservatively. They must not
+        // dominate the layout; correctness never depends on this ranking.
+        if a.xr != u32::MAX {
+            for n in 0..32 { counts[n] += ((a.xr >> n) & 1) as u32; }
+        }
+        if is_terminator(w) {
+            let target = if w & 0xfc00_0000 == 0x1400_0000 {
+                p.wrapping_add((sext((w & 0x03ff_ffff) as u64, 26) << 2) as u64)
+            } else if w & 0xff00_0010 == 0x5400_0000 || w & 0x7e00_0000 == 0x3400_0000 {
+                p.wrapping_add((sext(((w >> 5) & 0x7ffff) as u64, 19) << 2) as u64)
+            } else if w & 0x7e00_0000 == 0x3600_0000 {
+                p.wrapping_add((sext(((w >> 5) & 0x3fff) as u64, 14) << 2) as u64)
+            } else { return None; };
+            if target != pc { return None; }
+            let mut regs: Vec<usize> = (0..32).filter(|&n| counts[n] != 0).collect();
+            regs.sort_by_key(|&n| (std::cmp::Reverse(counts[n]), n));
+            let mut layout = [0xff; NCREGS];
+            for (s, n) in regs.into_iter().take(NCREGS).enumerate() { layout[s] = n as u8; }
+            return (layout[0] != 0xff).then_some(layout);
+        }
+    }
+    None
+}
+
 /// FMA3 (fused multiply-add) on the host: FMLA/FMADD are translated natively only with it, since an
 /// unfused multiply + add rounds twice. Not part of the SSE4.1 baseline, so detected at run time.
 pub fn has_fma() -> bool {
@@ -1041,6 +1106,7 @@ pub fn has_f16c() -> bool {
 /// Returns the guest address just past the block.
 pub fn emit_block(u: &mut Unit, pc: u64, read: &dyn Fn(u64) -> Option<u32>) -> u64 {
     u.fuse = None;
+    u.loop_cache = None;
     u.tbi_mask_live = false;
     u.rc = RegCache::new();
     u.vc = VCache::new();
@@ -1059,6 +1125,17 @@ pub fn emit_block(u: &mut Unit, pc: u64, read: &dyn Fn(u64) -> Option<u32>) -> u
     }
     let mut label = *u.labels.get(&pc).expect("block label");
     u.a.set_label(&mut label).unwrap();
+    if u.regioncache && !u.no_internal_jumps {
+        if let Some(reg) = loop_layout(u, pc, read) {
+            for (s, &n) in reg.iter().enumerate() {
+                if n != 0xff { u.a.mov(CREGS[s], qword_ptr(r15 + xoff(n as u32))).unwrap(); }
+            }
+            let mut fast = u.a.create_label();
+            u.a.set_label(&mut fast).unwrap();
+            u.loop_cache = Some(LoopCache { pc, fast, reg });
+            u.rc.reg = reg;
+        }
+    }
     // Native FP code follows FPCR.RMode/FZ through MXCSR, but not DN/AHP/FZ16: a block with any SIMD&FP
     // instruction checks those on entry and hands itself to the interpreter when one is set.
     {
@@ -6183,4 +6260,204 @@ mod context_sync_tests {
             }
         }
     }
+}
+
+#[cfg(test)]
+mod region_cache_tests {
+    use super::*;
+    use attesor_core::{cpu::Cpu, interp};
+    const PC: u64 = 0x1000_0000;
+
+    fn compile(words: &[u32], entries: &[usize], kind: StubKind, enabled: bool) -> (Vec<u64>, bool) {
+        let mut u = Unit::new(kind, false);
+        u.regioncache = enabled;
+        for &i in entries { let l = u.a.create_label(); u.labels.insert(PC + i as u64 * 4, l); }
+        let read = |p: u64| p.checked_sub(PC).and_then(|o| words.get((o / 4) as usize)).copied();
+        let mut loop_found = false;
+        for &i in entries {
+            emit_block(&mut u, PC + i as u64 * 4, &read);
+            loop_found |= u.loop_cache.is_some();
+        }
+        u.finish();
+        let host = crate::jit::code_cache().alloc(65536);
+        let result = u.a.assemble_options(host, iced_x86::BlockEncoderOptions::RETURN_NEW_INSTRUCTION_OFFSETS).unwrap();
+        let hosts = entries.iter().map(|&i| result.label_ip(&u.labels[&(PC + i as u64 * 4)]).unwrap()).collect();
+        assert!(result.inner.code_buffer.len() <= 65536);
+        unsafe { std::ptr::copy_nonoverlapping(result.inner.code_buffer.as_ptr(), host as *mut u8, result.inner.code_buffer.len()); }
+        (hosts, loop_found)
+    }
+
+    fn reference(cpu: &mut Cpu, words: &[u32]) {
+        for _ in 0..10000 {
+            let w = words[((cpu.pc - PC) / 4) as usize];
+            match interp::exec(cpu, w) {
+                Ok(()) => {},
+                Err(interp::Exit::Svc(_)) => return,
+                Err(e) => panic!("reference {w:08x}: {e:?}"),
+            }
+        }
+        panic!("nonterminating reference");
+    }
+
+    #[test]
+    fn loop_randomized_public_entries_write_through_and_sp_alias() {
+        // add x0,x0,x1; eor x2,x2,x0; add sp,sp,#16;
+        // add x4,sp,#0; add x5,xzr,x0; subs x3,x3,#1; b.ne loop; svc
+        let words = [0x8b010000, 0xca000042, 0x910043ff, 0x910003e4,
+                     0x8b0003e5, 0xf1000463, 0x54ffff41, 0xd4001001];
+        let mut seed = 0x123456789abcdefu64;
+        for kind in [StubKind::Plain, StubKind::Patchable] {
+            let (hosts, found) = compile(&words, &[0, 7], kind, true);
+            assert!(found);
+            // Every public entry gets fresh host registers through jit_enter; no
+            // assumptions about CREG contents or a preceding region invocation.
+            for entry in 0..2 {
+                for _ in 0..128 {
+                    let mut c = Cpu::new(); crate::jit::setup_cpu(&mut c);
+                    for x in &mut c.x { seed ^= seed << 13; seed ^= seed >> 7; seed ^= seed << 17; *x = seed; }
+                    c.x[3] = seed % 35 + 1; c.set_nzcv((seed % 16) as u32);
+                    c.pc = PC + if entry == 0 { 0 } else { 28 };
+                    let mut r = Cpu::new(); r.x = c.x; r.set_nzcv(c.nzcv()); r.pc = c.pc;
+                    reference(&mut r, &words);
+                    unsafe { crate::jit::attesor_jit_enter(&mut *c, hosts[entry]); }
+                    assert_eq!(c.exit_reason, EXIT_SVC); assert_eq!(c.x, r.x); assert_eq!(c.nzcv(), r.nzcv());
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn compare_and_test_bit_loop_edges_match_reference() {
+        for test_bit in [false, true] {
+            let words = [0x8b010000, if test_bit { 0x91000463 } else { 0x51000463 },
+                         if test_bit { 0x3637ffc3 } else { 0x35ffffc3 }, 0xd4001001];
+            let (hosts, found) = compile(&words, &[0, 3], StubKind::Plain, true); assert!(found);
+            for count in 1..64 {
+                let mut c = Cpu::new(); crate::jit::setup_cpu(&mut c);
+                c.x[0] = u64::MAX - count; c.x[1] = 17; c.x[3] = count;
+                c.x[31] = 0x123456789abcdef0; c.set_nzcv(11); c.pc = PC;
+                let mut r = Cpu::new(); r.x = c.x; r.set_nzcv(c.nzcv()); r.pc = PC;
+                reference(&mut r, &words);
+                unsafe { crate::jit::attesor_jit_enter(&mut *c, hosts[0]); }
+                assert_eq!(c.x, r.x); assert_eq!(c.nzcv(), r.nzcv()); assert_eq!(c.exit_reason, EXIT_SVC);
+            }
+        }
+    }
+
+    extern "C" fn mutate(cpu: *mut Cpu, _: u32, _: u64) -> u64 {
+        let c = unsafe { &mut *cpu };
+        // This sees the immediately preceding native write, then invalidates it.
+        assert_eq!(c.x[0], c.x[6] + 1);
+        c.x[0] += 100; c.x[6] = c.x[0];
+        c.x[1] = c.x[1].wrapping_mul(3);
+        0
+    }
+
+    #[test]
+    fn helper_unknown_writes_reconcile_and_conditional_fallthrough() {
+        let words = [0x91000400, 0, 0x8b010042, 0xf1000463, 0x54ffff81, 0x8b000044, 0xd4001001];
+        let (hosts, found) = compile(&words, &[0, 5], StubKind::Plain, true); assert!(found);
+        for count in 1..32 {
+            let mut c = Cpu::new(); crate::jit::setup_cpu(&mut c);
+            c.helpers[HELPER_INTERP] = mutate as *const () as usize as u64;
+            c.x[1] = 1; c.x[3] = count;
+            unsafe { crate::jit::attesor_jit_enter(&mut *c, hosts[0]); }
+            let (mut a, mut b, mut sum) = (0u64, 1u64, 0u64);
+            for _ in 0..count { a += 101; b = b.wrapping_mul(3); sum = sum.wrapping_add(b); }
+            assert_eq!(c.x[0], a); assert_eq!(c.x[1], b); assert_eq!(c.x[2], sum);
+            assert_eq!(c.x[4], sum.wrapping_add(a)); assert_eq!(c.exit_reason, EXIT_SVC);
+        }
+    }
+
+    extern "C" fn change_fpcr(cpu: *mut Cpu, _: u32, _: u64) -> u64 {
+        unsafe { (*cpu).fpcr = 1 << 25; } 0
+    }
+
+    #[test]
+    fn backedge_does_not_skip_fpcr_guard_or_reuse_stale_vectors() {
+        // fadd d0,d0,d1; helper changes FPCR; b loop. First iteration is native,
+        // second must leave at the guard, before another FP write.
+        let words = [0x91000400, 0x1e612800, 0, 0x17fffffd];
+        let (hosts, found) = compile(&words, &[0], StubKind::Plain, true); assert!(found);
+        let mut c = Cpu::new(); crate::jit::setup_cpu(&mut c);
+        c.v[0][0] = 2f64.to_bits(); c.v[1][0] = 3f64.to_bits();
+        c.helpers[HELPER_INTERP] = change_fpcr as *const () as usize as u64;
+        unsafe { crate::jit::attesor_jit_enter(&mut *c, hosts[0]); }
+        assert_eq!(c.exit_reason, EXIT_INTERP); assert_eq!(c.pc, PC);
+        assert_eq!(c.v[0][0], 5f64.to_bits());
+    }
+
+    #[test]
+    fn diamond_and_external_join_use_canonical_entries() {
+        // Non-self edges deliberately do not participate in this first region.
+        let words = [0xb4000040, 0x91000421, 0x91000442, 0xd4001001];
+        let (hosts, found) = compile(&words, &[0, 1, 2], StubKind::Plain, true); assert!(!found);
+        for entry in 0..3 { for x in [0, 1] {
+            let mut c = Cpu::new(); crate::jit::setup_cpu(&mut c); c.x[0] = x; c.pc = PC + entry as u64 * 4;
+            let mut r = Cpu::new(); r.x = c.x; r.pc = c.pc;
+            reference(&mut r, &words);
+            unsafe { crate::jit::attesor_jit_enter(&mut *c, hosts[entry]); }
+            assert_eq!(c.x, r.x); assert_eq!(c.exit_reason, EXIT_SVC);
+        }}
+    }
+    #[test]
+    fn loop_scalar_aliases_match_reference_across_iterations() {
+        let words = [0x1e612800, 0x1e600821, 0xf1000463, 0x54ffffa1, 0xd4001001];
+        let (hosts, found) = compile(&words, &[0, 4], StubKind::Plain, true); assert!(found);
+        for count in 1..40 {
+            let mut c = Cpu::new(); crate::jit::setup_cpu(&mut c);
+            c.x[3] = count; c.pc = PC;
+            c.v[0] = [0.125f64.to_bits(), u64::MAX]; c.v[1] = [0.75f64.to_bits(), u64::MAX];
+            let mut r = Cpu::new(); r.x = c.x; r.v = c.v; r.pc = PC;
+            reference(&mut r, &words);
+            unsafe { crate::jit::attesor_jit_enter(&mut *c, hosts[0]); }
+            assert_eq!(c.x, r.x); assert_eq!(c.v, r.v); assert_eq!(c.nzcv(), r.nzcv());
+        }
+    }
+
+    #[test]
+    fn verification_and_other_entries_never_publish_private_contract() {
+        let words = [0x91000400, 0xf1000463, 0x54ffffc1, 0xd4001001];
+        let mut u = Unit::new(StubKind::Plain, false); u.regioncache = true; u.no_internal_jumps = true;
+        let l = u.a.create_label(); u.labels.insert(PC, l);
+        emit_block(&mut u, PC, &|p| words.get(((p - PC) / 4) as usize).copied());
+        assert!(u.loop_cache.is_none());
+        assert_eq!(u.labels.len(), 1);
+        let (_, found) = compile(&words, &[0, 3], StubKind::Plain, false); assert!(!found);
+    }
+
+    extern "C" fn fault_exit(_: libc::c_int) { unsafe { libc::_exit(73); } }
+
+    #[test]
+    fn fault_after_backedge_observes_every_completed_cpu_write() {
+        // The second iteration loads a protected page. All completed writes,
+        // including the increment directly before the fault, must be in Cpu.
+        let words = [0x91000400, 0xf9400025, 0x91002021, 0xf1000463, 0x54ffff81, 0xd4001001];
+        let (hosts, found) = compile(&words, &[0, 5], StubKind::Plain, true); assert!(found);
+        unsafe {
+            let page = libc::sysconf(libc::_SC_PAGESIZE) as usize;
+            let data = libc::mmap(std::ptr::null_mut(), page * 2, libc::PROT_READ | libc::PROT_WRITE,
+                                  libc::MAP_ANON | libc::MAP_PRIVATE, -1, 0);
+            assert_ne!(data, libc::MAP_FAILED);
+            let c = libc::mmap(std::ptr::null_mut(), page, libc::PROT_READ | libc::PROT_WRITE,
+                              libc::MAP_ANON | libc::MAP_SHARED, -1, 0) as *mut Cpu;
+            assert_ne!(c as *mut libc::c_void, libc::MAP_FAILED);
+            std::ptr::write(c, *Cpu::new()); crate::jit::setup_cpu(&mut *c);
+            (*c).x[0] = 99; (*c).x[1] = data as u64 + page as u64 - 8; (*c).x[3] = 3;
+            *((*c).x[1] as *mut u64) = 0x123456789abcdef0;
+            assert_eq!(libc::mprotect((data as *mut u8).add(page).cast(), page, libc::PROT_NONE), 0);
+            let pid = libc::fork(); assert!(pid >= 0);
+            if pid == 0 {
+                libc::signal(libc::SIGSEGV, fault_exit as *const () as libc::sighandler_t);
+                libc::signal(libc::SIGBUS, fault_exit as *const () as libc::sighandler_t);
+                crate::jit::attesor_jit_enter(c, hosts[0]); libc::_exit(99);
+            }
+            let mut status = 0; assert_eq!(libc::waitpid(pid, &mut status, 0), pid);
+            assert!(libc::WIFEXITED(status)); assert_eq!(libc::WEXITSTATUS(status), 73);
+            assert_eq!((*c).x[0], 101); assert_eq!((*c).x[1], data as u64 + page as u64);
+            assert_eq!((*c).x[3], 2); assert_eq!((*c).x[5], 0x123456789abcdef0);
+            libc::munmap(c.cast(), page); libc::munmap(data, page * 2);
+        }
+    }
+
 }
