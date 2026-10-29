@@ -16,7 +16,13 @@ The debugged thread runs in the interpreter (`--gdb` implies `--interp`): breakp
 each instruction, so guest code is never patched, and single-stepping is exact. Only the program's first
 thread is debugged; threads it creates run on their own. Not supported: watchpoints, shared-library
 discovery (load other images' symbols with `target modules load` by hand), attaching to a running process.
-`ATTESOR_GDB_LOG=1` prints the protocol traffic. Regression check: `tests/attesor/gdbstub.sh`.
+`ATTESOR_GDB_LOG=1` prints the protocol traffic. For an inherited connected socket,
+use `--gdb-fd FD` instead of `--gdb PORT`; the FD is owned by Attesor. The socketpair
+regressions work without a localhost listener:
+`python3 tests/attesor/gdb-protocol.py target/release/attesor` and
+`python3 tests/attesor/gdb-lldb-fd.py target/release/attesor`.
+The original TCP regression is `tests/attesor/gdbstub.sh`.
+See [DEBUGGER-VALIDATION.md](DEBUGGER-VALIDATION.md) for verified coverage and limits.
 
 ## Debugging / profiling toolbox
 

@@ -1,0 +1,47 @@
+(lldb) target create "/var/folders/b4/tnjkjcm52s5g4n894r8xrcfh0000gn/T/attesor-lldb-fd-88_6l95b/guest"
+Current executable set to '/var/folders/b4/tnjkjcm52s5g4n894r8xrcfh0000gn/T/attesor-lldb-fd-88_6l95b/guest' (arm64).
+(lldb) process connect --plugin gdb-remote fd://4
+Process 79259 stopped
+* thread #1, stop reason = signal SIGTRAP
+    frame #0: 0x00000005800049c0 
+->  0x5800049c0: mov    x0, sp
+    0x5800049c4: and    sp, x0, #0xfffffffffffffff0
+    0x5800049c8: mov    x29, #0x0                 ; =0 
+    0x5800049cc: mov    x30, #0x0                 ; =0 
+Target 0: (guest) stopped.
+(lldb) target modules load --file guest --slide 0x400000000
+(lldb) b add3
+Breakpoint 1: where = guest`add3 at guest.c:2:72, address = 0x0000000500000460
+(lldb) c
+warning: guest was compiled with optimization - stepping may behave oddly; variables may not be available.
+Process 79259 resuming
+Process 79259 stopped
+* thread #1, stop reason = breakpoint 1.1
+    frame #0: 0x0000000500000460 guest`add3(a=0, b=10, c=100) at guest.c:2:72 [opt]
+   1   	#include <stdio.h>
+-> 2   	__attribute__((noinline)) long add3(long a, long b, long c) { return a + b * 2 + c * 3; }
+    	                                                                       ^
+   3   	int main(void) { long s = 0; for (int i = 0; i < 5; i++) s += add3(i, 10, 100); printf("sum %ld\n", s); return 7; }
+Target 0: (guest) stopped.
+(lldb) p a + b
+(long) 10
+(lldb) p add3(1, 2, 3)
+(long) 14
+(lldb) register write x1 5
+(lldb) finish
+Process 79259 stopped
+* thread #1, stop reason = step out
+Return value: (long) $0 = 310
+
+    frame #0: 0x0000000500000498 guest`main at guest.c:3:60 [opt]
+   1   	#include <stdio.h>
+   2   	__attribute__((noinline)) long add3(long a, long b, long c) { return a + b * 2 + c * 3; }
+-> 3   	int main(void) { long s = 0; for (int i = 0; i < 5; i++) s += add3(i, 10, 100); printf("sum %ld\n", s); return 7; }
+    	                                                           ^
+Target 0: (guest) stopped.
+(lldb) breakpoint delete
+All breakpoints removed. (1 breakpoint)
+
+sum 1600
+
+gdb-lldb-fd: PASS (symbols, arguments, expressions including guest function call, register write, finish, exit)

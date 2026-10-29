@@ -1,5 +1,6 @@
 //! GDB remote serial protocol stub: `attesor --gdb PORT program…` waits for a debugger (lldb
 //! `gdb-remote PORT`, gdb `target remote :PORT`) before the first guest instruction.
+//! `--gdb-fd FD` instead uses an inherited connected stream socket (e.g. a Unix socketpair).
 //!
 //! The debugged thread runs in the interpreter, so a software breakpoint is just a pc check before each
 //! step and single-stepping is one interpreter step; guest memory is never patched. Only the thread that
@@ -9,12 +10,15 @@
 
 use attesor_core::cpu::Cpu;
 use attesor_core::interp;
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::io::{Read, Write};
-use std::net::{TcpListener, TcpStream};
+use std::net::TcpListener;
+use std::os::fd::{AsRawFd, FromRawFd};
+use std::os::unix::net::UnixStream;
 use std::sync::atomic::{AtomicI32, AtomicU16, Ordering};
 
 static PORT: AtomicU16 = AtomicU16::new(0);
+static CONNECTED_FD: AtomicI32 = AtomicI32::new(-1);
 /// Socket of the connected debugger (-1: none), for the exit report.
 static SOCK: AtomicI32 = AtomicI32::new(-1);
 static NO_ACK: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
@@ -29,8 +33,12 @@ pub fn set_port(p: u16) {
     PORT.store(p, Ordering::Relaxed);
 }
 
+pub fn set_fd(fd: i32) {
+    CONNECTED_FD.store(fd, Ordering::Relaxed);
+}
+
 pub fn enabled() -> bool {
-    PORT.load(Ordering::Relaxed) != 0
+    PORT.load(Ordering::Relaxed) != 0 || CONNECTED_FD.load(Ordering::Relaxed) >= 0
 }
 
 /// The guest called exit(status): tell the debugger (best effort, the process ends right after).
@@ -47,9 +55,14 @@ fn frame(data: &str) -> Vec<u8> {
     format!("${data}#{sum:02x}").into_bytes()
 }
 
+trait Transport: Read + Write + AsRawFd {}
+impl<T: Read + Write + AsRawFd> Transport for T {}
+
 struct Conn {
-    s: TcpStream,
+    s: Box<dyn Transport>,
     buf: Vec<u8>,
+    last_reply: Vec<u8>,
+    last_stop: &'static str,
 }
 
 enum Incoming {
@@ -59,11 +72,17 @@ enum Incoming {
 }
 
 impl Conn {
+    fn stop(&mut self, reason: &'static str) {
+        self.last_stop = reason;
+        self.send(reason);
+    }
+
     fn send(&mut self, data: &str) {
         if log() {
             eprintln!("[gdb] <- {}", &data[..data.len().min(200)]);
         }
-        let _ = self.s.write_all(&frame(data));
+        self.last_reply = frame(data);
+        let _ = self.s.write_all(&self.last_reply);
     }
 
     fn fill(&mut self) -> bool {
@@ -87,6 +106,12 @@ impl Conn {
                         return Incoming::Interrupt;
                     }
                     b'$' => break,
+                    b'-' => {
+                        self.buf.remove(0);
+                        if !NO_ACK.load(Ordering::Relaxed) {
+                            let _ = self.s.write_all(&self.last_reply);
+                        }
+                    }
                     _ => {
                         self.buf.remove(0); // acks and noise
                     }
@@ -95,11 +120,22 @@ impl Conn {
             if let Some(hash) = self.buf.iter().position(|&c| c == b'#') {
                 if self.buf.len() >= hash + 3 {
                     let body: Vec<u8> = self.buf[1..hash].to_vec();
+                    let checksum = std::str::from_utf8(&self.buf[hash + 1..hash + 3])
+                        .ok().and_then(|s| u8::from_str_radix(s, 16).ok());
+                    let valid = checksum == Some(body.iter().fold(0u8, |a, b| a.wrapping_add(*b)));
                     self.buf.drain(..hash + 3);
+                    if !valid {
+                        if !NO_ACK.load(Ordering::Relaxed) { let _ = self.s.write_all(b"-"); }
+                        continue;
+                    }
                     if !NO_ACK.load(Ordering::Relaxed) {
                         let _ = self.s.write_all(b"+");
                     }
                     let p = unescape(&body);
+                    if !p.is_ascii() {
+                        self.send("E01");
+                        continue;
+                    }
                     if log() {
                         eprintln!("[gdb] -> {}", &p[..p.len().min(200)]);
                     }
@@ -114,7 +150,7 @@ impl Conn {
 
     /// While the guest runs: has the debugger sent Ctrl-C?
     fn interrupted(&mut self) -> bool {
-        let mut p = libc::pollfd { fd: fd_of(&self.s), events: libc::POLLIN, revents: 0 };
+        let mut p = libc::pollfd { fd: fd_of(&*self.s), events: libc::POLLIN, revents: 0 };
         if unsafe { libc::poll(&mut p, 1, 0) } > 0 {
             if !self.fill() {
                 return true; // debugger gone: stop and let the main loop notice
@@ -134,8 +170,7 @@ fn log() -> bool {
     *L.get_or_init(|| std::env::var_os("ATTESOR_GDB_LOG").is_some())
 }
 
-fn fd_of(s: &TcpStream) -> i32 {
-    use std::os::unix::io::AsRawFd;
+fn fd_of(s: &dyn Transport) -> i32 {
     s.as_raw_fd()
 }
 
@@ -167,8 +202,13 @@ fn parse_le(h: &str) -> u64 {
     v
 }
 
-fn hex_bytes(h: &str) -> Vec<u8> {
-    (0..h.len() / 2).filter_map(|i| u8::from_str_radix(&h[2 * i..2 * i + 2], 16).ok()).collect()
+fn valid_hex(h: &str) -> bool {
+    h.len() % 2 == 0 && h.bytes().all(|b| b.is_ascii_hexdigit())
+}
+
+fn hex_bytes(h: &str) -> Option<Vec<u8>> {
+    if !valid_hex(h) { return None; }
+    Some((0..h.len() / 2).map(|i| u8::from_str_radix(&h[2 * i..2 * i + 2], 16).unwrap()).collect())
 }
 
 /// Register numbering of the target description: x0-x30 (0-30), sp 31, pc 32, cpsr 33,
@@ -194,6 +234,7 @@ fn reg_size(n: usize) -> usize {
 }
 
 fn set_reg(cpu: &mut Cpu, n: usize, h: &str) -> bool {
+    if n >= 68 || h.len() != reg_size(n) * 2 || !valid_hex(h) { return false; }
     match n {
         0..=31 => cpu.x[n] = parse_le(h),
         32 => cpu.pc = parse_le(h),
@@ -268,7 +309,7 @@ fn xfer(doc: &str, args: &str) -> String {
     let (off, len) = args.split_once(',').unwrap_or(("0", "0"));
     let off = usize::from_str_radix(off, 16).unwrap_or(0).min(doc.len());
     let len = usize::from_str_radix(len, 16).unwrap_or(0);
-    let end = (off + len).min(doc.len());
+    let end = off.saturating_add(len).min(doc.len());
     let chunk = &doc[off..end];
     let mut out = String::from(if end < doc.len() { "m" } else { "l" });
     for c in chunk.chars() {
@@ -285,38 +326,64 @@ fn xfer(doc: &str, args: &str) -> String {
 
 const STOP: &str = "T05thread:1;";
 
+fn symbol_hint(port: Option<u16>) {
+    if let Some((path, slide)) = MAIN.get() {
+        let name = path.rsplit('/').next().unwrap_or(path);
+        if let Some(port) = port {
+            eprintln!("attesor: symbols: lldb -o 'target create {path}' -o 'gdb-remote {port}' -o 'target modules load --file {name} --slide {slide:#x}'");
+        } else {
+            eprintln!("attesor: symbols: target create {path}; target modules load --file {name} --slide {slide:#x}");
+        }
+    }
+}
+
 /// Run `cpu` under the debugger (instead of the JIT) until the guest thread ends.
 pub fn run(cpu: &mut Cpu) {
     let port = PORT.load(Ordering::Relaxed);
-    let listener = match TcpListener::bind(("127.0.0.1", port)) {
-        Ok(l) => l,
-        Err(e) => {
-            eprintln!("attesor: --gdb: cannot listen on 127.0.0.1:{port}: {e}");
+    let fd = CONNECTED_FD.swap(-1, Ordering::Relaxed);
+    let s: Box<dyn Transport> = if fd >= 0 {
+        let mut ty: libc::c_int = 0;
+        let mut len = std::mem::size_of_val(&ty) as libc::socklen_t;
+        let valid = unsafe { libc::getsockopt(fd, libc::SOL_SOCKET, libc::SO_TYPE,
+            &mut ty as *mut _ as *mut libc::c_void, &mut len) == 0 };
+        if !valid || ty != libc::SOCK_STREAM {
+            eprintln!("attesor: --gdb-fd: {fd} is not a stream socket");
             std::process::exit(1);
         }
+        unsafe { libc::fcntl(fd, libc::F_SETFD, libc::FD_CLOEXEC) };
+        eprintln!("attesor: debugger connected on inherited fd {fd}; stopped at {:#x}", cpu.pc);
+        symbol_hint(None);
+        Box::new(unsafe { UnixStream::from_raw_fd(fd) })
+    } else {
+        let listener = match TcpListener::bind(("127.0.0.1", port)) {
+            Ok(l) => l,
+            Err(e) => {
+                eprintln!("attesor: --gdb: cannot listen on 127.0.0.1:{port}: {e}");
+                std::process::exit(1);
+            }
+        };
+        eprintln!("attesor: waiting for a debugger on 127.0.0.1:{port} (lldb: gdb-remote {port}); stopped at {:#x}", cpu.pc);
+        symbol_hint(Some(port));
+        let (s, _) = match listener.accept() {
+            Ok(v) => v,
+            Err(e) => {
+                eprintln!("attesor: --gdb: accept: {e}");
+                std::process::exit(1);
+            }
+        };
+        let _ = s.set_nodelay(true);
+        Box::new(s)
     };
-    eprintln!("attesor: waiting for a debugger on 127.0.0.1:{port} (lldb: gdb-remote {port}); stopped at {:#x}", cpu.pc);
-    if let Some((path, slide)) = MAIN.get() {
-        let name = path.rsplit('/').next().unwrap_or(path);
-        eprintln!("attesor: symbols: lldb -o 'target create {path}' -o 'gdb-remote {port}' -o 'target modules load --file {name} --slide {slide:#x}'");
-    }
-    let (s, _) = match listener.accept() {
-        Ok(v) => v,
-        Err(e) => {
-            eprintln!("attesor: --gdb: accept: {e}");
-            std::process::exit(1);
-        }
-    };
-    let _ = s.set_nodelay(true);
-    SOCK.store(fd_of(&s), Ordering::Relaxed);
-    let mut c = Conn { s, buf: Vec::new() };
+    SOCK.store(fd_of(&*s), Ordering::Relaxed);
+    let mut c = Conn { s, buf: Vec::new(), last_reply: Vec::new(), last_stop: STOP };
     let mut bps: HashSet<u64> = HashSet::new();
+    let mut allocations: HashMap<u64, (usize, i32)> = HashMap::new();
     let xml = target_xml();
     loop {
         let pkt = match c.recv() {
             Incoming::Packet(p) => p,
             Incoming::Interrupt => {
-                c.send(STOP);
+                c.stop("T02thread:1;");
                 continue;
             }
             Incoming::Closed => {
@@ -333,12 +400,17 @@ pub fn run(cpu: &mut Cpu) {
         };
         let (cmd, rest) = pkt.split_at(1.min(pkt.len()));
         match cmd {
-            "?" => c.send(STOP),
+            "?" => c.send(c.last_stop),
             "g" => {
                 let all: String = (0..68).filter_map(|n| reg_hex(cpu, n)).collect();
                 c.send(&all);
             }
             "G" => {
+                let size: usize = (0..68).map(|n| reg_size(n) * 2).sum();
+                if rest.len() != size || !valid_hex(rest) {
+                    c.send("E01");
+                    continue;
+                }
                 let mut pos = 0;
                 for n in 0..68 {
                     let w = reg_size(n) * 2;
@@ -362,6 +434,10 @@ pub fn run(cpu: &mut Cpu) {
                 let parsed = rest.split_once(',').and_then(|(a, l)| Some((u64::from_str_radix(a, 16).ok()?, usize::from_str_radix(l, 16).ok()?)));
                 match parsed {
                     Some((a, l)) => {
+                        if a.checked_add(l.min(0x10000) as u64).is_none() {
+                            c.send("E14");
+                            continue;
+                        }
                         let mut b = vec![0u8; l.min(0x10000)];
                         // partial reads: as much as is mapped, page by page
                         let mut got = 0;
@@ -384,10 +460,28 @@ pub fn run(cpu: &mut Cpu) {
             }
             "M" => {
                 let ok = rest.split_once(':').and_then(|(al, data)| {
-                    let (a, _) = al.split_once(',')?;
+                    let (a, len) = al.split_once(',')?;
                     let a = u64::from_str_radix(a, 16).ok()?;
-                    let bytes = hex_bytes(data);
-                    let ok = crate::guestmem::write(a, &bytes);
+                    let len = usize::from_str_radix(len, 16).ok()?;
+                    let bytes = hex_bytes(data)?;
+                    if len != bytes.len() || len > 0x10000 || a.checked_add(len as u64).is_none() { return None; }
+                    // LLDB uploads expression code into allocations requested as RX.
+                    // Permit a debugger write only to its own full allocation, then
+                    // restore its declared permissions before execution resumes.
+                    let owned = allocations.iter().find_map(|(&base, &(size, prot))| {
+                        (a >= base && a.checked_add(len as u64)? <= base.checked_add(size as u64)?)
+                            .then_some((base, size, prot))
+                    });
+                    let temporary = owned.filter(|&(_, _, prot)| prot & libc::PROT_WRITE == 0);
+                    if let Some((base, size, prot)) = temporary {
+                        if unsafe { libc::mprotect(base as *mut libc::c_void, size, prot | libc::PROT_WRITE) } != 0 {
+                            return Some(false);
+                        }
+                    }
+                    let mut ok = crate::guestmem::write(a, &bytes);
+                    if let Some((base, size, prot)) = temporary {
+                        ok &= unsafe { libc::mprotect(base as *mut libc::c_void, size, prot) } == 0;
+                    }
                     if ok {
                         crate::engine::invalidate_range(a, bytes.len() as u64);
                     }
@@ -398,6 +492,10 @@ pub fn run(cpu: &mut Cpu) {
             "Z" | "z" => {
                 let mut f = rest.split(',');
                 let (kind, addr) = (f.next().unwrap_or(""), f.next().and_then(|a| u64::from_str_radix(a, 16).ok()));
+                if matches!(kind, "0" | "1") && (f.next() != Some("4") || addr.map(|a| a & 3 != 0).unwrap_or(true)) {
+                    c.send("E01");
+                    continue;
+                }
                 match (kind, addr) {
                     ("0" | "1", Some(a)) => {
                         if cmd == "Z" { bps.insert(a); } else { bps.remove(&a); }
@@ -407,20 +505,26 @@ pub fn run(cpu: &mut Cpu) {
                 }
             }
             "c" | "s" => {
-                if let Ok(a) = u64::from_str_radix(rest, 16) {
-                    if !rest.is_empty() {
-                        cpu.pc = a;
+                if !rest.is_empty() {
+                    match u64::from_str_radix(rest, 16) {
+                        Ok(a) => cpu.pc = a,
+                        Err(_) => { c.send("E01"); continue; }
                     }
                 }
                 if !resume(cpu, &mut c, &bps, cmd == "s") {
                     return;
                 }
             }
-            "v" if pkt.starts_with("vCont?") => c.send("vCont;c;C;s;S"),
+            "v" if pkt == "vCont?" => c.send("vCont;c;s"),
             "v" if pkt.starts_with("vCont;") => {
                 // the first action decides (one thread)
-                let act = pkt["vCont;".len()..].split(';').next().unwrap_or("c");
-                let step = act.starts_with('s') || act.starts_with('S');
+                let act = pkt["vCont;".len()..].split(';').next().unwrap_or("");
+                let action = act.split(':').next().unwrap_or("");
+                if !matches!(action, "c" | "s") {
+                    c.send("E01");
+                    continue;
+                }
+                let step = action == "s";
                 if !resume(cpu, &mut c, &bps, step) {
                     return;
                 }
@@ -428,19 +532,35 @@ pub fn run(cpu: &mut Cpu) {
             "v" if pkt.starts_with("vMustReplyEmpty") => c.send(""),
             // lldb: allocate / free memory for expressions (guest addresses are host addresses)
             "_" if pkt.starts_with("_M") => {
-                let size = pkt[2..].split(',').next().and_then(|v| usize::from_str_radix(v, 16).ok()).unwrap_or(0);
-                let p = unsafe {
-                    libc::mmap(std::ptr::null_mut(), size.max(1), libc::PROT_READ | libc::PROT_WRITE | libc::PROT_EXEC, libc::MAP_ANON | libc::MAP_PRIVATE, -1, 0)
-                };
-                if p == libc::MAP_FAILED {
-                    c.send("E01");
-                } else {
-                    c.send(&format!("{:x}", p as u64));
-                }
+                let request = pkt[2..].split_once(',').and_then(|(size, perms)| {
+                    let size = usize::from_str_radix(size, 16).ok()?;
+                    if size == 0 || size > 16 * 1024 * 1024 || perms.is_empty()
+                        || !perms.bytes().all(|b| matches!(b, b'r' | b'w' | b'x')) { return None; }
+                    let prot = (if perms.contains('r') { libc::PROT_READ } else { 0 })
+                        | (if perms.contains('w') { libc::PROT_WRITE } else { 0 })
+                        | (if perms.contains('x') { libc::PROT_EXEC } else { 0 });
+                    Some((size, prot))
+                });
+                if let Some((size, prot)) = request {
+                    let p = unsafe { libc::mmap(std::ptr::null_mut(), size, prot,
+                        libc::MAP_ANON | libc::MAP_PRIVATE, -1, 0) };
+                    if p == libc::MAP_FAILED { c.send("E01"); } else {
+                        allocations.insert(p as u64, (size, prot));
+                        c.send(&format!("{:x}", p as u64));
+                    }
+                } else { c.send("E01"); }
             }
             "_" if pkt.starts_with("_m") => {
-                // size unknown here; the pages stay (a few per expression)
-                c.send("OK");
+                let addr = u64::from_str_radix(&pkt[2..], 16).ok();
+                let ok = addr.and_then(|addr| allocations.get(&addr).copied().map(|size| (addr, size)))
+                    .map(|(addr, (size, _))| {
+                        if unsafe { libc::munmap(addr as *mut libc::c_void, size) } == 0 {
+                            allocations.remove(&addr);
+                            crate::engine::invalidate_range(addr, size as u64);
+                            true
+                        } else { false }
+                    }).unwrap_or(false);
+                c.send(if ok { "OK" } else { "E01" });
             }
             "k" => {
                 SOCK.store(-1, Ordering::Relaxed);
@@ -454,7 +574,7 @@ pub fn run(cpu: &mut Cpu) {
             }
             "H" | "T" => c.send("OK"),
             "q" | "Q" => {
-                let reply = query(&pkt, cpu, &xml);
+                let reply = query(&pkt, cpu, &xml, c.last_stop);
                 c.send(&reply);
                 if pkt == "QStartNoAckMode" {
                     NO_ACK.store(true, Ordering::Relaxed);
@@ -465,7 +585,7 @@ pub fn run(cpu: &mut Cpu) {
     }
 }
 
-fn query(pkt: &str, cpu: &Cpu, xml: &str) -> String {
+fn query(pkt: &str, cpu: &Cpu, xml: &str, stop: &str) -> String {
     let pid = std::process::id();
     let arch = "cputype:16777228;cpusubtype:0;ostype:macosx;vendor:apple;endian:little;ptrsize:8;";
     if pkt.starts_with("qSupported") {
@@ -484,7 +604,7 @@ fn query(pkt: &str, cpu: &Cpu, xml: &str) -> String {
         "qProcessInfo" => format!("pid:{pid:x};parent-pid:{:x};{arch}", unsafe { libc::getppid() }),
         "qOffsets" => "Text=0;Data=0;Bss=0".into(),
         "qSymbol::" => "OK".into(),
-        _ if pkt.starts_with("qThreadStopInfo") => STOP.into(),
+        _ if pkt.starts_with("qThreadStopInfo") => stop.into(),
         _ if pkt.starts_with("qRegisterInfo") => {
             // lldb's register discovery: answer from the target description instead
             let _ = cpu;
@@ -501,7 +621,7 @@ fn resume(cpu: &mut Cpu, c: &mut Conn, bps: &HashSet<u64>, step: bool) -> bool {
     loop {
         // the instruction at the resume pc runs even if it has a breakpoint (the debugger stepped over it)
         if n > 0 && (step || bps.contains(&cpu.pc)) {
-            c.send(STOP);
+            c.stop(STOP);
             return true;
         }
         n += 1;
@@ -509,11 +629,12 @@ fn resume(cpu: &mut Cpu, c: &mut Conn, bps: &HashSet<u64>, step: bool) -> bool {
             Ok(()) => {}
             // traps stop in the debugger (pc stays on the instruction) instead of ending the program
             Err(interp::Exit::Brk(_)) => {
-                c.send(STOP);
+                c.stop(STOP);
                 return true;
             }
-            Err(interp::Exit::Udf(_)) | Err(interp::Exit::Unimplemented(_)) => {
-                c.send("T04thread:1;");
+            Err(e @ (interp::Exit::Udf(_) | interp::Exit::Unimplemented(_))) => {
+                if log() { eprintln!("[gdb] illegal guest instruction at {:#x}: {e:?}", cpu.pc); }
+                c.stop("T04thread:1;");
                 return true;
             }
             Err(e) => {
@@ -525,7 +646,7 @@ fn resume(cpu: &mut Cpu, c: &mut Conn, bps: &HashSet<u64>, step: bool) -> bool {
             }
         }
         if n & 0xfff == 0 && c.interrupted() {
-            c.send(STOP);
+            c.stop("T02thread:1;");
             return true;
         }
     }

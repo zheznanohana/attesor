@@ -1,0 +1,50 @@
+PASS initial stop
+PASS feature negotiation
+PASS vCont advertises implemented actions only
+PASS vCont rejects unsupported action
+PASS malformed continue rejected
+PASS register write
+PASS register read
+PASS short register write rejected
+PASS invalid register hex rejected
+PASS bad writes preserve register
+PASS truncated register file rejected
+PASS invalid register file rejected atomically
+PASS bad checksum negatively acknowledged
+PASS bad checksum does not mutate
+PASS NAK retransmits last reply
+PASS vector register write
+PASS vector register read
+PASS memory write
+PASS memory read
+PASS length mismatch rejected
+PASS invalid memory hex rejected
+PASS bad memory writes preserve bytes
+PASS unknown free rejected
+PASS debugger allocation released
+PASS double free rejected
+PASS upload to RX expression allocation
+PASS free RX allocation
+PASS huge XML offset does not overflow
+PASS no-ack negotiation
+PASS no-ack request
+PASS set guest PC
+PASS single step
+PASS unaligned breakpoint rejected
+PASS wrong breakpoint size rejected
+PASS breakpoint insert
+PASS continue reaches breakpoint
+PASS breakpoint remove
+PASS running Ctrl-C reports SIGINT
+PASS stop query preserves SIGINT
+PASS set exit PC
+PASS exit status packet
+PASS guest exit status
+PASS initial stop
+PASS set detach PC
+PASS detach acknowledged
+PASS detached guest continues
+PASS initial stop
+PASS set disconnect PC
+PASS disconnected guest continues
+{"passed": true, "checks": 49, "binary": "/private/tmp/attesor-agent-debugger/target/release/attesor"}

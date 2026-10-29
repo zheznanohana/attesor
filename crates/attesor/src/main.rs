@@ -35,6 +35,7 @@ fn usage() -> ! {
     eprintln!("  --gpu           route the guest's Metal API to the host GPU");
     eprintln!("  --gdb PORT      wait for a debugger (lldb gdb-remote / gdb target remote) on 127.0.0.1:PORT;");
     eprintln!("                  the program runs in the interpreter");
+    eprintln!("  --gdb-fd FD     use an inherited connected stream socket instead of a TCP listener");
     std::process::exit(2);
 }
 
@@ -82,6 +83,16 @@ fn main() {
                 jit::JIT_ENABLED.store(false, Ordering::Relaxed);
                 aot::set_enabled(false);
                 args.remove(0);
+            }
+            "--gdb-fd" => {
+                args.remove(0);
+                match args.first().and_then(|p| p.parse::<i32>().ok()) {
+                    Some(fd) if fd >= 0 => gdb::set_fd(fd),
+                    _ => usage(),
+                }
+                args.remove(0);
+                jit::JIT_ENABLED.store(false, Ordering::Relaxed);
+                aot::set_enabled(false);
             }
             "--gdb" => {
                 args.remove(0);
