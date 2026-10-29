@@ -44,13 +44,13 @@ static SAVED: AtomicBool = AtomicBool::new(false);
 static CHECKPOINT_STARTED: AtomicBool = AtomicBool::new(false);
 // Avoid inheriting another thread's open flock descriptor across fork. Taking
 // the write side waits only for profile/cache publication, not translation.
-static FILE_LOCKS: RwLock<()> = RwLock::new(());
+pub(crate) static FILE_LOCKS: RwLock<()> = RwLock::new(());
 
 pub fn set_enabled(on: bool) {
     ENABLED.store(on, Ordering::SeqCst);
 }
 
-fn cache_dir() -> std::path::PathBuf {
+pub(crate) fn cache_dir() -> std::path::PathBuf {
     if let Ok(d) = std::env::var("ATTESOR_CACHE") {
         return d.into();
     }
@@ -460,8 +460,10 @@ fn update_profiles() -> Vec<(Image, BTreeSet<u64>)> {
 /// that died (a killed process leaves a full-size `.aot.tmp.<pid>.<n>`), translation files this code
 /// generator cannot load (older translator versions), and files of images not used for 30 days (an
 /// app or system update gives its libraries new UUIDs, so their old files would never be read again).
-fn tidy_cache() {
-    let Ok(dir) = std::fs::read_dir(cache_dir()) else { return };
+fn tidy_cache() { tidy_cache_in(&cache_dir()); }
+
+pub(crate) fn tidy_cache_in(root: &std::path::Path) {
+    let Ok(dir) = std::fs::read_dir(root) else { return };
     let month = std::time::Duration::from_secs(30 * 86400);
     for e in dir.flatten() {
         let path = e.path();
@@ -469,20 +471,41 @@ fn tidy_cache() {
         let pid = name
             .split_once(".aot.tmp.")
             .and_then(|(_, rest)| rest.split('.').next())
+            .or_else(|| name.split_once(".dscslide.tmp.").and_then(|(_, rest)| rest.split('.').next()))
             .or_else(|| name.rsplit_once(".profile.").map(|(_, p)| p))
             .and_then(|p| p.parse::<i32>().ok());
         let stale = if let Some(pid) = pid {
             pid != std::process::id() as i32
                 && unsafe { libc::kill(pid, 0) } != 0
                 && std::io::Error::last_os_error().raw_os_error() == Some(libc::ESRCH)
-        } else if name.ends_with(".aot") || name.ends_with(".profile") || name.ends_with(".lock") {
-            let unused = e.metadata().and_then(|m| m.accessed().or_else(|_| m.modified())).ok()
+        } else if name.ends_with(".aot") || name.ends_with(".profile") || name.ends_with(".lock") || name.ends_with(".dscslide") {
+            let unused = e.metadata().and_then(|m| m.modified()).ok()
                 .and_then(|t| t.elapsed().ok()).is_some_and(|age| age > month);
             unused || (name.ends_with(".aot") && compatible_header(&path).is_none())
+                || (name.ends_with(".dscslide") && !crate::cache::slid::compatible(&path))
         } else {
             false
         };
-        if stale {
+        if stale && name.contains(".dscslide") {
+            // Stable lock inodes: unlinking a lock file can admit two writers.
+            if name.ends_with(".lock") { continue; }
+            let _files = FILE_LOCKS.read().unwrap();
+            use std::os::unix::io::AsRawFd;
+            let lock_path = if let Some((stem, _)) = name.split_once(".dscslide.tmp.") {
+                path.with_file_name(format!("{stem}.dscslide.lock"))
+            } else { path.with_extension("dscslide.lock") };
+            if let Ok(lock) = std::fs::OpenOptions::new().create(true).truncate(false).write(true).open(lock_path) {
+                if unsafe { libc::flock(lock.as_raw_fd(), libc::LOCK_EX | libc::LOCK_NB) } == 0 {
+                    // A builder may have replaced the stale inode since the
+                    // directory scan. Re-evaluate under the publication lock.
+                    let expired = std::fs::metadata(&path).and_then(|m| m.modified()).ok()
+                        .and_then(|t| t.elapsed().ok()).is_some_and(|age| age > month);
+                    if pid.is_some() || expired || !crate::cache::slid::compatible(&path) {
+                        let _ = std::fs::remove_file(&path);
+                    }
+                }
+            }
+        } else if stale {
             let _ = std::fs::remove_file(&path);
         }
     }

@@ -165,3 +165,43 @@ real protocol on two concurrent guest/bridge thread pairs, tests timed missing
 handles and RPCs without opening a Metal device, and checks an older hookless
 library. The lifecycle check validates direct totals through fork, successful and
 failed exec, and a periodic snapshot killed while a host wait remains active.
+
+## Pre-slid shared-cache data
+
+Shared-cache rebasing is cached independently of JIT/AOT code, including with
+`--no-aot`. Files named `dscslide-v*-*.dscslide` live in `ATTESOR_CACHE` (otherwise
+`aot::cache_dir()`). Their identity includes all source cache/subcache UUIDs,
+the fixed slide, host page size and complete mapping table. Only host pages
+written by rebasing are saved; untouched pages keep their original file backing.
+
+- `ATTESOR_DSC_DISABLE=1`: bypass reading/writing pre-slid data (the original path).
+- `ATTESOR_DSC_STATS=1`: report bytes, lookup/validation, mmap, slide and publication
+  times, unique host pages dirtied by sliding, stored pages and artifact size.
+- `ATTESOR_DSC_SAMPLE=/path/to/file`: diagnostic binary dump, before guest writes,
+  of first/middle/last slid dyld pages per slid mapping. Each record has three
+  little-endian u64s (mapping index, mapping-relative offset, byte length), then
+  the actual page bytes. This option performs file I/O and is not for timing.
+
+Readers validate exact identity, size, extent geometry and a full metadata/data
+corruption checksum before overlaying private, non-executable mappings. Any
+cache error falls back to rebasing. Publication uses an exclusive nonblocking
+flock and tmp + sync + rename; losing starters use the original path. AOT tidy
+removes incompatible formats, dead-builder temporaries and data unused for 30
+days (mtime is touched on use). Zero-length lock files retain stable inodes to
+avoid admitting two writers. The checksum is not a security boundary: the cache
+directory must be trusted, like the AOT code cache.
+
+Reproduce with an output directory that does not exist; everything generated,
+including temporary/compiler files and caches, remains below it:
+
+```bash
+python3 tests/attesor/dscslide-check.py --attesor target/release/attesor \
+  --output target/dscslide-check
+```
+
+This compares a CoreFoundation program against native x86 output, verifies exact
+sampled bytes with caching disabled/cold/warm, exercises corruption, truncation,
+old formats, lock/I/O fallback, four concurrent starters and AOT coexistence, and
+records five wall-time runs each with caching disabled, cold and warm. Optional
+`--baseline /path/to/original-attesor` adds five runs of a retained old binary.
+Cold means absent pre-slid artifacts, not a flushed OS page cache.
