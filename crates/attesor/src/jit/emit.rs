@@ -4160,7 +4160,7 @@ impl<'a> E<'a> {
                 if wide {
                     a!(self, cvtpd2ps(xmm0, xmm0));
                 } else {
-                    a!(self, vcvtps2ph(xmm0, xmm0, 0)); // round to nearest even (FPCR modes are ignored by the JIT)
+                    a!(self, vcvtps2ph(xmm0, xmm0, 4)); // use MXCSR.RC, synchronized with FPCR.RMode
                 }
                 a!(self, movq(xmm0, xmm0));
                 if q {

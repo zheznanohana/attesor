@@ -429,52 +429,116 @@ pub fn f16_to_f64(h: u16) -> f64 {
     f16_to_f32(h) as f64
 }
 
-/// Round-to-nearest-even conversion from f64 to half precision.
-pub fn f64_to_f16(v: f64) -> u16 {
+/// IEEE half conversion with the default (nearest-even) FPCR.
+pub fn f64_to_f16(v: f64) -> u16 { f64_to_f16_fpcr(v, 0) }
+
+/// FPConvert to half precision. Conversion instructions ignore FZ16, observe
+/// AHP/DN and RMode, and apply FZ to a denormal source (not a half result).
+/// This returns result bits; architectural FPSR exception reporting is separate.
+pub fn f64_to_f16_fpcr(v: f64, fpcr: u64) -> u16 {
     let b = v.to_bits();
     let sign = ((b >> 63) as u16) << 15;
     let exp = ((b >> 52) & 0x7ff) as i64;
     let frac = b & ((1u64 << 52) - 1);
+    let alt = fpcr & (1 << 26) != 0;
+    let mode = (fpcr >> 22) & 3;
     if exp == 0x7ff {
-        if frac == 0 {
-            return sign | 0x7c00;
-        }
-        // NaN: keep top payload bits, force quiet
+        if frac == 0 { return sign | if alt { 0x7fff } else { 0x7c00 }; }
+        if alt { return sign; }
+        if fpcr & (1 << 25) != 0 { return DEFAULT_NAN16; }
         return sign | 0x7e00 | ((frac >> 42) as u16 & 0x1ff);
     }
+    if exp == 0 && (frac == 0 || fpcr & (1 << 24) != 0) { return sign; }
+    let overflow = || -> u16 {
+        let infinity = !alt && (mode == 0 || (mode == 1 && sign == 0) || (mode == 2 && sign != 0));
+        sign | if infinity { 0x7c00 } else if alt { 0x7fff } else { 0x7bff }
+    };
     let e = exp - 1023 + 15;
-    if e >= 0x1f {
-        return sign | 0x7c00;
-    }
+    let max_exp = if alt { 31 } else { 30 };
+    if e > max_exp { return overflow(); }
     let mant = if exp == 0 { frac } else { frac | (1u64 << 52) };
-    // amount to shift the 53-bit mantissa right to get the 11-bit half mantissa
-    let (shift, e_out) = if e <= 0 { (42 + 1 - e, 0i64) } else { (42, e) };
-    if shift >= 64 {
-        return sign;
-    }
-    let shift = shift as u32;
-    let mut m = mant >> shift;
-    let rem = mant & ((1u64 << shift) - 1);
-    let half = 1u64 << (shift - 1);
-    if rem > half || (rem == half && (m & 1) == 1) {
-        m += 1;
-    }
-    // m includes the implicit bit for normals; carry may bump exponent
-    let out = if e_out == 0 {
-        // subnormal (m < 0x400) or rounded up to smallest normal (m == 0x400)
-        m as u16
+    let (shift, e_out) = if e <= 0 { (43 - e, 0i64) } else { (42, e) };
+    let (mut m, rem, nearest_up) = if shift >= 64 {
+        (0, mant, false)
     } else {
+        let shift = shift as u32;
+        let m = mant >> shift;
+        let rem = mant & ((1u64 << shift) - 1);
+        let half = 1u64 << (shift - 1);
+        (m, rem, rem > half || (rem == half && m & 1 != 0))
+    };
+    let up = match mode {
+        0 => nearest_up,
+        1 => rem != 0 && sign == 0,
+        2 => rem != 0 && sign != 0,
+        _ => false,
+    };
+    if up { m += 1; }
+    let out = if e_out == 0 { m as u16 } else {
         let ex = e_out as u64 + (m >> 11);
         let mm = if m >> 11 != 0 { (m >> 1) & 0x3ff } else { m & 0x3ff };
-        if ex >= 0x1f {
-            return sign | 0x7c00;
-        }
+        if ex > max_exp as u64 { return overflow(); }
         ((ex << 10) | mm) as u16
     };
     sign | out
 }
 
-pub fn f32_to_f16(v: f32) -> u16 {
-    // Converting f32 -> f64 is exact, so a single rounding happens.
-    f64_to_f16(v as f64)
+pub fn f32_to_f16(v: f32) -> u16 { f32_to_f16_fpcr(v, 0) }
+
+pub fn f32_to_f16_fpcr(v: f32, fpcr: u64) -> u16 {
+    let b = v.to_bits();
+    if b & 0x7f80_0000 == 0 && fpcr & (1 << 24) != 0 {
+        return ((b >> 31) as u16) << 15;
+    }
+    // Widening is exact; rounding occurs once in the integer half converter.
+    f64_to_f16_fpcr(v as f64, fpcr)
+}
+
+#[cfg(test)]
+mod half_conversion_tests {
+    use super::*;
+    #[test]
+    fn directed_half_boundaries() {
+        let cases = [
+            (0x3f801000, [0x3c00, 0x3c01, 0x3c00, 0x3c00]),
+            (0xbf801000, [0xbc00, 0xbc00, 0xbc01, 0xbc00]),
+            (0x477ff000, [0x7c00, 0x7c00, 0x7bff, 0x7bff]),
+            (0xc77ff000, [0xfc00, 0xfbff, 0xfc00, 0xfbff]),
+            (0x33000000, [0x0000, 0x0001, 0x0000, 0x0000]),
+            (0xb3000000, [0x8000, 0x8000, 0x8001, 0x8000]),
+            (0x00000001, [0x0000, 0x0001, 0x0000, 0x0000]),
+        ];
+        for (bits, want) in cases {
+            for mode in 0..4 {
+                assert_eq!(f32_to_f16_fpcr(f32::from_bits(bits), mode << 22), want[mode as usize]);
+            }
+        }
+        for (v, want) in [
+            (1.00048828125, [0x3c00, 0x3c01, 0x3c00, 0x3c00]),
+            (-1.00048828125, [0xbc00, 0xbc00, 0xbc01, 0xbc00]),
+            (65520.0, [0x7c00, 0x7c00, 0x7bff, 0x7bff]),
+            (-65520.0, [0xfc00, 0xfbff, 0xfc00, 0xfbff]),
+            (f64::from_bits(1), [0, 1, 0, 0]),
+        ] {
+            for mode in 0..4 {
+                assert_eq!(f64_to_f16_fpcr(v, mode << 22), want[mode as usize]);
+            }
+        }
+        assert_eq!(f32_to_f16_fpcr(f32::from_bits(1), (1 << 24) | (1 << 22)), 0);
+        assert_eq!(f32_to_f16_fpcr(f32::from_bits(0xffc01234), 1 << 25), 0x7e00);
+        assert_eq!(f32_to_f16_fpcr(f32::INFINITY, 1 << 26), 0x7fff);
+        assert_eq!(f32_to_f16_fpcr(f32::NEG_INFINITY, 1 << 26), 0xffff);
+        assert_eq!(f32_to_f16_fpcr(f32::from_bits(0xffc01234), 1 << 26), 0x8000);
+        assert_eq!(f32_to_f16_fpcr(65536.0, 1 << 26), 0x7c00);
+        assert_eq!(f32_to_f16_fpcr(f32::from_bits(0x33800000), 1 << 19), 1);
+    }
+    #[test]
+    fn every_ieee_half_roundtrips() {
+        for h in 0..=u16::MAX {
+            if h & 0x7c00 == 0x7c00 && h & 0x03ff != 0 { continue; }
+            for mode in 0..4 {
+                assert_eq!(f32_to_f16_fpcr(f16_to_f32(h), mode << 22), h);
+            }
+        }
+    }
 }

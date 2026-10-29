@@ -1,0 +1,8 @@
+PASS integer-reference: tiny FP32 FZ boundaries PASS
+fp16-convert PASS cases=60000 digest=40c315811183ddde
+PASS JIT: tiny FP32 FZ boundaries PASS
+fp16-convert PASS cases=60000 digest=40c315811183ddde
+PASS interpreter: tiny FP32 FZ boundaries PASS
+fp16-convert PASS cases=60000 digest=40c315811183ddde
+default jit selftest [bffffc00:0e216800]: ok=20000 mismatch=0 skipped=0 native=20000
+FPCR jit selftest [bffffc00:0e216800]: ok=20000 mismatch=0 skipped=0 native=20000
