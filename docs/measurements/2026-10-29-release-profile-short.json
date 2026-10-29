@@ -1,0 +1,1607 @@
+{
+  "host": "zhezdeMacBook-Pro.local",
+  "sha256": {
+    "before": "70b266a0f521247bd42cb581aa9e504d399fc94da6a12f75e8e262636c0cde88",
+    "after": "df6c3a34d7fdc6b58c1dc0478967cb02edec0c1e988951db557b3183263f9c6f",
+    "guest": "e5ccaeeb7fe4223ac377e3b55c6901d9a25993fbfa2d09a9af45934354094b6a"
+  },
+  "samples": [
+    {
+      "round": 0,
+      "build": "before",
+      "command": [
+        "/private/tmp/attesor-release-candidates/default-target/release/attesor",
+        "--no-aot",
+        "/private/tmp/attesor-release-candidates/short-arm64"
+      ],
+      "wall_ms": 1567.297204,
+      "environment": {},
+      "host_load_before": {
+        "load_average": [
+          6.93115234375,
+          8.83154296875,
+          9.693359375
+        ],
+        "busiest": [
+          {
+            "pid": 32659,
+            "cpu_percent": 633.0,
+            "executable": "/System/Library/Frameworks/VideoToolbox.framework/Versions/A/XPCServices/VTDecoderXPCService.xpc/Contents/MacOS/VTDecoderXPCService"
+          },
+          {
+            "pid": 657,
+            "cpu_percent": 82.3,
+            "executable": "/System/Applications/Weather.app/Contents/PlugIns/WeatherWidget.appex/Contents/MacOS/WeatherWidget"
+          },
+          {
+            "pid": 201,
+            "cpu_percent": 66.0,
+            "executable": "/System/Library/PrivateFrameworks/SkyLight.framework/Resources/WindowServer"
+          },
+          {
+            "pid": 17079,
+            "cpu_percent": 41.8,
+            "executable": "/Library/Developer/CommandLineTools/Library/Frameworks/Python3.framework/Versions/3.9/Resources/Python.app/Contents/MacOS/Python"
+          },
+          {
+            "pid": 523,
+            "cpu_percent": 12.8,
+            "executable": "/System/Library/ExtensionKit/Extensions/WallpaperAerialsExtension.appex/Contents/MacOS/WallpaperAerialsExtension"
+          },
+          {
+            "pid": 17084,
+            "cpu_percent": 10.5,
+            "executable": "/Library/Developer/CommandLineTools/Library/Frameworks/Python3.framework/Versions/3.9/Resources/Python.app/Contents/MacOS/Python"
+          },
+          {
+            "pid": 61664,
+            "cpu_percent": 9.4,
+            "executable": "codex"
+          },
+          {
+            "pid": 61666,
+            "cpu_percent": 9.0,
+            "executable": "/Users/zhez/.codex/packages/app-server-daemon/releases/0.165.0-x86_64-apple-darwin/bin/codex"
+          }
+        ]
+      },
+      "host_load_after": {
+        "load_average": [
+          6.93115234375,
+          8.83154296875,
+          9.693359375
+        ],
+        "busiest": [
+          {
+            "pid": 32659,
+            "cpu_percent": 547.3,
+            "executable": "/System/Library/Frameworks/VideoToolbox.framework/Versions/A/XPCServices/VTDecoderXPCService.xpc/Contents/MacOS/VTDecoderXPCService"
+          },
+          {
+            "pid": 532,
+            "cpu_percent": 112.6,
+            "executable": "/System/Library/CoreServices/NotificationCenter.app/Contents/MacOS/NotificationCenter"
+          },
+          {
+            "pid": 17079,
+            "cpu_percent": 94.5,
+            "executable": "/Library/Developer/CommandLineTools/Library/Frameworks/Python3.framework/Versions/3.9/Resources/Python.app/Contents/MacOS/Python"
+          },
+          {
+            "pid": 201,
+            "cpu_percent": 70.2,
+            "executable": "/System/Library/PrivateFrameworks/SkyLight.framework/Resources/WindowServer"
+          },
+          {
+            "pid": 523,
+            "cpu_percent": 16.9,
+            "executable": "/System/Library/ExtensionKit/Extensions/WallpaperAerialsExtension.appex/Contents/MacOS/WallpaperAerialsExtension"
+          },
+          {
+            "pid": 61664,
+            "cpu_percent": 12.1,
+            "executable": "codex"
+          },
+          {
+            "pid": 657,
+            "cpu_percent": 8.5,
+            "executable": "/System/Applications/Weather.app/Contents/PlugIns/WeatherWidget.appex/Contents/MacOS/WeatherWidget"
+          },
+          {
+            "pid": 876,
+            "cpu_percent": 5.2,
+            "executable": "/Users/zhez/Library/Application Support/Steam/Steam.AppBundle/Steam/Contents/Frameworks/Steam Helper.app/Contents/MacOS/Steam Helper"
+          }
+        ]
+      },
+      "cold_aot": false,
+      "metrics": {},
+      "stdout": "prewarm-checksum a54f3aa72ddc56da\n",
+      "stderr": ""
+    },
+    {
+      "round": 0,
+      "build": "after",
+      "command": [
+        "/private/tmp/attesor-release-candidates/thin-cgu1-target/release/attesor",
+        "--no-aot",
+        "/private/tmp/attesor-release-candidates/short-arm64"
+      ],
+      "wall_ms": 1387.174258,
+      "environment": {},
+      "host_load_before": {
+        "load_average": [
+          6.93115234375,
+          8.83154296875,
+          9.693359375
+        ],
+        "busiest": [
+          {
+            "pid": 32659,
+            "cpu_percent": 520.7,
+            "executable": "/System/Library/Frameworks/VideoToolbox.framework/Versions/A/XPCServices/VTDecoderXPCService.xpc/Contents/MacOS/VTDecoderXPCService"
+          },
+          {
+            "pid": 532,
+            "cpu_percent": 116.8,
+            "executable": "/System/Library/CoreServices/NotificationCenter.app/Contents/MacOS/NotificationCenter"
+          },
+          {
+            "pid": 17079,
+            "cpu_percent": 93.4,
+            "executable": "/Library/Developer/CommandLineTools/Library/Frameworks/Python3.framework/Versions/3.9/Resources/Python.app/Contents/MacOS/Python"
+          },
+          {
+            "pid": 201,
+            "cpu_percent": 72.9,
+            "executable": "/System/Library/PrivateFrameworks/SkyLight.framework/Resources/WindowServer"
+          },
+          {
+            "pid": 523,
+            "cpu_percent": 13.7,
+            "executable": "/System/Library/ExtensionKit/Extensions/WallpaperAerialsExtension.appex/Contents/MacOS/WallpaperAerialsExtension"
+          },
+          {
+            "pid": 61664,
+            "cpu_percent": 10.7,
+            "executable": "codex"
+          },
+          {
+            "pid": 657,
+            "cpu_percent": 5.3,
+            "executable": "/System/Applications/Weather.app/Contents/PlugIns/WeatherWidget.appex/Contents/MacOS/WeatherWidget"
+          },
+          {
+            "pid": 876,
+            "cpu_percent": 4.6,
+            "executable": "/Users/zhez/Library/Application Support/Steam/Steam.AppBundle/Steam/Contents/Frameworks/Steam Helper.app/Contents/MacOS/Steam Helper"
+          }
+        ]
+      },
+      "host_load_after": {
+        "load_average": [
+          7.4970703125,
+          8.9169921875,
+          9.71826171875
+        ],
+        "busiest": [
+          {
+            "pid": 32659,
+            "cpu_percent": 542.1,
+            "executable": "/System/Library/Frameworks/VideoToolbox.framework/Versions/A/XPCServices/VTDecoderXPCService.xpc/Contents/MacOS/VTDecoderXPCService"
+          },
+          {
+            "pid": 201,
+            "cpu_percent": 60.5,
+            "executable": "/System/Library/PrivateFrameworks/SkyLight.framework/Resources/WindowServer"
+          },
+          {
+            "pid": 17079,
+            "cpu_percent": 21.0,
+            "executable": "/Library/Developer/CommandLineTools/Library/Frameworks/Python3.framework/Versions/3.9/Resources/Python.app/Contents/MacOS/Python"
+          },
+          {
+            "pid": 523,
+            "cpu_percent": 15.7,
+            "executable": "/System/Library/ExtensionKit/Extensions/WallpaperAerialsExtension.appex/Contents/MacOS/WallpaperAerialsExtension"
+          },
+          {
+            "pid": 61664,
+            "cpu_percent": 7.0,
+            "executable": "codex"
+          },
+          {
+            "pid": 876,
+            "cpu_percent": 4.0,
+            "executable": "/Users/zhez/Library/Application Support/Steam/Steam.AppBundle/Steam/Contents/Frameworks/Steam Helper.app/Contents/MacOS/Steam Helper"
+          },
+          {
+            "pid": 137,
+            "cpu_percent": 3.0,
+            "executable": "/usr/libexec/opendirectoryd"
+          },
+          {
+            "pid": 1,
+            "cpu_percent": 2.0,
+            "executable": "/sbin/launchd"
+          }
+        ]
+      },
+      "cold_aot": false,
+      "metrics": {},
+      "stdout": "prewarm-checksum a54f3aa72ddc56da\n",
+      "stderr": ""
+    },
+    {
+      "round": 1,
+      "build": "after",
+      "command": [
+        "/private/tmp/attesor-release-candidates/thin-cgu1-target/release/attesor",
+        "--no-aot",
+        "/private/tmp/attesor-release-candidates/short-arm64"
+      ],
+      "wall_ms": 1413.9547490000002,
+      "environment": {},
+      "host_load_before": {
+        "load_average": [
+          7.4970703125,
+          8.9169921875,
+          9.71826171875
+        ],
+        "busiest": [
+          {
+            "pid": 32659,
+            "cpu_percent": 570.9,
+            "executable": "/System/Library/Frameworks/VideoToolbox.framework/Versions/A/XPCServices/VTDecoderXPCService.xpc/Contents/MacOS/VTDecoderXPCService"
+          },
+          {
+            "pid": 201,
+            "cpu_percent": 61.7,
+            "executable": "/System/Library/PrivateFrameworks/SkyLight.framework/Resources/WindowServer"
+          },
+          {
+            "pid": 17079,
+            "cpu_percent": 24.6,
+            "executable": "/Library/Developer/CommandLineTools/Library/Frameworks/Python3.framework/Versions/3.9/Resources/Python.app/Contents/MacOS/Python"
+          },
+          {
+            "pid": 523,
+            "cpu_percent": 13.1,
+            "executable": "/System/Library/ExtensionKit/Extensions/WallpaperAerialsExtension.appex/Contents/MacOS/WallpaperAerialsExtension"
+          },
+          {
+            "pid": 61664,
+            "cpu_percent": 7.0,
+            "executable": "codex"
+          },
+          {
+            "pid": 17084,
+            "cpu_percent": 4.5,
+            "executable": "/Library/Developer/CommandLineTools/Library/Frameworks/Python3.framework/Versions/3.9/Resources/Python.app/Contents/MacOS/Python"
+          },
+          {
+            "pid": 876,
+            "cpu_percent": 4.1,
+            "executable": "/Users/zhez/Library/Application Support/Steam/Steam.AppBundle/Steam/Contents/Frameworks/Steam Helper.app/Contents/MacOS/Steam Helper"
+          },
+          {
+            "pid": 17136,
+            "cpu_percent": 2.9,
+            "executable": "(lipo)"
+          }
+        ]
+      },
+      "host_load_after": {
+        "load_average": [
+          7.4970703125,
+          8.9169921875,
+          9.71826171875
+        ],
+        "busiest": [
+          {
+            "pid": 32659,
+            "cpu_percent": 612.8,
+            "executable": "/System/Library/Frameworks/VideoToolbox.framework/Versions/A/XPCServices/VTDecoderXPCService.xpc/Contents/MacOS/VTDecoderXPCService"
+          },
+          {
+            "pid": 201,
+            "cpu_percent": 64.0,
+            "executable": "/System/Library/PrivateFrameworks/SkyLight.framework/Resources/WindowServer"
+          },
+          {
+            "pid": 523,
+            "cpu_percent": 17.3,
+            "executable": "/System/Library/ExtensionKit/Extensions/WallpaperAerialsExtension.appex/Contents/MacOS/WallpaperAerialsExtension"
+          },
+          {
+            "pid": 61664,
+            "cpu_percent": 8.7,
+            "executable": "codex"
+          },
+          {
+            "pid": 876,
+            "cpu_percent": 4.6,
+            "executable": "/Users/zhez/Library/Application Support/Steam/Steam.AppBundle/Steam/Contents/Frameworks/Steam Helper.app/Contents/MacOS/Steam Helper"
+          },
+          {
+            "pid": 598,
+            "cpu_percent": 1.6,
+            "executable": "/Users/zhez/Library/Application Support/Steam/Steam.AppBundle/Steam/Contents/MacOS/steam_osx"
+          },
+          {
+            "pid": 137,
+            "cpu_percent": 1.4,
+            "executable": "/usr/libexec/opendirectoryd"
+          },
+          {
+            "pid": 61422,
+            "cpu_percent": 1.4,
+            "executable": "/Applications/Ghostty.app/Contents/MacOS/ghostty"
+          }
+        ]
+      },
+      "cold_aot": false,
+      "metrics": {},
+      "stdout": "prewarm-checksum a54f3aa72ddc56da\n",
+      "stderr": ""
+    },
+    {
+      "round": 1,
+      "build": "before",
+      "command": [
+        "/private/tmp/attesor-release-candidates/default-target/release/attesor",
+        "--no-aot",
+        "/private/tmp/attesor-release-candidates/short-arm64"
+      ],
+      "wall_ms": 1298.526539,
+      "environment": {},
+      "host_load_before": {
+        "load_average": [
+          7.4970703125,
+          8.9169921875,
+          9.71826171875
+        ],
+        "busiest": [
+          {
+            "pid": 32659,
+            "cpu_percent": 595.8,
+            "executable": "/System/Library/Frameworks/VideoToolbox.framework/Versions/A/XPCServices/VTDecoderXPCService.xpc/Contents/MacOS/VTDecoderXPCService"
+          },
+          {
+            "pid": 201,
+            "cpu_percent": 62.8,
+            "executable": "/System/Library/PrivateFrameworks/SkyLight.framework/Resources/WindowServer"
+          },
+          {
+            "pid": 523,
+            "cpu_percent": 15.1,
+            "executable": "/System/Library/ExtensionKit/Extensions/WallpaperAerialsExtension.appex/Contents/MacOS/WallpaperAerialsExtension"
+          },
+          {
+            "pid": 61664,
+            "cpu_percent": 8.5,
+            "executable": "codex"
+          },
+          {
+            "pid": 876,
+            "cpu_percent": 4.8,
+            "executable": "/Users/zhez/Library/Application Support/Steam/Steam.AppBundle/Steam/Contents/Frameworks/Steam Helper.app/Contents/MacOS/Steam Helper"
+          },
+          {
+            "pid": 217,
+            "cpu_percent": 4.2,
+            "executable": "/usr/libexec/airportd"
+          },
+          {
+            "pid": 17084,
+            "cpu_percent": 3.1,
+            "executable": "/Library/Developer/CommandLineTools/Library/Frameworks/Python3.framework/Versions/3.9/Resources/Python.app/Contents/MacOS/Python"
+          },
+          {
+            "pid": 602,
+            "cpu_percent": 2.9,
+            "executable": "/Applications/Stats.app/Contents/MacOS/Stats"
+          }
+        ]
+      },
+      "host_load_after": {
+        "load_average": [
+          7.4970703125,
+          8.9169921875,
+          9.71826171875
+        ],
+        "busiest": [
+          {
+            "pid": 32659,
+            "cpu_percent": 524.5,
+            "executable": "/System/Library/Frameworks/VideoToolbox.framework/Versions/A/XPCServices/VTDecoderXPCService.xpc/Contents/MacOS/VTDecoderXPCService"
+          },
+          {
+            "pid": 201,
+            "cpu_percent": 61.5,
+            "executable": "/System/Library/PrivateFrameworks/SkyLight.framework/Resources/WindowServer"
+          },
+          {
+            "pid": 523,
+            "cpu_percent": 14.7,
+            "executable": "/System/Library/ExtensionKit/Extensions/WallpaperAerialsExtension.appex/Contents/MacOS/WallpaperAerialsExtension"
+          },
+          {
+            "pid": 61664,
+            "cpu_percent": 7.3,
+            "executable": "codex"
+          },
+          {
+            "pid": 876,
+            "cpu_percent": 3.8,
+            "executable": "/Users/zhez/Library/Application Support/Steam/Steam.AppBundle/Steam/Contents/Frameworks/Steam Helper.app/Contents/MacOS/Steam Helper"
+          },
+          {
+            "pid": 61666,
+            "cpu_percent": 1.4,
+            "executable": "/Users/zhez/.codex/packages/app-server-daemon/releases/0.165.0-x86_64-apple-darwin/bin/codex"
+          },
+          {
+            "pid": 61422,
+            "cpu_percent": 1.2,
+            "executable": "/Applications/Ghostty.app/Contents/MacOS/ghostty"
+          },
+          {
+            "pid": 217,
+            "cpu_percent": 1.1,
+            "executable": "/usr/libexec/airportd"
+          }
+        ]
+      },
+      "cold_aot": false,
+      "metrics": {},
+      "stdout": "prewarm-checksum a54f3aa72ddc56da\n",
+      "stderr": ""
+    },
+    {
+      "round": 2,
+      "build": "before",
+      "command": [
+        "/private/tmp/attesor-release-candidates/default-target/release/attesor",
+        "--no-aot",
+        "/private/tmp/attesor-release-candidates/short-arm64"
+      ],
+      "wall_ms": 1329.8132850000002,
+      "environment": {},
+      "host_load_before": {
+        "load_average": [
+          7.4970703125,
+          8.9169921875,
+          9.71826171875
+        ],
+        "busiest": [
+          {
+            "pid": 32659,
+            "cpu_percent": 487.6,
+            "executable": "/System/Library/Frameworks/VideoToolbox.framework/Versions/A/XPCServices/VTDecoderXPCService.xpc/Contents/MacOS/VTDecoderXPCService"
+          },
+          {
+            "pid": 201,
+            "cpu_percent": 60.3,
+            "executable": "/System/Library/PrivateFrameworks/SkyLight.framework/Resources/WindowServer"
+          },
+          {
+            "pid": 523,
+            "cpu_percent": 16.5,
+            "executable": "/System/Library/ExtensionKit/Extensions/WallpaperAerialsExtension.appex/Contents/MacOS/WallpaperAerialsExtension"
+          },
+          {
+            "pid": 61664,
+            "cpu_percent": 7.2,
+            "executable": "codex"
+          },
+          {
+            "pid": 17084,
+            "cpu_percent": 3.8,
+            "executable": "/Library/Developer/CommandLineTools/Library/Frameworks/Python3.framework/Versions/3.9/Resources/Python.app/Contents/MacOS/Python"
+          },
+          {
+            "pid": 876,
+            "cpu_percent": 3.5,
+            "executable": "/Users/zhez/Library/Application Support/Steam/Steam.AppBundle/Steam/Contents/Frameworks/Steam Helper.app/Contents/MacOS/Steam Helper"
+          },
+          {
+            "pid": 17161,
+            "cpu_percent": 1.9,
+            "executable": "ps"
+          },
+          {
+            "pid": 61422,
+            "cpu_percent": 1.1,
+            "executable": "/Applications/Ghostty.app/Contents/MacOS/ghostty"
+          }
+        ]
+      },
+      "host_load_after": {
+        "load_average": [
+          7.45703125,
+          8.884765625,
+          9.7021484375
+        ],
+        "busiest": [
+          {
+            "pid": 32659,
+            "cpu_percent": 632.4,
+            "executable": "/System/Library/Frameworks/VideoToolbox.framework/Versions/A/XPCServices/VTDecoderXPCService.xpc/Contents/MacOS/VTDecoderXPCService"
+          },
+          {
+            "pid": 201,
+            "cpu_percent": 63.3,
+            "executable": "/System/Library/PrivateFrameworks/SkyLight.framework/Resources/WindowServer"
+          },
+          {
+            "pid": 523,
+            "cpu_percent": 12.8,
+            "executable": "/System/Library/ExtensionKit/Extensions/WallpaperAerialsExtension.appex/Contents/MacOS/WallpaperAerialsExtension"
+          },
+          {
+            "pid": 61664,
+            "cpu_percent": 7.6,
+            "executable": "codex"
+          },
+          {
+            "pid": 876,
+            "cpu_percent": 4.5,
+            "executable": "/Users/zhez/Library/Application Support/Steam/Steam.AppBundle/Steam/Contents/Frameworks/Steam Helper.app/Contents/MacOS/Steam Helper"
+          },
+          {
+            "pid": 217,
+            "cpu_percent": 2.3,
+            "executable": "/usr/libexec/airportd"
+          },
+          {
+            "pid": 61422,
+            "cpu_percent": 1.4,
+            "executable": "/Applications/Ghostty.app/Contents/MacOS/ghostty"
+          },
+          {
+            "pid": 598,
+            "cpu_percent": 0.8,
+            "executable": "/Users/zhez/Library/Application Support/Steam/Steam.AppBundle/Steam/Contents/MacOS/steam_osx"
+          }
+        ]
+      },
+      "cold_aot": false,
+      "metrics": {},
+      "stdout": "prewarm-checksum a54f3aa72ddc56da\n",
+      "stderr": ""
+    },
+    {
+      "round": 2,
+      "build": "after",
+      "command": [
+        "/private/tmp/attesor-release-candidates/thin-cgu1-target/release/attesor",
+        "--no-aot",
+        "/private/tmp/attesor-release-candidates/short-arm64"
+      ],
+      "wall_ms": 1254.9017389999992,
+      "environment": {},
+      "host_load_before": {
+        "load_average": [
+          7.45703125,
+          8.884765625,
+          9.7021484375
+        ],
+        "busiest": [
+          {
+            "pid": 32659,
+            "cpu_percent": 622.2,
+            "executable": "/System/Library/Frameworks/VideoToolbox.framework/Versions/A/XPCServices/VTDecoderXPCService.xpc/Contents/MacOS/VTDecoderXPCService"
+          },
+          {
+            "pid": 201,
+            "cpu_percent": 64.3,
+            "executable": "/System/Library/PrivateFrameworks/SkyLight.framework/Resources/WindowServer"
+          },
+          {
+            "pid": 523,
+            "cpu_percent": 17.0,
+            "executable": "/System/Library/ExtensionKit/Extensions/WallpaperAerialsExtension.appex/Contents/MacOS/WallpaperAerialsExtension"
+          },
+          {
+            "pid": 61664,
+            "cpu_percent": 8.2,
+            "executable": "codex"
+          },
+          {
+            "pid": 876,
+            "cpu_percent": 5.3,
+            "executable": "/Users/zhez/Library/Application Support/Steam/Steam.AppBundle/Steam/Contents/Frameworks/Steam Helper.app/Contents/MacOS/Steam Helper"
+          },
+          {
+            "pid": 602,
+            "cpu_percent": 2.2,
+            "executable": "/Applications/Stats.app/Contents/MacOS/Stats"
+          },
+          {
+            "pid": 61422,
+            "cpu_percent": 1.4,
+            "executable": "/Applications/Ghostty.app/Contents/MacOS/ghostty"
+          },
+          {
+            "pid": 217,
+            "cpu_percent": 1.0,
+            "executable": "/usr/libexec/airportd"
+          }
+        ]
+      },
+      "host_load_after": {
+        "load_average": [
+          7.45703125,
+          8.884765625,
+          9.7021484375
+        ],
+        "busiest": [
+          {
+            "pid": 32659,
+            "cpu_percent": 486.7,
+            "executable": "/System/Library/Frameworks/VideoToolbox.framework/Versions/A/XPCServices/VTDecoderXPCService.xpc/Contents/MacOS/VTDecoderXPCService"
+          },
+          {
+            "pid": 201,
+            "cpu_percent": 62.0,
+            "executable": "/System/Library/PrivateFrameworks/SkyLight.framework/Resources/WindowServer"
+          },
+          {
+            "pid": 523,
+            "cpu_percent": 11.9,
+            "executable": "/System/Library/ExtensionKit/Extensions/WallpaperAerialsExtension.appex/Contents/MacOS/WallpaperAerialsExtension"
+          },
+          {
+            "pid": 61664,
+            "cpu_percent": 8.9,
+            "executable": "codex"
+          },
+          {
+            "pid": 876,
+            "cpu_percent": 3.8,
+            "executable": "/Users/zhez/Library/Application Support/Steam/Steam.AppBundle/Steam/Contents/Frameworks/Steam Helper.app/Contents/MacOS/Steam Helper"
+          },
+          {
+            "pid": 61422,
+            "cpu_percent": 1.3,
+            "executable": "/Applications/Ghostty.app/Contents/MacOS/ghostty"
+          },
+          {
+            "pid": 598,
+            "cpu_percent": 1.1,
+            "executable": "/Users/zhez/Library/Application Support/Steam/Steam.AppBundle/Steam/Contents/MacOS/steam_osx"
+          },
+          {
+            "pid": 602,
+            "cpu_percent": 1.0,
+            "executable": "/Applications/Stats.app/Contents/MacOS/Stats"
+          }
+        ]
+      },
+      "cold_aot": false,
+      "metrics": {},
+      "stdout": "prewarm-checksum a54f3aa72ddc56da\n",
+      "stderr": ""
+    },
+    {
+      "round": 3,
+      "build": "after",
+      "command": [
+        "/private/tmp/attesor-release-candidates/thin-cgu1-target/release/attesor",
+        "--no-aot",
+        "/private/tmp/attesor-release-candidates/short-arm64"
+      ],
+      "wall_ms": 1305.7435349999996,
+      "environment": {},
+      "host_load_before": {
+        "load_average": [
+          7.45703125,
+          8.884765625,
+          9.7021484375
+        ],
+        "busiest": [
+          {
+            "pid": 32659,
+            "cpu_percent": 506.0,
+            "executable": "/System/Library/Frameworks/VideoToolbox.framework/Versions/A/XPCServices/VTDecoderXPCService.xpc/Contents/MacOS/VTDecoderXPCService"
+          },
+          {
+            "pid": 201,
+            "cpu_percent": 61.2,
+            "executable": "/System/Library/PrivateFrameworks/SkyLight.framework/Resources/WindowServer"
+          },
+          {
+            "pid": 523,
+            "cpu_percent": 11.4,
+            "executable": "/System/Library/ExtensionKit/Extensions/WallpaperAerialsExtension.appex/Contents/MacOS/WallpaperAerialsExtension"
+          },
+          {
+            "pid": 17084,
+            "cpu_percent": 7.5,
+            "executable": "/Library/Developer/CommandLineTools/Library/Frameworks/Python3.framework/Versions/3.9/Resources/Python.app/Contents/MacOS/Python"
+          },
+          {
+            "pid": 61664,
+            "cpu_percent": 7.3,
+            "executable": "codex"
+          },
+          {
+            "pid": 876,
+            "cpu_percent": 4.0,
+            "executable": "/Users/zhez/Library/Application Support/Steam/Steam.AppBundle/Steam/Contents/Frameworks/Steam Helper.app/Contents/MacOS/Steam Helper"
+          },
+          {
+            "pid": 930,
+            "cpu_percent": 2.7,
+            "executable": "/Users/zhez/Library/Application Support/Steam/Steam.AppBundle/Steam/Contents/Frameworks/Steam Helper.app/Contents/MacOS/Steam Helper"
+          },
+          {
+            "pid": 598,
+            "cpu_percent": 1.3,
+            "executable": "/Users/zhez/Library/Application Support/Steam/Steam.AppBundle/Steam/Contents/MacOS/steam_osx"
+          }
+        ]
+      },
+      "host_load_after": {
+        "load_average": [
+          7.45703125,
+          8.884765625,
+          9.7021484375
+        ],
+        "busiest": [
+          {
+            "pid": 32659,
+            "cpu_percent": 541.1,
+            "executable": "/System/Library/Frameworks/VideoToolbox.framework/Versions/A/XPCServices/VTDecoderXPCService.xpc/Contents/MacOS/VTDecoderXPCService"
+          },
+          {
+            "pid": 201,
+            "cpu_percent": 63.9,
+            "executable": "/System/Library/PrivateFrameworks/SkyLight.framework/Resources/WindowServer"
+          },
+          {
+            "pid": 523,
+            "cpu_percent": 14.0,
+            "executable": "/System/Library/ExtensionKit/Extensions/WallpaperAerialsExtension.appex/Contents/MacOS/WallpaperAerialsExtension"
+          },
+          {
+            "pid": 61664,
+            "cpu_percent": 10.0,
+            "executable": "codex"
+          },
+          {
+            "pid": 876,
+            "cpu_percent": 4.1,
+            "executable": "/Users/zhez/Library/Application Support/Steam/Steam.AppBundle/Steam/Contents/Frameworks/Steam Helper.app/Contents/MacOS/Steam Helper"
+          },
+          {
+            "pid": 217,
+            "cpu_percent": 2.2,
+            "executable": "/usr/libexec/airportd"
+          },
+          {
+            "pid": 107,
+            "cpu_percent": 1.1,
+            "executable": "/usr/libexec/configd"
+          },
+          {
+            "pid": 61422,
+            "cpu_percent": 1.1,
+            "executable": "/Applications/Ghostty.app/Contents/MacOS/ghostty"
+          }
+        ]
+      },
+      "cold_aot": false,
+      "metrics": {},
+      "stdout": "prewarm-checksum a54f3aa72ddc56da\n",
+      "stderr": ""
+    },
+    {
+      "round": 3,
+      "build": "before",
+      "command": [
+        "/private/tmp/attesor-release-candidates/default-target/release/attesor",
+        "--no-aot",
+        "/private/tmp/attesor-release-candidates/short-arm64"
+      ],
+      "wall_ms": 1279.0681700000005,
+      "environment": {},
+      "host_load_before": {
+        "load_average": [
+          7.45703125,
+          8.884765625,
+          9.7021484375
+        ],
+        "busiest": [
+          {
+            "pid": 32659,
+            "cpu_percent": 626.4,
+            "executable": "/System/Library/Frameworks/VideoToolbox.framework/Versions/A/XPCServices/VTDecoderXPCService.xpc/Contents/MacOS/VTDecoderXPCService"
+          },
+          {
+            "pid": 201,
+            "cpu_percent": 63.9,
+            "executable": "/System/Library/PrivateFrameworks/SkyLight.framework/Resources/WindowServer"
+          },
+          {
+            "pid": 523,
+            "cpu_percent": 11.9,
+            "executable": "/System/Library/ExtensionKit/Extensions/WallpaperAerialsExtension.appex/Contents/MacOS/WallpaperAerialsExtension"
+          },
+          {
+            "pid": 61664,
+            "cpu_percent": 9.1,
+            "executable": "codex"
+          },
+          {
+            "pid": 17084,
+            "cpu_percent": 4.6,
+            "executable": "/Library/Developer/CommandLineTools/Library/Frameworks/Python3.framework/Versions/3.9/Resources/Python.app/Contents/MacOS/Python"
+          },
+          {
+            "pid": 876,
+            "cpu_percent": 4.5,
+            "executable": "/Users/zhez/Library/Application Support/Steam/Steam.AppBundle/Steam/Contents/Frameworks/Steam Helper.app/Contents/MacOS/Steam Helper"
+          },
+          {
+            "pid": 602,
+            "cpu_percent": 3.8,
+            "executable": "/Applications/Stats.app/Contents/MacOS/Stats"
+          },
+          {
+            "pid": 217,
+            "cpu_percent": 2.2,
+            "executable": "/usr/libexec/airportd"
+          }
+        ]
+      },
+      "host_load_after": {
+        "load_average": [
+          7.18017578125,
+          8.80322265625,
+          9.66845703125
+        ],
+        "busiest": [
+          {
+            "pid": 32659,
+            "cpu_percent": 582.6,
+            "executable": "/System/Library/Frameworks/VideoToolbox.framework/Versions/A/XPCServices/VTDecoderXPCService.xpc/Contents/MacOS/VTDecoderXPCService"
+          },
+          {
+            "pid": 201,
+            "cpu_percent": 62.7,
+            "executable": "/System/Library/PrivateFrameworks/SkyLight.framework/Resources/WindowServer"
+          },
+          {
+            "pid": 523,
+            "cpu_percent": 18.6,
+            "executable": "/System/Library/ExtensionKit/Extensions/WallpaperAerialsExtension.appex/Contents/MacOS/WallpaperAerialsExtension"
+          },
+          {
+            "pid": 61664,
+            "cpu_percent": 8.9,
+            "executable": "codex"
+          },
+          {
+            "pid": 876,
+            "cpu_percent": 4.5,
+            "executable": "/Users/zhez/Library/Application Support/Steam/Steam.AppBundle/Steam/Contents/Frameworks/Steam Helper.app/Contents/MacOS/Steam Helper"
+          },
+          {
+            "pid": 61422,
+            "cpu_percent": 1.7,
+            "executable": "/Applications/Ghostty.app/Contents/MacOS/ghostty"
+          },
+          {
+            "pid": 217,
+            "cpu_percent": 1.2,
+            "executable": "/usr/libexec/airportd"
+          },
+          {
+            "pid": 532,
+            "cpu_percent": 1.2,
+            "executable": "/System/Library/CoreServices/NotificationCenter.app/Contents/MacOS/NotificationCenter"
+          }
+        ]
+      },
+      "cold_aot": false,
+      "metrics": {},
+      "stdout": "prewarm-checksum a54f3aa72ddc56da\n",
+      "stderr": ""
+    },
+    {
+      "round": 4,
+      "build": "before",
+      "command": [
+        "/private/tmp/attesor-release-candidates/default-target/release/attesor",
+        "--no-aot",
+        "/private/tmp/attesor-release-candidates/short-arm64"
+      ],
+      "wall_ms": 1319.9489899999985,
+      "environment": {},
+      "host_load_before": {
+        "load_average": [
+          7.18017578125,
+          8.80322265625,
+          9.66845703125
+        ],
+        "busiest": [
+          {
+            "pid": 32659,
+            "cpu_percent": 538.4,
+            "executable": "/System/Library/Frameworks/VideoToolbox.framework/Versions/A/XPCServices/VTDecoderXPCService.xpc/Contents/MacOS/VTDecoderXPCService"
+          },
+          {
+            "pid": 201,
+            "cpu_percent": 65.4,
+            "executable": "/System/Library/PrivateFrameworks/SkyLight.framework/Resources/WindowServer"
+          },
+          {
+            "pid": 523,
+            "cpu_percent": 14.4,
+            "executable": "/System/Library/ExtensionKit/Extensions/WallpaperAerialsExtension.appex/Contents/MacOS/WallpaperAerialsExtension"
+          },
+          {
+            "pid": 61664,
+            "cpu_percent": 7.9,
+            "executable": "codex"
+          },
+          {
+            "pid": 876,
+            "cpu_percent": 4.1,
+            "executable": "/Users/zhez/Library/Application Support/Steam/Steam.AppBundle/Steam/Contents/Frameworks/Steam Helper.app/Contents/MacOS/Steam Helper"
+          },
+          {
+            "pid": 17084,
+            "cpu_percent": 2.3,
+            "executable": "/Library/Developer/CommandLineTools/Library/Frameworks/Python3.framework/Versions/3.9/Resources/Python.app/Contents/MacOS/Python"
+          },
+          {
+            "pid": 17177,
+            "cpu_percent": 2.2,
+            "executable": "ps"
+          },
+          {
+            "pid": 61422,
+            "cpu_percent": 1.3,
+            "executable": "/Applications/Ghostty.app/Contents/MacOS/ghostty"
+          }
+        ]
+      },
+      "host_load_after": {
+        "load_average": [
+          7.18017578125,
+          8.80322265625,
+          9.66845703125
+        ],
+        "busiest": [
+          {
+            "pid": 32659,
+            "cpu_percent": 568.7,
+            "executable": "/System/Library/Frameworks/VideoToolbox.framework/Versions/A/XPCServices/VTDecoderXPCService.xpc/Contents/MacOS/VTDecoderXPCService"
+          },
+          {
+            "pid": 201,
+            "cpu_percent": 63.3,
+            "executable": "/System/Library/PrivateFrameworks/SkyLight.framework/Resources/WindowServer"
+          },
+          {
+            "pid": 523,
+            "cpu_percent": 14.2,
+            "executable": "/System/Library/ExtensionKit/Extensions/WallpaperAerialsExtension.appex/Contents/MacOS/WallpaperAerialsExtension"
+          },
+          {
+            "pid": 61664,
+            "cpu_percent": 8.3,
+            "executable": "codex"
+          },
+          {
+            "pid": 876,
+            "cpu_percent": 4.5,
+            "executable": "/Users/zhez/Library/Application Support/Steam/Steam.AppBundle/Steam/Contents/Frameworks/Steam Helper.app/Contents/MacOS/Steam Helper"
+          },
+          {
+            "pid": 61422,
+            "cpu_percent": 1.3,
+            "executable": "/Applications/Ghostty.app/Contents/MacOS/ghostty"
+          },
+          {
+            "pid": 598,
+            "cpu_percent": 1.1,
+            "executable": "/Users/zhez/Library/Application Support/Steam/Steam.AppBundle/Steam/Contents/MacOS/steam_osx"
+          },
+          {
+            "pid": 217,
+            "cpu_percent": 1.0,
+            "executable": "/usr/libexec/airportd"
+          }
+        ]
+      },
+      "cold_aot": false,
+      "metrics": {},
+      "stdout": "prewarm-checksum a54f3aa72ddc56da\n",
+      "stderr": ""
+    },
+    {
+      "round": 4,
+      "build": "after",
+      "command": [
+        "/private/tmp/attesor-release-candidates/thin-cgu1-target/release/attesor",
+        "--no-aot",
+        "/private/tmp/attesor-release-candidates/short-arm64"
+      ],
+      "wall_ms": 1349.6277750000002,
+      "environment": {},
+      "host_load_before": {
+        "load_average": [
+          7.18017578125,
+          8.80322265625,
+          9.66845703125
+        ],
+        "busiest": [
+          {
+            "pid": 32659,
+            "cpu_percent": 523.1,
+            "executable": "/System/Library/Frameworks/VideoToolbox.framework/Versions/A/XPCServices/VTDecoderXPCService.xpc/Contents/MacOS/VTDecoderXPCService"
+          },
+          {
+            "pid": 201,
+            "cpu_percent": 61.3,
+            "executable": "/System/Library/PrivateFrameworks/SkyLight.framework/Resources/WindowServer"
+          },
+          {
+            "pid": 523,
+            "cpu_percent": 15.7,
+            "executable": "/System/Library/ExtensionKit/Extensions/WallpaperAerialsExtension.appex/Contents/MacOS/WallpaperAerialsExtension"
+          },
+          {
+            "pid": 61664,
+            "cpu_percent": 10.7,
+            "executable": "codex"
+          },
+          {
+            "pid": 876,
+            "cpu_percent": 4.2,
+            "executable": "/Users/zhez/Library/Application Support/Steam/Steam.AppBundle/Steam/Contents/Frameworks/Steam Helper.app/Contents/MacOS/Steam Helper"
+          },
+          {
+            "pid": 61666,
+            "cpu_percent": 4.2,
+            "executable": "/Users/zhez/.codex/packages/app-server-daemon/releases/0.165.0-x86_64-apple-darwin/bin/codex"
+          },
+          {
+            "pid": 602,
+            "cpu_percent": 2.9,
+            "executable": "/Applications/Stats.app/Contents/MacOS/Stats"
+          },
+          {
+            "pid": 217,
+            "cpu_percent": 1.8,
+            "executable": "/usr/libexec/airportd"
+          }
+        ]
+      },
+      "host_load_after": {
+        "load_average": [
+          7.18017578125,
+          8.80322265625,
+          9.66845703125
+        ],
+        "busiest": [
+          {
+            "pid": 32659,
+            "cpu_percent": 575.5,
+            "executable": "/System/Library/Frameworks/VideoToolbox.framework/Versions/A/XPCServices/VTDecoderXPCService.xpc/Contents/MacOS/VTDecoderXPCService"
+          },
+          {
+            "pid": 201,
+            "cpu_percent": 61.8,
+            "executable": "/System/Library/PrivateFrameworks/SkyLight.framework/Resources/WindowServer"
+          },
+          {
+            "pid": 523,
+            "cpu_percent": 13.3,
+            "executable": "/System/Library/ExtensionKit/Extensions/WallpaperAerialsExtension.appex/Contents/MacOS/WallpaperAerialsExtension"
+          },
+          {
+            "pid": 61664,
+            "cpu_percent": 8.7,
+            "executable": "codex"
+          },
+          {
+            "pid": 876,
+            "cpu_percent": 4.5,
+            "executable": "/Users/zhez/Library/Application Support/Steam/Steam.AppBundle/Steam/Contents/Frameworks/Steam Helper.app/Contents/MacOS/Steam Helper"
+          },
+          {
+            "pid": 217,
+            "cpu_percent": 1.7,
+            "executable": "/usr/libexec/airportd"
+          },
+          {
+            "pid": 598,
+            "cpu_percent": 1.5,
+            "executable": "/Users/zhez/Library/Application Support/Steam/Steam.AppBundle/Steam/Contents/MacOS/steam_osx"
+          },
+          {
+            "pid": 61422,
+            "cpu_percent": 1.5,
+            "executable": "/Applications/Ghostty.app/Contents/MacOS/ghostty"
+          }
+        ]
+      },
+      "cold_aot": false,
+      "metrics": {},
+      "stdout": "prewarm-checksum a54f3aa72ddc56da\n",
+      "stderr": ""
+    },
+    {
+      "round": 5,
+      "build": "after",
+      "command": [
+        "/private/tmp/attesor-release-candidates/thin-cgu1-target/release/attesor",
+        "--no-aot",
+        "/private/tmp/attesor-release-candidates/short-arm64"
+      ],
+      "wall_ms": 1351.2035180000018,
+      "environment": {},
+      "host_load_before": {
+        "load_average": [
+          7.18017578125,
+          8.80322265625,
+          9.66845703125
+        ],
+        "busiest": [
+          {
+            "pid": 32659,
+            "cpu_percent": 537.6,
+            "executable": "/System/Library/Frameworks/VideoToolbox.framework/Versions/A/XPCServices/VTDecoderXPCService.xpc/Contents/MacOS/VTDecoderXPCService"
+          },
+          {
+            "pid": 201,
+            "cpu_percent": 61.8,
+            "executable": "/System/Library/PrivateFrameworks/SkyLight.framework/Resources/WindowServer"
+          },
+          {
+            "pid": 523,
+            "cpu_percent": 13.2,
+            "executable": "/System/Library/ExtensionKit/Extensions/WallpaperAerialsExtension.appex/Contents/MacOS/WallpaperAerialsExtension"
+          },
+          {
+            "pid": 61664,
+            "cpu_percent": 7.8,
+            "executable": "codex"
+          },
+          {
+            "pid": 876,
+            "cpu_percent": 4.1,
+            "executable": "/Users/zhez/Library/Application Support/Steam/Steam.AppBundle/Steam/Contents/Frameworks/Steam Helper.app/Contents/MacOS/Steam Helper"
+          },
+          {
+            "pid": 17084,
+            "cpu_percent": 2.5,
+            "executable": "/Library/Developer/CommandLineTools/Library/Frameworks/Python3.framework/Versions/3.9/Resources/Python.app/Contents/MacOS/Python"
+          },
+          {
+            "pid": 217,
+            "cpu_percent": 1.7,
+            "executable": "/usr/libexec/airportd"
+          },
+          {
+            "pid": 61422,
+            "cpu_percent": 1.3,
+            "executable": "/Applications/Ghostty.app/Contents/MacOS/ghostty"
+          }
+        ]
+      },
+      "host_load_after": {
+        "load_average": [
+          6.84521484375,
+          8.70654296875,
+          9.62890625
+        ],
+        "busiest": [
+          {
+            "pid": 32659,
+            "cpu_percent": 664.2,
+            "executable": "/System/Library/Frameworks/VideoToolbox.framework/Versions/A/XPCServices/VTDecoderXPCService.xpc/Contents/MacOS/VTDecoderXPCService"
+          },
+          {
+            "pid": 201,
+            "cpu_percent": 65.1,
+            "executable": "/System/Library/PrivateFrameworks/SkyLight.framework/Resources/WindowServer"
+          },
+          {
+            "pid": 523,
+            "cpu_percent": 13.1,
+            "executable": "/System/Library/ExtensionKit/Extensions/WallpaperAerialsExtension.appex/Contents/MacOS/WallpaperAerialsExtension"
+          },
+          {
+            "pid": 61664,
+            "cpu_percent": 6.9,
+            "executable": "codex"
+          },
+          {
+            "pid": 876,
+            "cpu_percent": 4.5,
+            "executable": "/Users/zhez/Library/Application Support/Steam/Steam.AppBundle/Steam/Contents/Frameworks/Steam Helper.app/Contents/MacOS/Steam Helper"
+          },
+          {
+            "pid": 602,
+            "cpu_percent": 3.5,
+            "executable": "/Applications/Stats.app/Contents/MacOS/Stats"
+          },
+          {
+            "pid": 17084,
+            "cpu_percent": 3.3,
+            "executable": "/Library/Developer/CommandLineTools/Library/Frameworks/Python3.framework/Versions/3.9/Resources/Python.app/Contents/MacOS/Python"
+          },
+          {
+            "pid": 532,
+            "cpu_percent": 2.2,
+            "executable": "/System/Library/CoreServices/NotificationCenter.app/Contents/MacOS/NotificationCenter"
+          }
+        ]
+      },
+      "cold_aot": false,
+      "metrics": {},
+      "stdout": "prewarm-checksum a54f3aa72ddc56da\n",
+      "stderr": ""
+    },
+    {
+      "round": 5,
+      "build": "before",
+      "command": [
+        "/private/tmp/attesor-release-candidates/default-target/release/attesor",
+        "--no-aot",
+        "/private/tmp/attesor-release-candidates/short-arm64"
+      ],
+      "wall_ms": 1413.732550999999,
+      "environment": {},
+      "host_load_before": {
+        "load_average": [
+          6.84521484375,
+          8.70654296875,
+          9.62890625
+        ],
+        "busiest": [
+          {
+            "pid": 32659,
+            "cpu_percent": 664.2,
+            "executable": "/System/Library/Frameworks/VideoToolbox.framework/Versions/A/XPCServices/VTDecoderXPCService.xpc/Contents/MacOS/VTDecoderXPCService"
+          },
+          {
+            "pid": 201,
+            "cpu_percent": 65.1,
+            "executable": "/System/Library/PrivateFrameworks/SkyLight.framework/Resources/WindowServer"
+          },
+          {
+            "pid": 523,
+            "cpu_percent": 17.0,
+            "executable": "/System/Library/ExtensionKit/Extensions/WallpaperAerialsExtension.appex/Contents/MacOS/WallpaperAerialsExtension"
+          },
+          {
+            "pid": 61664,
+            "cpu_percent": 6.9,
+            "executable": "codex"
+          },
+          {
+            "pid": 876,
+            "cpu_percent": 4.0,
+            "executable": "/Users/zhez/Library/Application Support/Steam/Steam.AppBundle/Steam/Contents/Frameworks/Steam Helper.app/Contents/MacOS/Steam Helper"
+          },
+          {
+            "pid": 17084,
+            "cpu_percent": 3.3,
+            "executable": "/Library/Developer/CommandLineTools/Library/Frameworks/Python3.framework/Versions/3.9/Resources/Python.app/Contents/MacOS/Python"
+          },
+          {
+            "pid": 602,
+            "cpu_percent": 2.2,
+            "executable": "/Applications/Stats.app/Contents/MacOS/Stats"
+          },
+          {
+            "pid": 217,
+            "cpu_percent": 1.7,
+            "executable": "/usr/libexec/airportd"
+          }
+        ]
+      },
+      "host_load_after": {
+        "load_average": [
+          6.84521484375,
+          8.70654296875,
+          9.62890625
+        ],
+        "busiest": [
+          {
+            "pid": 32659,
+            "cpu_percent": 648.5,
+            "executable": "/System/Library/Frameworks/VideoToolbox.framework/Versions/A/XPCServices/VTDecoderXPCService.xpc/Contents/MacOS/VTDecoderXPCService"
+          },
+          {
+            "pid": 201,
+            "cpu_percent": 64.3,
+            "executable": "/System/Library/PrivateFrameworks/SkyLight.framework/Resources/WindowServer"
+          },
+          {
+            "pid": 523,
+            "cpu_percent": 18.4,
+            "executable": "/System/Library/ExtensionKit/Extensions/WallpaperAerialsExtension.appex/Contents/MacOS/WallpaperAerialsExtension"
+          },
+          {
+            "pid": 588,
+            "cpu_percent": 13.2,
+            "executable": "com.apple.weather.menu"
+          },
+          {
+            "pid": 61664,
+            "cpu_percent": 8.3,
+            "executable": "codex"
+          },
+          {
+            "pid": 1,
+            "cpu_percent": 4.2,
+            "executable": "/sbin/launchd"
+          },
+          {
+            "pid": 876,
+            "cpu_percent": 4.2,
+            "executable": "/Users/zhez/Library/Application Support/Steam/Steam.AppBundle/Steam/Contents/Frameworks/Steam Helper.app/Contents/MacOS/Steam Helper"
+          },
+          {
+            "pid": 124,
+            "cpu_percent": 3.9,
+            "executable": "/System/Library/Frameworks/CoreServices.framework/Versions/A/Frameworks/Metadata.framework/Versions/A/Support/mds"
+          }
+        ]
+      },
+      "cold_aot": false,
+      "metrics": {},
+      "stdout": "prewarm-checksum a54f3aa72ddc56da\n",
+      "stderr": ""
+    },
+    {
+      "round": 6,
+      "build": "before",
+      "command": [
+        "/private/tmp/attesor-release-candidates/default-target/release/attesor",
+        "--no-aot",
+        "/private/tmp/attesor-release-candidates/short-arm64"
+      ],
+      "wall_ms": 1272.9279980000001,
+      "environment": {},
+      "host_load_before": {
+        "load_average": [
+          6.84521484375,
+          8.70654296875,
+          9.62890625
+        ],
+        "busiest": [
+          {
+            "pid": 32659,
+            "cpu_percent": 567.3,
+            "executable": "/System/Library/Frameworks/VideoToolbox.framework/Versions/A/XPCServices/VTDecoderXPCService.xpc/Contents/MacOS/VTDecoderXPCService"
+          },
+          {
+            "pid": 201,
+            "cpu_percent": 63.3,
+            "executable": "/System/Library/PrivateFrameworks/SkyLight.framework/Resources/WindowServer"
+          },
+          {
+            "pid": 523,
+            "cpu_percent": 18.4,
+            "executable": "/System/Library/ExtensionKit/Extensions/WallpaperAerialsExtension.appex/Contents/MacOS/WallpaperAerialsExtension"
+          },
+          {
+            "pid": 588,
+            "cpu_percent": 13.2,
+            "executable": "com.apple.weather.menu"
+          },
+          {
+            "pid": 17191,
+            "cpu_percent": 12.1,
+            "executable": "/System/Library/Frameworks/CoreServices.framework/Versions/A/Frameworks/Metadata.framework/Versions/A/Support/mdworker_shared"
+          },
+          {
+            "pid": 17192,
+            "cpu_percent": 11.4,
+            "executable": "/System/Library/Frameworks/CoreServices.framework/Versions/A/Frameworks/Metadata.framework/Versions/A/Support/mdworker_shared"
+          },
+          {
+            "pid": 61664,
+            "cpu_percent": 8.7,
+            "executable": "codex"
+          },
+          {
+            "pid": 326,
+            "cpu_percent": 3.8,
+            "executable": "/System/Library/Frameworks/CoreServices.framework/Versions/A/Frameworks/Metadata.framework/Versions/A/Support/mds_stores"
+          }
+        ]
+      },
+      "host_load_after": {
+        "load_average": [
+          6.84521484375,
+          8.70654296875,
+          9.62890625
+        ],
+        "busiest": [
+          {
+            "pid": 32659,
+            "cpu_percent": 621.9,
+            "executable": "/System/Library/Frameworks/VideoToolbox.framework/Versions/A/XPCServices/VTDecoderXPCService.xpc/Contents/MacOS/VTDecoderXPCService"
+          },
+          {
+            "pid": 201,
+            "cpu_percent": 62.4,
+            "executable": "/System/Library/PrivateFrameworks/SkyLight.framework/Resources/WindowServer"
+          },
+          {
+            "pid": 523,
+            "cpu_percent": 13.1,
+            "executable": "/System/Library/ExtensionKit/Extensions/WallpaperAerialsExtension.appex/Contents/MacOS/WallpaperAerialsExtension"
+          },
+          {
+            "pid": 61664,
+            "cpu_percent": 10.0,
+            "executable": "codex"
+          },
+          {
+            "pid": 876,
+            "cpu_percent": 6.6,
+            "executable": "/Users/zhez/Library/Application Support/Steam/Steam.AppBundle/Steam/Contents/Frameworks/Steam Helper.app/Contents/MacOS/Steam Helper"
+          },
+          {
+            "pid": 602,
+            "cpu_percent": 3.1,
+            "executable": "/Applications/Stats.app/Contents/MacOS/Stats"
+          },
+          {
+            "pid": 598,
+            "cpu_percent": 1.9,
+            "executable": "/Users/zhez/Library/Application Support/Steam/Steam.AppBundle/Steam/Contents/MacOS/steam_osx"
+          },
+          {
+            "pid": 61422,
+            "cpu_percent": 1.6,
+            "executable": "/Applications/Ghostty.app/Contents/MacOS/ghostty"
+          }
+        ]
+      },
+      "cold_aot": false,
+      "metrics": {},
+      "stdout": "prewarm-checksum a54f3aa72ddc56da\n",
+      "stderr": ""
+    },
+    {
+      "round": 6,
+      "build": "after",
+      "command": [
+        "/private/tmp/attesor-release-candidates/thin-cgu1-target/release/attesor",
+        "--no-aot",
+        "/private/tmp/attesor-release-candidates/short-arm64"
+      ],
+      "wall_ms": 1345.4872840000007,
+      "environment": {},
+      "host_load_before": {
+        "load_average": [
+          6.84521484375,
+          8.70654296875,
+          9.62890625
+        ],
+        "busiest": [
+          {
+            "pid": 32659,
+            "cpu_percent": 549.0,
+            "executable": "/System/Library/Frameworks/VideoToolbox.framework/Versions/A/XPCServices/VTDecoderXPCService.xpc/Contents/MacOS/VTDecoderXPCService"
+          },
+          {
+            "pid": 201,
+            "cpu_percent": 62.4,
+            "executable": "/System/Library/PrivateFrameworks/SkyLight.framework/Resources/WindowServer"
+          },
+          {
+            "pid": 523,
+            "cpu_percent": 11.1,
+            "executable": "/System/Library/ExtensionKit/Extensions/WallpaperAerialsExtension.appex/Contents/MacOS/WallpaperAerialsExtension"
+          },
+          {
+            "pid": 61664,
+            "cpu_percent": 10.5,
+            "executable": "codex"
+          },
+          {
+            "pid": 876,
+            "cpu_percent": 5.3,
+            "executable": "/Users/zhez/Library/Application Support/Steam/Steam.AppBundle/Steam/Contents/Frameworks/Steam Helper.app/Contents/MacOS/Steam Helper"
+          },
+          {
+            "pid": 61666,
+            "cpu_percent": 4.7,
+            "executable": "/Users/zhez/.codex/packages/app-server-daemon/releases/0.165.0-x86_64-apple-darwin/bin/codex"
+          },
+          {
+            "pid": 602,
+            "cpu_percent": 1.8,
+            "executable": "/Applications/Stats.app/Contents/MacOS/Stats"
+          },
+          {
+            "pid": 17084,
+            "cpu_percent": 1.8,
+            "executable": "/Library/Developer/CommandLineTools/Library/Frameworks/Python3.framework/Versions/3.9/Resources/Python.app/Contents/MacOS/Python"
+          }
+        ]
+      },
+      "host_load_after": {
+        "load_average": [
+          6.84521484375,
+          8.70654296875,
+          9.62890625
+        ],
+        "busiest": [
+          {
+            "pid": 32659,
+            "cpu_percent": 626.9,
+            "executable": "/System/Library/Frameworks/VideoToolbox.framework/Versions/A/XPCServices/VTDecoderXPCService.xpc/Contents/MacOS/VTDecoderXPCService"
+          },
+          {
+            "pid": 201,
+            "cpu_percent": 62.5,
+            "executable": "/System/Library/PrivateFrameworks/SkyLight.framework/Resources/WindowServer"
+          },
+          {
+            "pid": 523,
+            "cpu_percent": 12.8,
+            "executable": "/System/Library/ExtensionKit/Extensions/WallpaperAerialsExtension.appex/Contents/MacOS/WallpaperAerialsExtension"
+          },
+          {
+            "pid": 61664,
+            "cpu_percent": 7.6,
+            "executable": "codex"
+          },
+          {
+            "pid": 876,
+            "cpu_percent": 4.4,
+            "executable": "/Users/zhez/Library/Application Support/Steam/Steam.AppBundle/Steam/Contents/Frameworks/Steam Helper.app/Contents/MacOS/Steam Helper"
+          },
+          {
+            "pid": 61422,
+            "cpu_percent": 1.4,
+            "executable": "/Applications/Ghostty.app/Contents/MacOS/ghostty"
+          },
+          {
+            "pid": 598,
+            "cpu_percent": 1.2,
+            "executable": "/Users/zhez/Library/Application Support/Steam/Steam.AppBundle/Steam/Contents/MacOS/steam_osx"
+          },
+          {
+            "pid": 61666,
+            "cpu_percent": 1.0,
+            "executable": "/Users/zhez/.codex/packages/app-server-daemon/releases/0.165.0-x86_64-apple-darwin/bin/codex"
+          }
+        ]
+      },
+      "cold_aot": false,
+      "metrics": {},
+      "stdout": "prewarm-checksum a54f3aa72ddc56da\n",
+      "stderr": ""
+    }
+  ],
+  "medians": {
+    "wall_ms": {
+      "before": 1319.9489899999985,
+      "after": 1349.6277750000002,
+      "time_reduction_percent": -2.2484796931434126
+    }
+  },
+  "reference": {
+    "command": [
+      "/private/tmp/attesor-release-candidates/short-x86_64"
+    ],
+    "stdout": "prewarm-checksum a54f3aa72ddc56da\n",
+    "sha256": "1145580f794f53d66e7a0428d0d38c45451fde24b98a1ddf89d10b5dd11246e3"
+  },
+  "semantic_output_present": true
+}

@@ -51,3 +51,16 @@ Both candidates passed the same six sequential checks, all exit status 0:
 - `exec-modes-check.py`: all 116 checks pass for both binaries, including native/guest exec selection, two Electron-shaped fixtures, Node-mode and environment forwarding, IPC descriptors, argv0 and shebang behavior.
 
 Candidate SHA256 values were verified again after all tests. Machine-readable metadata and exact commands are copied to `docs/measurements/2026-10-29-release-profile-candidates.json`. Full logs remain under `/tmp/attesor-release-candidates`. Correctness tests do not establish any performance improvement.
+
+## Coordinator's serial measurement and decision
+
+Seven alternating short-process samples with the updated native-reference check
+measured median wall times of 1319.949 ms (default) and 1349.628 ms (thin LTO,
+one codegen unit), an observed 2.25% increase. Per-sample background CPU/load
+snapshots are retained in
+[`2026-10-29-release-profile-short.json`](measurements/2026-10-29-release-profile-short.json).
+The machine had substantial background system load; this does not establish a
+stable regression. It does not demonstrate a runtime benefit that justifies
+changing the release default, so the existing release configuration is retained.
+These are the pinned experiment-source binaries above, not the later FPCR-fixed
+installed binary.

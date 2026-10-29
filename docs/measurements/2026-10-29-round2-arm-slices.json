@@ -1,0 +1,12 @@
+{
+  "/Applications/DeepSeek Harness.app": {
+    "arm_sha256": "332263fea2449908b5cc84c80d07d2d49eb561cd01cb5566634e797ac99bbddd",
+    "original_sha256": "332263fea2449908b5cc84c80d07d2d49eb561cd01cb5566634e797ac99bbddd",
+    "arm_slice_matches_original": true
+  },
+  "/Applications/Visual Studio Code.app": {
+    "arm_sha256": "7d8c2b48ec77ca0f3b77e4fbea38ad66c2331685c8b7946f4d816d977e8f3958",
+    "original_sha256": "7d8c2b48ec77ca0f3b77e4fbea38ad66c2331685c8b7946f4d816d977e8f3958",
+    "arm_slice_matches_original": true
+  }
+}

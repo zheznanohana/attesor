@@ -1,0 +1,23 @@
+{
+  "/Users/zhez/bin/attesor": {
+    "sha256": "c19e12ad398809cec1e9cc2bb3a4610c1dff7d34f2686a3629126665a1814550"
+  },
+  "/Users/zhez/bin/gpu/libattesorexec.dylib": {
+    "sha256": "c9bd4957742887447ff2eb942e8030bf4c2ecaf34cdf15a3ca8a7fd36cd81d95"
+  },
+  "/Users/zhez/attesor-launcher/run-app": {
+    "sha256": "98cf4b6b54d91f863e0f2335fd08d521a35d0e3ff93f563c1e496234545e1725"
+  },
+  "/Users/zhez/bin/gpu/libmclbridge.dylib": {
+    "sha256": "234aea9ab452f22394f9bddfd241e761eedb1862a5fa951bba814979153c1415",
+    "unchanged": true
+  },
+  "/Users/zhez/bin/gpu/libmclmetal.dylib": {
+    "sha256": "f788d53a04222e612490f36d24f4953c69989d56a7461c9ec90232d0c1eaeb3b",
+    "unchanged": true
+  },
+  "/Users/zhez/bin/gpu/libattesorui.dylib": {
+    "sha256": "046f2fffc2b7ed28817bf444938d5f9a0cc48b17094f6bb81476e937715ba70d",
+    "unchanged": true
+  }
+}

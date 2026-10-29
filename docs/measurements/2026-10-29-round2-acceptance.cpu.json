@@ -1,0 +1,340 @@
+{
+  "binary": "/private/tmp/attesor-final-target/release/attesor",
+  "sha256": "c19e12ad398809cec1e9cc2bb3a4610c1dff7d34f2686a3629126665a1814550",
+  "passed": true,
+  "results": [
+    {
+      "name": "build-fpalias-x86_64",
+      "command": [
+        "clang",
+        "-O2",
+        "-ffp-contract=off",
+        "-arch",
+        "x86_64",
+        "/Users/zhez/attesor/tests/attesor/fpalias.c",
+        "-o",
+        "/var/folders/b4/tnjkjcm52s5g4n894r8xrcfh0000gn/T/attesor-accept-f5wkrlv4/fpalias-x86_64"
+      ],
+      "returncode": 0,
+      "timeout": false,
+      "environment": {},
+      "stdout": "",
+      "stderr": "",
+      "seconds": 0.207723667,
+      "passed": true
+    },
+    {
+      "name": "fpalias-x86_64",
+      "command": [
+        "/var/folders/b4/tnjkjcm52s5g4n894r8xrcfh0000gn/T/attesor-accept-f5wkrlv4/fpalias-x86_64"
+      ],
+      "returncode": 0,
+      "timeout": false,
+      "environment": {},
+      "stdout": "40ae5eed35b2d696 400f4ccd6dc15851 403f4c988debfc3e 3faed9d8 3daed9e4\n",
+      "stderr": "",
+      "seconds": 0.006545014999999987,
+      "passed": true
+    },
+    {
+      "name": "build-fpalias-arm64",
+      "command": [
+        "clang",
+        "-O2",
+        "-ffp-contract=off",
+        "-arch",
+        "arm64",
+        "/Users/zhez/attesor/tests/attesor/fpalias.c",
+        "-o",
+        "/var/folders/b4/tnjkjcm52s5g4n894r8xrcfh0000gn/T/attesor-accept-f5wkrlv4/fpalias-arm64"
+      ],
+      "returncode": 0,
+      "timeout": false,
+      "environment": {},
+      "stdout": "",
+      "stderr": "",
+      "seconds": 0.21184868299999998,
+      "passed": true
+    },
+    {
+      "name": "fpalias-arm64",
+      "command": [
+        "/private/tmp/attesor-final-target/release/attesor",
+        "--no-aot",
+        "/var/folders/b4/tnjkjcm52s5g4n894r8xrcfh0000gn/T/attesor-accept-f5wkrlv4/fpalias-arm64"
+      ],
+      "returncode": 0,
+      "timeout": false,
+      "environment": {},
+      "stdout": "40ae5eed35b2d696 400f4ccd6dc15851 403f4c988debfc3e 3faed9d8 3daed9e4\n",
+      "stderr": "",
+      "seconds": 1.328636331,
+      "passed": true
+    },
+    {
+      "name": "fpalias-native-comparison",
+      "passed": true,
+      "outputs": [
+        "40ae5eed35b2d696 400f4ccd6dc15851 403f4c988debfc3e 3faed9d8 3daed9e4",
+        "40ae5eed35b2d696 400f4ccd6dc15851 403f4c988debfc3e 3faed9d8 3daed9e4"
+      ]
+    },
+    {
+      "name": "build-crypto-x86_64",
+      "command": [
+        "clang",
+        "-O2",
+        "-ffp-contract=off",
+        "-arch",
+        "x86_64",
+        "/Users/zhez/attesor/tests/attesor/crypto.c",
+        "-o",
+        "/var/folders/b4/tnjkjcm52s5g4n894r8xrcfh0000gn/T/attesor-accept-f5wkrlv4/crypto-x86_64"
+      ],
+      "returncode": 0,
+      "timeout": false,
+      "environment": {},
+      "stdout": "",
+      "stderr": "",
+      "seconds": 0.2444055169999999,
+      "passed": true
+    },
+    {
+      "name": "crypto-x86_64",
+      "command": [
+        "/var/folders/b4/tnjkjcm52s5g4n894r8xrcfh0000gn/T/attesor-accept-f5wkrlv4/crypto-x86_64"
+      ],
+      "returncode": 0,
+      "timeout": false,
+      "environment": {},
+      "stdout": "FEAT_AES=0 aes-cbc 120.8 ms sha256 234.2 ms digest bc50ed872ebff79d0f45af5c3a83517b227b83b376c8262b744f9cbfcba5d44c\n",
+      "stderr": "",
+      "seconds": 0.421386268,
+      "passed": true
+    },
+    {
+      "name": "build-crypto-arm64",
+      "command": [
+        "clang",
+        "-O2",
+        "-ffp-contract=off",
+        "-arch",
+        "arm64",
+        "/Users/zhez/attesor/tests/attesor/crypto.c",
+        "-o",
+        "/var/folders/b4/tnjkjcm52s5g4n894r8xrcfh0000gn/T/attesor-accept-f5wkrlv4/crypto-arm64"
+      ],
+      "returncode": 0,
+      "timeout": false,
+      "environment": {},
+      "stdout": "",
+      "stderr": "",
+      "seconds": 0.267953565,
+      "passed": true
+    },
+    {
+      "name": "crypto-arm64",
+      "command": [
+        "/private/tmp/attesor-final-target/release/attesor",
+        "--no-aot",
+        "/var/folders/b4/tnjkjcm52s5g4n894r8xrcfh0000gn/T/attesor-accept-f5wkrlv4/crypto-arm64"
+      ],
+      "returncode": 0,
+      "timeout": false,
+      "environment": {},
+      "stdout": "FEAT_AES=1 aes-cbc 244.2 ms sha256 163.6 ms digest bc50ed872ebff79d0f45af5c3a83517b227b83b376c8262b744f9cbfcba5d44c\n",
+      "stderr": "",
+      "seconds": 1.852970543,
+      "passed": true
+    },
+    {
+      "name": "crypto-native-comparison",
+      "passed": true,
+      "outputs": [
+        "bc50ed872ebff79d0f45af5c3a83517b227b83b376c8262b744f9cbfcba5d44c",
+        "bc50ed872ebff79d0f45af5c3a83517b227b83b376c8262b744f9cbfcba5d44c"
+      ]
+    },
+    {
+      "name": "selftest-fpblocks",
+      "command": [
+        "/private/tmp/attesor-final-target/release/attesor",
+        "--selftest-jit",
+        "fpblocks",
+        "100000"
+      ],
+      "returncode": 0,
+      "timeout": false,
+      "environment": {},
+      "stdout": "jit selftest [fpblocks]: ok=100000 mismatch=0 skipped=0 insns=650599 fallback_insns=0\n",
+      "stderr": "",
+      "seconds": 110.275526073,
+      "passed": true,
+      "counters": {
+        "ok": 100000,
+        "mismatch": 0,
+        "skipped": 0,
+        "insns": 650599,
+        "fallback_insns": 0
+      }
+    },
+    {
+      "name": "selftest-blocks",
+      "command": [
+        "/private/tmp/attesor-final-target/release/attesor",
+        "--selftest-jit",
+        "blocks",
+        "100000"
+      ],
+      "returncode": 0,
+      "timeout": false,
+      "environment": {},
+      "stdout": "jit selftest [blocks]: ok=8893 mismatch=0 skipped=91107 insns=30638 fallback_insns=1178\n",
+      "stderr": "",
+      "seconds": 28.320576052000007,
+      "passed": true,
+      "counters": {
+        "ok": 8893,
+        "mismatch": 0,
+        "skipped": 91107,
+        "insns": 30638,
+        "fallback_insns": 1178
+      }
+    },
+    {
+      "name": "selftest-selchain",
+      "command": [
+        "/private/tmp/attesor-final-target/release/attesor",
+        "--selftest-jit",
+        "selchain",
+        "100000"
+      ],
+      "returncode": 0,
+      "timeout": false,
+      "environment": {},
+      "stdout": "jit selftest [selchain]: ok=36205 mismatch=0 skipped=63795 native=36205 dead_flag_skips=26730\n",
+      "stderr": "",
+      "seconds": 1.4798795250000012,
+      "passed": true,
+      "counters": {
+        "ok": 36205,
+        "mismatch": 0,
+        "skipped": 63795,
+        "native": 36205,
+        "dead_flag_skips": 26730
+      }
+    },
+    {
+      "name": "selftest-ff000000:1f000000",
+      "command": [
+        "/private/tmp/attesor-final-target/release/attesor",
+        "--selftest-jit",
+        "ff000000:1f000000",
+        "100000"
+      ],
+      "returncode": 0,
+      "timeout": false,
+      "environment": {},
+      "stdout": "jit selftest [ff000000:1f000000]: ok=75018 mismatch=0 skipped=24982 native=50098\n",
+      "stderr": "",
+      "seconds": 57.222993358000025,
+      "passed": true,
+      "counters": {
+        "ok": 75018,
+        "mismatch": 0,
+        "skipped": 24982,
+        "native": 50098
+      }
+    },
+    {
+      "name": "selftest-bf20fc00:0e20cc00",
+      "command": [
+        "/private/tmp/attesor-final-target/release/attesor",
+        "--selftest-jit",
+        "bf20fc00:0e20cc00",
+        "100000"
+      ],
+      "returncode": 0,
+      "timeout": false,
+      "environment": {},
+      "stdout": "jit selftest [bf20fc00:0e20cc00]: ok=74862 mismatch=0 skipped=25138 native=74862\n",
+      "stderr": "",
+      "seconds": 57.76935521799999,
+      "passed": true,
+      "counters": {
+        "ok": 74862,
+        "mismatch": 0,
+        "skipped": 25138,
+        "native": 74862
+      }
+    },
+    {
+      "name": "selftest-9f800400:0f000000",
+      "command": [
+        "/private/tmp/attesor-final-target/release/attesor",
+        "--selftest-jit",
+        "9f800400:0f000000",
+        "100000"
+      ],
+      "returncode": 0,
+      "timeout": false,
+      "environment": {},
+      "stdout": "jit selftest [9f800400:0f000000]: ok=28156 mismatch=0 skipped=71844 native=4576\n",
+      "stderr": "",
+      "seconds": 28.68497654600003,
+      "passed": true,
+      "counters": {
+        "ok": 28156,
+        "mismatch": 0,
+        "skipped": 71844,
+        "native": 4576
+      }
+    },
+    {
+      "name": "selftest-fpnan",
+      "command": [
+        "/private/tmp/attesor-final-target/release/attesor",
+        "--selftest-jit",
+        "fpnan",
+        "62208"
+      ],
+      "returncode": 0,
+      "timeout": false,
+      "environment": {},
+      "stdout": "jit selftest [fpnan]: ok=62208 mismatch=0 skipped=0 native=62208\n",
+      "stderr": "",
+      "seconds": 2.6894099220000385,
+      "passed": true,
+      "counters": {
+        "ok": 62208,
+        "mismatch": 0,
+        "skipped": 0,
+        "native": 62208
+      }
+    },
+    {
+      "name": "selftest-fpnan-fpcr",
+      "command": [
+        "/private/tmp/attesor-final-target/release/attesor",
+        "--selftest-jit",
+        "fpnan",
+        "62208"
+      ],
+      "returncode": 0,
+      "timeout": false,
+      "environment": {
+        "ATTESOR_SELFTEST_FPCR": "1"
+      },
+      "stdout": "jit selftest [fpnan]: ok=62208 mismatch=0 skipped=0 native=62208\n",
+      "stderr": "",
+      "seconds": 2.5903000249999764,
+      "passed": true,
+      "counters": {
+        "ok": 62208,
+        "mismatch": 0,
+        "skipped": 0,
+        "native": 62208
+      }
+    }
+  ]
+}

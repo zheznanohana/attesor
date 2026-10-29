@@ -1,0 +1,298 @@
+{
+  "binary": "/private/tmp/attesor-final-target/release/attesor",
+  "sha256": "c19e12ad398809cec1e9cc2bb3a4610c1dff7d34f2686a3629126665a1814550",
+  "automated_passed": true,
+  "completed": 21,
+  "required": 21,
+  "results": [
+    {
+      "name": "workspace-unit-tests",
+      "command": [
+        "cargo",
+        "test",
+        "--workspace",
+        "--",
+        "--test-threads=1"
+      ],
+      "returncode": 0,
+      "stdout": "\nrunning 24 tests\ntest aot::tests::checkpoints_publish_idle_and_exited_thread_tails ... ok\ntest aot::tests::incompatible_larger_cache_does_not_block_replacement ... ok\ntest aot::tests::prewarm_mapping_does_not_overwrite_an_existing_region ... ok\ntest aot::tests::static_discovery_keeps_fpcr_mode_successor ... ok\ntest aot::tests::static_discovery_keeps_isb_successor ... ok\ntest jit::emit::cache_nextuse_tests::eviction_prefers_dead_then_furthest_not_oldest ... ok\ntest jit::emit::cache_nextuse_tests::masks_separate_banks_and_discarded_old_values ... ok\ntest jit::emit::context_sync_tests::isb_exits_before_internal_successor_and_cannot_chain ... ok\ntest jit::emit::direct_branch_tests::compare_and_test_branches_preserve_nzcv_and_all_registers ... ok\ntest jit::emit::direct_branch_tests::direct_conditions_reach_both_internal_successor_labels ... ok\ntest jit::emit::flags_liveness_tests::flags_scan_stops_before_faults_helpers_and_readers ... ok\ntest jit::emit::flags_liveness_tests::helper_exit_observes_preceding_cmp_even_before_later_overwrite ... ok\ntest jit::emit::fpcr_boundary_tests::fpcr_write_exits_before_all_guarded_fp_successors ... ok\ntest jit::emit::fsqrt_dn_tests::dn_guard_fallback_agrees_with_arm_bits_for_all_sqrt_forms ... ok\ntest jit::emit::region_cache_tests::backedge_does_not_skip_fpcr_guard_or_reuse_stale_vectors ... ok\ntest jit::emit::region_cache_tests::compare_and_test_bit_loop_edges_match_reference ... ok\ntest jit::emit::region_cache_tests::diamond_and_external_join_use_canonical_entries ... ok\ntest jit::emit::region_cache_tests::fault_after_backedge_observes_every_completed_cpu_write ... ok\ntest jit::emit::region_cache_tests::helper_unknown_writes_reconcile_and_conditional_fallthrough ... ok\ntest jit::emit::region_cache_tests::loop_randomized_public_entries_write_through_and_sp_alias ... ok\ntest jit::emit::region_cache_tests::loop_scalar_aliases_match_reference_across_iterations ... ok\ntest jit::emit::region_cache_tests::verification_and_other_entries_never_publish_private_contract ... ok\ntest jit::emit::tbi_mask_tests::conditional_mask_load_and_scratch_join_execute_correctly ... ok\ntest spawn::selection_tests::owned_stub_selection_and_bounds ... ok\n\ntest result: ok. 24 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.06s\n\n\nrunning 8 tests\ntest interp::simd::tests::aes_mixcolumns_vector ... ok\ntest interp::simd::tests::fsqrt_dispatch_obeys_arm_nan_and_zero_bits ... ok\ntest interp::simd::tests::fsqrt_dn_modes_cover_every_scalar_and_vector_form ... ok\ntest interp::simd::tests::sbox ... ok\ntest softfloat::half_conversion_tests::directed_half_boundaries ... ok\ntest softfloat::half_conversion_tests::every_ieee_half_roundtrips ... ok\ntest softfloat::half_conversion_tests::half_exception_status ... ok\ntest softfloat::half_conversion_tests::host_flags_and_daz_do_not_change_status ... ok\n\ntest result: ok. 8 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s\n\n\nrunning 0 tests\n\ntest result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s\n\n\nrunning 0 tests\n\ntest result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s\n\n",
+      "stderr": "   Compiling attesor v0.1.0 (/Users/zhez/attesor/crates/attesor)\nwarning: unnecessary parentheses around method argument\n    --> crates/attesor/src/jit/emit.rs:5801:39\n     |\n5801 |                     a!(self, add(rcx, (1i32 << esize_log)));\n     |                                       ^                 ^\n     |\n     = note: `#[warn(unused_parens)]` (part of `#[warn(unused)]`) on by default\nhelp: remove these parentheses\n     |\n5801 -                     a!(self, add(rcx, (1i32 << esize_log)));\n5801 +                     a!(self, add(rcx, 1i32 << esize_log));\n     |\n\nwarning: use of deprecated function `libc::mach_thread_self`: Use the `mach2` crate instead\n   --> crates/attesor/src/loader.rs:127:50\n    |\n127 |         format!(\"th_port=0x{:x}\", unsafe { libc::mach_thread_self() }),\n    |                                                  ^^^^^^^^^^^^^^^^\n    |\n    = note: `#[warn(deprecated)]` on by default\n\nwarning: use of deprecated function `libc::mach_task_self`: Use the `mach2` crate instead\n  --> crates/attesor/src/symbols.rs:88:51\n   |\n88 |             let kr = mach_vm_read_overwrite(libc::mach_task_self(), fp, 16, v.as_mut_ptr() as u64, &mut len);\n   |                                                   ^^^^^^^^^^^^^^\n\nwarning: use of deprecated function `libc::mach_thread_self`: Use the `mach2` crate instead\n   --> crates/attesor/src/threads.rs:126:35\n    |\n126 |         let port = unsafe { libc::mach_thread_self() } as u64;\n    |                                   ^^^^^^^^^^^^^^^^\n\nwarning: use of deprecated function `libc::mach_thread_self`: Use the `mach2` crate instead\n   --> crates/attesor/src/workq.rs:225:39\n    |\n225 |             let port = unsafe { libc::mach_thread_self() } as u64;\n    |                                       ^^^^^^^^^^^^^^^^\n\nwarning: unreachable expression\n   --> crates/attesor/src/engine.rs:159:13\n    |\n158 |             crash(cpu, &format!(\"guest executed BRK #{imm:#x} (trap)\"));\n    |             ----------------------------------------------------------- any code following this expression is unreachable\n159 |             false\n    |             ^^^^^ unreachable expression\n    |\n    = note: `#[warn(unreachable_code)]` (part of `#[warn(unused)]`) on by default\n\nwarning: unreachable expression\n   --> crates/attesor/src/engine.rs:163:13\n    |\n162 |             crash(cpu, &format!(\"guest executed undefined instruction {insn:#010x}\"));\n    |             ------------------------------------------------------------------------- any code following this expression is unreachable\n163 |             false\n    |             ^^^^^ unreachable expression\n\nwarning: unreachable expression\n   --> crates/attesor/src/engine.rs:167:13\n    |\n166 |             crash(cpu, &format!(\"unimplemented instruction {insn:#010x}  {}\", disasm(insn)));\n    |             -------------------------------------------------------------------------------- any code following this expression is unreachable\n167 |             false\n    |             ^^^^^ unreachable expression\n\nwarning: field `ranges` is never read\n  --> crates/attesor/src/cache.rs:22:9\n   |\n19 | pub struct MappedCache {\n   |            ----------- field in this struct\n...\n22 |     pub ranges: Vec<(u64, u64)>,\n   |         ^^^^^^\n   |\n   = note: `MappedCache` has derived impls for the traits `Clone` and `Debug`, but these are intentionally ignored during dead code analysis\n   = note: `#[warn(dead_code)]` (part of `#[warn(unused)]`) on by default\n\nwarning: fields `base` and `end` are never read\n  --> crates/attesor/src/jit/mod.rs:78:5\n   |\n77 | pub struct CodeCache {\n   |            --------- fields in this struct\n78 |     base: u64,\n   |     ^^^^\n79 |     end: u64,\n   |     ^^^\n\nwarning: method `contains` is never used\n   --> crates/attesor/src/jit/mod.rs:161:12\n    |\n148 | impl CodeCache {\n    | -------------- method in this implementation\n...\n161 |     pub fn contains(&self, a: u64) -> bool {\n    |            ^^^^^^^^\n\nwarning: field `path` is never read\n  --> crates/attesor/src/loader.rs:16:9\n   |\n15 | pub struct Image {\n   |            ----- field in this struct\n16 |     pub path: String,\n   |         ^^^^\n\nwarning: fields `stack_lo` and `stack_hi` are never read\n  --> crates/attesor/src/loader.rs:27:9\n   |\n22 | pub struct Loaded {\n   |            ------ fields in this struct\n...\n27 |     pub stack_lo: u64,\n   |         ^^^^^^^^\n28 |     pub stack_hi: u64,\n   |         ^^^^^^^^\n\nwarning: constant `LC_SYMTAB` is never used\n  --> crates/attesor/src/macho.rs:18:11\n   |\n18 | pub const LC_SYMTAB: u32 = 0x2;\n   |           ^^^^^^^^^\n\nwarning: field `maxprot` is never read\n  --> crates/attesor/src/macho.rs:31:9\n   |\n25 | pub struct Segment {\n   |            ------- field in this struct\n...\n31 |     pub maxprot: u32,\n   |         ^^^^^^^\n   |\n   = note: `Segment` has derived impls for the traits `Clone` and `Debug`, but these are intentionally ignored during dead code analysis\n\nwarning: field `cpusubtype` is never read\n  --> crates/attesor/src/macho.rs:41:9\n   |\n36 | pub struct MachO {\n   |            ----- field in this struct\n...\n41 |     pub cpusubtype: u32,\n   |         ^^^^^^^^^^\n   |\n   = note: `MachO` has derived impls for the traits `Clone` and `Debug`, but these are intentionally ignored during dead code analysis\n\nwarning: field `tramp` is never read\n  --> crates/attesor/src/signals.rs:13:9\n   |\n11 | pub struct GuestAction {\n   |            ----------- field in this struct\n12 |     pub handler: u64,\n13 |     pub tramp: u64,\n   |         ^^^^^\n   |\n   = note: `GuestAction` has a derived impl for the trait `Clone`, but this is intentionally ignored during dead code analysis\n\nwarning: direct cast of function item into an integer\n   --> crates/attesor/src/engine.rs:122:55\n    |\n122 |     unsafe { libc::signal(libc::SIGUSR1, dump_threads as usize) };\n    |                                                       ^^^^^^^^\n    |\n    = note: `#[warn(function_casts_as_integer)]` on by default\nhelp: first cast to a pointer `as *const ()`\n    |\n122 |     unsafe { libc::signal(libc::SIGUSR1, dump_threads as *const () as usize) };\n    |                                                       ++++++++++++\n\nwarning: direct cast of function item into an integer\n   --> crates/attesor/src/engine.rs:123:55\n    |\n123 |     unsafe { libc::signal(libc::SIGUSR2, dump_current as usize) };\n    |                                                       ^^^^^^^^\n    |\nhelp: first cast to a pointer `as *const ()`\n    |\n123 |     unsafe { libc::signal(libc::SIGUSR2, dump_current as *const () as usize) };\n    |                                                       ++++++++++++\n\nwarning: direct cast of function item into an integer\n   --> crates/attesor/src/engine.rs:126:52\n    |\n126 |             libc::signal(libc::SIGSEGV, fault_dump as usize);\n    |                                                    ^^^^^^^^\n    |\nhelp: first cast to a pointer `as *const ()`\n    |\n126 |             libc::signal(libc::SIGSEGV, fault_dump as *const () as usize);\n    |                                                    ++++++++++++\n\nwarning: direct cast of function item into an integer\n   --> crates/attesor/src/engine.rs:127:51\n    |\n127 |             libc::signal(libc::SIGBUS, fault_dump as usize);\n    |                                                   ^^^^^^^^\n    |\nhelp: first cast to a pointer `as *const ()`\n    |\n127 |             libc::signal(libc::SIGBUS, fault_dump as *const () as usize);\n    |                                                   ++++++++++++\n\nwarning: direct cast of function item into an integer\n   --> crates/attesor/src/jit/mod.rs:451:37\n    |\n451 |     cpu.jit_exit = attesor_jit_exit as usize as u64;\n    |                                     ^^^^^^^^\n    |\nhelp: first cast to a pointer `as *const ()`\n    |\n451 |     cpu.jit_exit = attesor_jit_exit as *const () as usize as u64;\n    |                                     ++++++++++++\n\nwarning: direct cast of function item into an integer\n   --> crates/attesor/src/jit/mod.rs:453:48\n    |\n453 |     cpu.helpers[HELPER_INTERP] = helper_interp as usize as u64;\n    |                                                ^^^^^^^^\n    |\nhelp: first cast to a pointer `as *const ()`\n    |\n453 |     cpu.helpers[HELPER_INTERP] = helper_interp as *const () as usize as u64;\n    |                                                ++++++++++++\n\nwarning: direct cast of function item into an integer\n   --> crates/attesor/src/jit/mod.rs:454:52\n    |\n454 |     cpu.helpers[HELPER_COMMPAGE] = helper_commpage as usize as u64;\n    |                                                    ^^^^^^^^\n    |\nhelp: first cast to a pointer `as *const ()`\n    |\n454 |     cpu.helpers[HELPER_COMMPAGE] = helper_commpage as *const () as usize as u64;\n    |                                                    ++++++++++++\n\nwarning: direct cast of function item into an integer\n    --> crates/attesor/src/jit/emit.rs:6575:53\n     |\n6575 |         cpu.helpers[HELPER_INTERP] = observing_exit as usize as u64;\n     |                                                     ^^^^^^^^\n     |\nhelp: first cast to a pointer `as *const ()`\n     |\n6575 |         cpu.helpers[HELPER_INTERP] = observing_exit as *const () as usize as u64;\n     |                                                     ++++++++++++\n\nwarning: direct cast of function item into an integer\n   --> crates/attesor/src/jit/selftest.rs:634:67\n    |\n634 |         translated.helpers[HELPER_INTERP] = tbi_clobbering_helper as usize as u64;\n    |                                                                   ^^^^^^^^\n    |\nhelp: first cast to a pointer `as *const ()`\n    |\n634 |         translated.helpers[HELPER_INTERP] = tbi_clobbering_helper as *const () as usize as u64;\n    |                                                                   ++++++++++++\n\nwarning: `mach_vm_read_overwrite` redeclared with a different signature\n   --> crates/attesor/src/symbols.rs:100:5\n    |\n100 |     fn mach_vm_read_overwrite(task: libc::mach_port_t, addr: u64, size: u64, data: u64, outsize: *mut libc::size_t) -> libc::c_int;\n    |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ this signature doesn't match the previous declaration\n    |\n   ::: crates/attesor/src/guestmem.rs:6:5\n    |\n  6 |     fn mach_vm_read_overwrite(task: u32, addr: u64, size: u64, data: u64, outsize: *mut u64) -> i32;\n    |     ------------------------------------------------------------------------------------------------ `mach_vm_read_overwrite` previously declared here\n    |\n    = note: expected `unsafe extern \"C\" fn(u32, u64, u64, u64, *mut u64) -> i32`\n               found `unsafe extern \"C\" fn(u32, u64, u64, u64, *mut usize) -> i32`\n    = note: `#[warn(clashing_extern_declarations)]` on by default\n\nwarning: `attesor` (bin \"attesor\" test) generated 27 warnings (run `cargo fix --bin \"attesor\" -p attesor --tests` to apply 10 suggestions)\n    Finished `test` profile [optimized + debuginfo] target(s) in 17.66s\n     Running unittests src/main.rs (target/debug/deps/attesor-ce03b050cb49f88d)\n     Running unittests src/lib.rs (target/debug/deps/attesor_core-041a367103a27d42)\n     Running unittests src/main.rs (target/debug/deps/difftest-23b5b00911c73677)\n   Doc-tests attesor_core\n",
+      "passed": true,
+      "seconds": 18.051581272
+    },
+    {
+      "name": "cpu-semantics",
+      "command": [
+        "python3",
+        "tests/attesor/accept.py",
+        "--attesor",
+        "/private/tmp/attesor-final-target/release/attesor",
+        "--count",
+        "100000",
+        "--output",
+        "/private/tmp/attesor-perf/round2-frozen-acceptance.cpu.json"
+      ],
+      "returncode": 0,
+      "stdout": "selftest-fpblocks: PASS {'ok': 100000, 'mismatch': 0, 'skipped': 0, 'insns': 650599, 'fallback_insns': 0}\nselftest-blocks: PASS {'ok': 8893, 'mismatch': 0, 'skipped': 91107, 'insns': 30638, 'fallback_insns': 1178}\nselftest-selchain: PASS {'ok': 36205, 'mismatch': 0, 'skipped': 63795, 'native': 36205, 'dead_flag_skips': 26730}\nselftest-ff000000:1f000000: PASS {'ok': 75018, 'mismatch': 0, 'skipped': 24982, 'native': 50098}\nselftest-bf20fc00:0e20cc00: PASS {'ok': 74862, 'mismatch': 0, 'skipped': 25138, 'native': 74862}\nselftest-9f800400:0f000000: PASS {'ok': 28156, 'mismatch': 0, 'skipped': 71844, 'native': 4576}\nselftest-fpnan: PASS {'ok': 62208, 'mismatch': 0, 'skipped': 0, 'native': 62208}\nselftest-fpnan-fpcr: PASS {'ok': 62208, 'mismatch': 0, 'skipped': 0, 'native': 62208}\nAcceptance: PASS; report /private/tmp/attesor-perf/round2-frozen-acceptance.cpu.json\n",
+      "stderr": "",
+      "passed": true,
+      "seconds": 293.774737174
+    },
+    {
+      "name": "crypto",
+      "command": [
+        "env",
+        "ATTESOR=/private/tmp/attesor-final-target/release/attesor",
+        "tests/attesor/crypto-check.sh"
+      ],
+      "returncode": 0,
+      "stdout": "jit selftest [ffffcc00:4e284800]: ok=12000 mismatch=0 skipped=0 native=12000\njit selftest [bfe0fc00:0ee0e000]: ok=12000 mismatch=0 skipped=0 native=12000\njit selftest [ffe0ec00:5e004000]: ok=12000 mismatch=0 skipped=0 native=12000\njit selftest [fffffc00:5e282800]: ok=12000 mismatch=0 skipped=0 native=12000\njit selftest [ffe0fc00:5e006000]: ok=12000 mismatch=0 skipped=0 native=12000\njit selftest [ffffcc00:4e284800]: ok=12000 mismatch=0 skipped=0 native=12000\njit selftest [bfe0fc00:0ee0e000]: ok=12000 mismatch=0 skipped=0 native=12000\njit selftest [ffe0ec00:5e004000]: ok=12000 mismatch=0 skipped=0 native=12000\njit selftest [fffffc00:5e282800]: ok=12000 mismatch=0 skipped=0 native=12000\njit selftest [ffe0fc00:5e006000]: ok=12000 mismatch=0 skipped=0 native=12000\ncrypto-kat: PASS\ncrypto-kat: PASS\ncrypto-kat: PASS\nchecksum 05e2e1ad19256390\nchecksum 05e2e1ad19256390\n",
+      "stderr": "",
+      "passed": true,
+      "seconds": 93.965766175
+    },
+    {
+      "name": "aot-persistence",
+      "command": [
+        "python3",
+        "tests/attesor/aot-checkpoint.py",
+        "--attesor",
+        "/private/tmp/attesor-final-target/release/attesor"
+      ],
+      "returncode": 0,
+      "stdout": "PASS: checkpoint survived SIGKILL and next process loaded main-image blocks\nPASS: changed code-generation switches reject the default cache\nPASS: incompatible cache rebuilt from unchanged profile and loaded on restart\nPASS: interrupted coverage rebuild retries without new profile blocks\nPASS: failed exec preserves checkpoints and SIGKILL cache reuse\nPASS: multithreaded guest fork keeps parent and child checkpoints running\nPASS: parent/child checkpoint output survives SIGKILL and loads on restart\n",
+      "stderr": "",
+      "passed": true,
+      "seconds": 11.816837700000008
+    },
+    {
+      "name": "neon-saturation",
+      "command": [
+        "python3",
+        "tests/attesor/neon-qdmulh-check.py",
+        "/private/tmp/attesor-final-target/release/attesor"
+      ],
+      "returncode": 0,
+      "stdout": "PASS JIT qdmulh digest 4d92fd0ec98359f5 qc_cases 12708 boundary PASS\nPASS interpreter qdmulh digest 4d92fd0ec98359f5 qc_cases 12708 boundary PASS\njit selftest [9fe0fc00:0e60b400]: ok=20000 mismatch=0 skipped=0 native=20000\njit selftest [9fe0fc00:0ea0b400]: ok=20000 mismatch=0 skipped=0 native=20000\nPASS benchmark checksum checksum 93579ade5b97531f 01c691828ef0017b\n",
+      "stderr": "",
+      "passed": true,
+      "seconds": 33.36659990700002
+    },
+    {
+      "name": "fp16-conversion",
+      "command": [
+        "python3",
+        "tests/attesor/fp16-convert-check.py",
+        "/private/tmp/attesor-final-target/release/attesor"
+      ],
+      "returncode": 0,
+      "stdout": "PASS integer-reference: tiny FP32 FZ boundaries PASS\nfp16-convert PASS cases=60000 digest=40c315811183ddde\nPASS JIT: tiny FP32 FZ boundaries PASS\nfp16-convert PASS cases=60000 digest=40c315811183ddde\nPASS interpreter: tiny FP32 FZ boundaries PASS\nfp16-convert PASS cases=60000 digest=40c315811183ddde\ndefault jit selftest [bffffc00:0e216800]: ok=20000 mismatch=0 skipped=0 native=20000\nFPCR jit selftest [bffffc00:0e216800]: ok=20000 mismatch=0 skipped=0 native=20000\n",
+      "stderr": "",
+      "passed": true,
+      "seconds": 33.22815808600001
+    },
+    {
+      "name": "fpcr-mode-transitions",
+      "command": [
+        "python3",
+        "tests/attesor/fpcr-mode-check.py",
+        "--attesor",
+        "/private/tmp/attesor-final-target/release/attesor"
+      ],
+      "returncode": 0,
+      "stdout": "PASS interpreter fpcr-boundary PASS cases=20 checksum=da55d2f630897cc0\nPASS JIT fpcr-boundary PASS cases=20 checksum=da55d2f630897cc0\nPASS region JIT fpcr-boundary PASS cases=20 checksum=da55d2f630897cc0\nPASS region AOT aot: loaded 45 blocks for fpcr-mode fpcr-boundary PASS cases=20 checksum=da55d2f630897cc0\n",
+      "stderr": "",
+      "passed": true,
+      "seconds": 6.1631295589999695
+    },
+    {
+      "name": "debugger-protocol",
+      "command": [
+        "python3",
+        "tests/attesor/gdb-protocol.py",
+        "/private/tmp/attesor-final-target/release/attesor"
+      ],
+      "returncode": 0,
+      "stdout": "PASS initial stop\nPASS feature negotiation\nPASS vCont advertises implemented actions only\nPASS vCont rejects unsupported action\nPASS malformed continue rejected\nPASS register write\nPASS register read\nPASS short register write rejected\nPASS invalid register hex rejected\nPASS bad writes preserve register\nPASS truncated register file rejected\nPASS invalid register file rejected atomically\nPASS bad checksum negatively acknowledged\nPASS bad checksum does not mutate\nPASS NAK retransmits last reply\nPASS vector register write\nPASS vector register read\nPASS memory write\nPASS memory read\nPASS length mismatch rejected\nPASS invalid memory hex rejected\nPASS bad memory writes preserve bytes\nPASS unknown free rejected\nPASS debugger allocation released\nPASS double free rejected\nPASS upload to RX expression allocation\nPASS free RX allocation\nPASS huge XML offset does not overflow\nPASS no-ack negotiation\nPASS no-ack request\nPASS set guest PC\nPASS single step\nPASS unaligned breakpoint rejected\nPASS wrong breakpoint size rejected\nPASS breakpoint insert\nPASS continue reaches breakpoint\nPASS breakpoint remove\nPASS running Ctrl-C reports SIGINT\nPASS stop query preserves SIGINT\nPASS set exit PC\nPASS exit status packet\nPASS guest exit status\nPASS initial stop\nPASS set detach PC\nPASS detach acknowledged\nPASS detached guest continues\nPASS initial stop\nPASS set disconnect PC\nPASS disconnected guest continues\n{\"passed\": true, \"checks\": 49, \"binary\": \"/private/tmp/attesor-final-target/release/attesor\"}\n",
+      "stderr": "",
+      "passed": true,
+      "seconds": 0.4792899610000063
+    },
+    {
+      "name": "debugger-lldb",
+      "command": [
+        "python3",
+        "tests/attesor/gdb-lldb-fd.py",
+        "/private/tmp/attesor-final-target/release/attesor"
+      ],
+      "returncode": 0,
+      "stdout": "(lldb) target create \"/var/folders/b4/tnjkjcm52s5g4n894r8xrcfh0000gn/T/attesor-lldb-fd-f3hp7i4x/guest\"\nCurrent executable set to '/var/folders/b4/tnjkjcm52s5g4n894r8xrcfh0000gn/T/attesor-lldb-fd-f3hp7i4x/guest' (arm64).\n(lldb) process connect --plugin gdb-remote fd://4\nProcess 14688 stopped\n* thread #1, stop reason = signal SIGTRAP\n    frame #0: 0x00000005800049c0 \n->  0x5800049c0: mov    x0, sp\n    0x5800049c4: and    sp, x0, #0xfffffffffffffff0\n    0x5800049c8: mov    x29, #0x0                 ; =0 \n    0x5800049cc: mov    x30, #0x0                 ; =0 \nTarget 0: (guest) stopped.\n(lldb) target modules load --file guest --slide 0x400000000\n(lldb) b add3\nBreakpoint 1: where = guest`add3 at guest.c:2:72, address = 0x0000000500000460\n(lldb) c\nwarning: guest was compiled with optimization - stepping may behave oddly; variables may not be available.\nProcess 14688 resuming\nProcess 14688 stopped\n* thread #1, stop reason = breakpoint 1.1\n    frame #0: 0x0000000500000460 guest`add3(a=0, b=10, c=100) at guest.c:2:72 [opt]\n   1   \t#include <stdio.h>\n-> 2   \t__attribute__((noinline)) long add3(long a, long b, long c) { return a + b * 2 + c * 3; }\n    \t                                                                       ^\n   3   \tint main(void) { long s = 0; for (int i = 0; i < 5; i++) s += add3(i, 10, 100); printf(\"sum %ld\\n\", s); return 7; }\nTarget 0: (guest) stopped.\n(lldb) p a + b\n(long) 10\n(lldb) p add3(1, 2, 3)\n(long) 14\n(lldb) register write x1 5\n(lldb) finish\nProcess 14688 stopped\n* thread #1, stop reason = step out\nReturn value: (long) $0 = 310\n\n    frame #0: 0x0000000500000498 guest`main at guest.c:3:60 [opt]\n   1   \t#include <stdio.h>\n   2   \t__attribute__((noinline)) long add3(long a, long b, long c) { return a + b * 2 + c * 3; }\n-> 3   \tint main(void) { long s = 0; for (int i = 0; i < 5; i++) s += add3(i, 10, 100); printf(\"sum %ld\\n\", s); return 7; }\n    \t                                                           ^\nTarget 0: (guest) stopped.\n(lldb) breakpoint delete\nAll breakpoints removed. (1 breakpoint)\n\nsum 1600\n\ngdb-lldb-fd: PASS (symbols, arguments, expressions including guest function call, register write, finish, exit)\n",
+      "stderr": "",
+      "passed": true,
+      "seconds": 2.6554619679999973
+    },
+    {
+      "name": "native-zlib",
+      "command": [
+        "env",
+        "ATTESOR=/private/tmp/attesor-final-target/release/attesor",
+        "tests/attesor/native-zlib-check.sh"
+      ],
+      "returncode": 0,
+      "stdout": "bridge-calls=0\nnative-zlib: PASS\nbridge-calls=4332\nnative-zlib: PASS\nbridge-calls=4332\nnative-zlib: PASS\nnative-chain: PASS\nbridge-calls=0\nnative-zlib: PASS\nnative-chain: PASS\nnative-zlib suite: PASS\n",
+      "stderr": "/tmp/attesor-native-check.rP9bfD/native/libattesornative.dylib: replacing existing signature\n",
+      "passed": true,
+      "seconds": 17.108510011999954
+    },
+    {
+      "name": "thread-startup",
+      "command": [
+        "python3",
+        "tests/attesor/thread-startup-check.py",
+        "/private/tmp/attesor-final-target/release/attesor"
+      ],
+      "returncode": 0,
+      "stdout": "PASS x86_64: 30 rounds x 4 joined workers x 1 processes\nPASS arm64: 30 rounds x 4 joined workers x 10 processes\n",
+      "stderr": "",
+      "passed": true,
+      "seconds": 14.427891989000045
+    },
+    {
+      "name": "launcher-fixtures",
+      "command": [
+        "python3",
+        "tests/attesor/launcher-check.py",
+        "--attesor",
+        "/private/tmp/attesor-final-target/release/attesor"
+      ],
+      "returncode": 0,
+      "stdout": "PASS universal executable contains x86 and ARM\nPASS injection preserves ARM slice byte for byte\nPASS injection preserves executable permissions\nPASS stub/runner preserve empty, quoted, Unicode and shell-like arguments\nPASS shell-like arguments are never evaluated\nPASS ordinary app GPU flags\nPASS Electron flags preserve executable position and arguments\nPASS running application restore is refused\nPASS unknown process visibility refuses restore\nPASS missing runner preserves launch failure status 127\nPASS real emulator executes the retained ARM slice and returns its exit status\nPASS failed restore preparation leaves the universal executable intact\nPASS thin original restores exactly, including file layout\nPASS same bundle identifier cannot collide in backup storage\nPASS failed preparation leaves the original executable intact\nPASS restore retains updated ARM code instead of reverting backup\nPASS scan upgrades an old owned stub and retains updated ARM code\nPASS reinject is safe for an already-current stub\nPASS injection retains both arm64 and arm64e slices\nPASS multi-ARM original fat file restores exactly\nPASS scan does not inject a running application\nPASS scan does not inject when process status is unknown\nPASS legacy nested wrapper migrates to one universal bundle\nPASS migrated wrapper restores exact original executable\nPASS list reports handled apps without modifying application executables\nlauncher integration: 25 checks PASS\nPASS electron-fixture: automatic GUI policy remains enabled\nPASS electron-fixture: GUI stub/runner/translator retain the original PID\nPASS electron-fixture: Node argv/cwd/env/pipes/status are transparent\nPASS electron-fixture: Node keeps the original PID\nPASS electron-fixture: renderer argv/cwd/env/pipes/status are transparent\nPASS electron-fixture: renderer keeps the original PID\nPASS electron-fixture: utility argv/cwd/env/pipes/status are transparent\nPASS electron-fixture: utility keeps the original PID\nPASS electron-fixture: GPU child argv/cwd/env/pipes/status are transparent\nPASS electron-fixture: GPU child keeps the original PID\nPASS electron-fixture: split child option argv/cwd/env/pipes/status are transparent\nPASS electron-fixture: split child option keeps the original PID\nPASS electron-fixture: GUI parent launching the same executable as Node retains IPC\nPASS electron-fixture: real ARM guest output and status cross the Node entry transparently\nPASS electron-fixture: real ARM Node guest retains the original PID\nPASS electron-fixture: real ARM GUI guest retains PID and GUI logs\nPASS chromium-fixture: automatic GUI policy remains enabled\nPASS chromium-fixture: GUI stub/runner/translator retain the original PID\nPASS chromium-fixture: Node argv/cwd/env/pipes/status are transparent\nPASS chromium-fixture: Node keeps the original PID\nPASS chromium-fixture: renderer argv/cwd/env/pipes/status are transparent\nPASS chromium-fixture: renderer keeps the original PID\nPASS chromium-fixture: utility argv/cwd/env/pipes/status are transparent\nPASS chromium-fixture: utility keeps the original PID\nPASS chromium-fixture: GPU child argv/cwd/env/pipes/status are transparent\nPASS chromium-fixture: GPU child keeps the original PID\nPASS chromium-fixture: split child option argv/cwd/env/pipes/status are transparent\nPASS chromium-fixture: split child option keeps the original PID\nPASS chromium-fixture: GUI parent launching the same executable as Node retains IPC\nPASS chromium-fixture: real ARM guest output and status cross the Node entry transparently\nPASS chromium-fixture: real ARM Node guest retains the original PID\nPASS chromium-fixture: real ARM GUI guest retains PID and GUI logs\nPASS missing GUI runtime is logged and returns its exec failure status\nPASS GUI runtime failure does not start a post-exit alert supervisor\nPASS shell-like arguments are never executed\ngeneric launch roles: 35 checks PASS\n",
+      "stderr": "",
+      "passed": true,
+      "seconds": 37.72955529500007
+    },
+    {
+      "name": "startup-driver",
+      "command": [
+        "python3",
+        "tests/attesor/startup-driver-check.py"
+      ],
+      "returncode": 0,
+      "stdout": "PASS startup driver ready []\nPASS startup driver ready ['--gpu', 'one argument']\nPASS startup driver exit []\nPASS startup driver timeout []\n",
+      "stderr": "",
+      "passed": true,
+      "seconds": 3.432898489999957
+    },
+    {
+      "name": "exec-modes-and-runtime-options",
+      "command": [
+        "python3",
+        "tests/attesor/exec-modes-check.py",
+        "/private/tmp/attesor-final-target/release/attesor"
+      ],
+      "returncode": 0,
+      "stdout": "PASS guest spawn  Node=1\nPASS guest spawn Aurora Chat.app Node=1\nPASS guest spawn Vector Editor.app Node=1\nPASS guest exec  Node=1\nPASS guest exec Aurora Chat.app Node=1\nPASS guest exec Vector Editor.app Node=1\nPASS guest spawn  Node=None\nPASS guest spawn Aurora Chat.app Node=None\nPASS guest spawn Vector Editor.app Node=None\nPASS guest exec  Node=None\nPASS guest exec Aurora Chat.app Node=None\nPASS guest exec Vector Editor.app Node=None\nPASS guest genuine universal stays native\nPASS guest FAT64 managed\nPASS native spawn Aurora Chat.app\nPASS native spawnp Aurora Chat.app\nPASS native exec Aurora Chat.app\nPASS guest -> native -> managed Aurora Chat.app\nPASS native spawn Vector Editor.app\nPASS native spawnp Vector Editor.app\nPASS native exec Vector Editor.app\nPASS guest -> native -> managed Vector Editor.app\nPASS native thin ARM\nPASS native genuine universal stays native\nPASS native shebang arm-leaf\nPASS guest shebang arm-leaf\nPASS native shebang owned-fat64\nPASS guest shebang owned-fat64\nPASS Node IPC FD3 False\nPASS Node IPC FD3 True\nPASS native env shebang\nPASS guest env shebang\nPASS eight native threads first-spawn owned ARM\nPASS guest custom argv0 ''\nPASS native custom argv0 ''\nPASS guest custom argv0 ''\nPASS native custom argv0 ''\nPASS guest native guest custom argv0 ''\nPASS guest custom argv0 ''\nPASS native custom argv0 ''\nPASS guest custom argv0 ''\nPASS native custom argv0 ''\nPASS guest native guest custom argv0 ''\nPASS guest custom argv0 ''\nPASS native custom argv0 ''\nPASS guest custom argv0 ''\nPASS native custom argv0 ''\nPASS guest native guest custom argv0 ''\nPASS guest custom argv0 '-multicall'\nPASS native custom argv0 '-multicall'\nPASS guest custom argv0 '-multicall'\nPASS native custom argv0 '-multicall'\nPASS guest native guest custom argv0 '-multicall'\nPASS guest custom argv0 '-multicall'\nPASS native custom argv0 '-multicall'\nPASS guest custom argv0 '-multicall'\nPASS native custom argv0 '-multicall'\nPASS guest native guest custom argv0 '-multicall'\nPASS guest custom argv0 '-multicall'\nPASS native custom argv0 '-multicall'\nPASS guest custom argv0 '-multicall'\nPASS native custom argv0 '-multicall'\nPASS guest native guest custom argv0 '-multicall'\nPASS guest custom argv0 '\u540d\u5b57 with spaces \u03bb'\nPASS native custom argv0 '\u540d\u5b57 with spaces \u03bb'\nPASS guest custom argv0 '\u540d\u5b57 with spaces \u03bb'\nPASS native custom argv0 '\u540d\u5b57 with spaces \u03bb'\nPASS guest native guest custom argv0 '\u540d\u5b57 with spaces \u03bb'\nPASS guest custom argv0 '\u540d\u5b57 with spaces \u03bb'\nPASS native custom argv0 '\u540d\u5b57 with spaces \u03bb'\nPASS guest custom argv0 '\u540d\u5b57 with spaces \u03bb'\nPASS native custom argv0 '\u540d\u5b57 with spaces \u03bb'\nPASS guest native guest custom argv0 '\u540d\u5b57 with spaces \u03bb'\nPASS guest custom argv0 '\u540d\u5b57 with spaces \u03bb'\nPASS native custom argv0 '\u540d\u5b57 with spaces \u03bb'\nPASS guest custom argv0 '\u540d\u5b57 with spaces \u03bb'\nPASS native custom argv0 '\u540d\u5b57 with spaces \u03bb'\nPASS guest native guest custom argv0 '\u540d\u5b57 with spaces \u03bb'\nPASS shebang replaces caller argv0 ''\nPASS shebang replaces caller argv0 ''\nPASS shebang replaces caller argv0 'ignored script argv0 \u03bb'\nPASS shebang replaces caller argv0 'ignored script argv0 \u03bb'\nPASS shebang replaces caller argv0 ''\nPASS shebang replaces caller argv0 ''\nPASS shebang replaces caller argv0 'ignored script argv0 \u03bb'\nPASS shebang replaces caller argv0 'ignored script argv0 \u03bb'\nPASS shebang single optional argument ''\nPASS shebang single optional argument ''\nPASS shebang single optional argument ' --single optional argument with spaces'\nPASS shebang single optional argument ' --single optional argument with spaces'\nPASS ARM shell argv0 '' False\nPASS ARM shell argv0 '' True\nPASS ARM shell argv0 'sh' False\nPASS ARM shell argv0 'sh' True\nPASS ARM shell argv0 '-sh' False\nPASS ARM shell argv0 '-sh' True\nPASS ARM shell argv0 'shell \u540d\u79f0 \u03bb' False\nPASS ARM shell argv0 'shell \u540d\u79f0 \u03bb' True\nexec-modes: PASS 116 checks\n",
+      "stderr": "",
+      "passed": true,
+      "seconds": 182.890314762
+    },
+    {
+      "name": "aot-static-prewarm",
+      "command": [
+        "python3",
+        "tests/attesor/aot-prewarm.py",
+        "--attesor",
+        "/private/tmp/attesor-final-target/release/attesor"
+      ],
+      "returncode": 0,
+      "stdout": "PASS: prewarm executes neither constructor nor main\nPASS: main and dyld are statically translated\nPASS: prewarm does not create an execution profile\nPASS: prewarm executes neither constructor nor main\nPASS: explicit prewarm preserves an existing execution profile\nPASS: actual execution reaches constructor and checksum\nPASS: new process actually loads main and dyld translations\nPASS: prewarmed runtime matches independent native output\nPASS: prewarm executes neither constructor nor main\nPASS: redirected commpage compatibility is recorded\nPASS: actual execution reaches constructor and checksum\nPASS: new process actually loads main and dyld translations\nPASS: redirected prewarm is reusable by a new process\nPASS: prewarm executes neither constructor nor main\nPASS: entry fallback follows BL to its callee without function starts\nPASS: actual execution reaches constructor and checksum\nPASS: new process actually loads main and dyld translations\nPASS: stripped executable runs from prewarmed translations\nPASS: prewarm executes neither constructor nor main\nPASS: bundle/helper discovery deduplicates aliases and skips native/resources/symlink loops\nPASS: actual execution reaches constructor and checksum\nPASS: new process actually loads main and dyld translations\nPASS: bundle executable has a reusable runtime cache\nPASS: actual execution reaches constructor and checksum\nPASS: new process actually loads main and dyld translations\nPASS: bundle executable has a reusable runtime cache\nPASS: incompatible --interp is rejected before cache writes\nPASS: incompatible --no-aot is rejected before cache writes\nPASS: native-only targets are rejected clearly\naot-prewarm: PASS (29 checks)\n",
+      "stderr": "",
+      "passed": true,
+      "seconds": 10.695584381000003
+    },
+    {
+      "name": "tbi-mask",
+      "command": [
+        "python3",
+        "tests/attesor/tbi-mask-check.py",
+        "/private/tmp/attesor-final-target/release/attesor"
+      ],
+      "returncode": 0,
+      "stdout": "jit selftest [tbiblocks]: ok=20000 mismatch=0 skipped=0 native=280000 fallback_insns=40000\njit selftest [tbiblocks]: ok=20000 mismatch=0 skipped=0 native=280000 fallback_insns=40000\nPASS default: checksum 89b4bc1484a05646\nPASS old-shifts: checksum 89b4bc1484a05646\nPASS redirected-commpage: checksum 89b4bc1484a05646\nPASS host-call-return: checksum 89b4bc1484a05646\n",
+      "stderr": "",
+      "passed": true,
+      "seconds": 8.325504921999936
+    },
+    {
+      "name": "direct-test-branches",
+      "command": [
+        "python3",
+        "tests/attesor/direct-branch-check.py",
+        "/private/tmp/attesor-final-target/release/attesor"
+      ],
+      "returncode": 0,
+      "stdout": "PASS direct-jcc: direct-branch PASS cases=196608 checksum 581343f670cdf383\nPASS direct-jcc: throughput workload checksum 02146e960ebb2a24 2ed0b1c930fae8a4\ndirect-jcc jit selftest [branch]: ok=10625 mismatch=0 skipped=9375 native=10625\nPASS setcc-test-baseline: direct-branch PASS cases=196608 checksum 581343f670cdf383\nPASS setcc-test-baseline: throughput workload checksum 02146e960ebb2a24 2ed0b1c930fae8a4\nsetcc-test-baseline jit selftest [branch]: ok=10625 mismatch=0 skipped=9375 native=10625\n",
+      "stderr": "",
+      "passed": true,
+      "seconds": 21.416350186000045
+    },
+    {
+      "name": "register-next-use",
+      "command": [
+        "python3",
+        "tests/attesor/nextuse-check.py",
+        "/private/tmp/attesor-final-target/release/attesor"
+      ],
+      "returncode": 0,
+      "stdout": "next-use jit selftest [blocks]: ok=8893 mismatch=0 skipped=91107 insns=30638 fallback_insns=1178\nnext-use jit selftest [fpblocks]: ok=100000 mismatch=0 skipped=0 insns=650599 fallback_insns=0\nnext-use jit selftest [tbiblocks]: ok=5000 mismatch=0 skipped=0 native=70000 fallback_insns=10000\nnext-use jit selftest [selchain]: ok=7177 mismatch=0 skipped=12823 native=7177 dead_flag_skips=5321\nold-policy jit selftest [blocks]: ok=8893 mismatch=0 skipped=91107 insns=30638 fallback_insns=1178\nold-policy jit selftest [fpblocks]: ok=100000 mismatch=0 skipped=0 insns=650599 fallback_insns=0\nold-policy jit selftest [tbiblocks]: ok=5000 mismatch=0 skipped=0 native=70000 fallback_insns=10000\nold-policy jit selftest [selchain]: ok=7177 mismatch=0 skipped=12823 native=7177 dead_flag_skips=5297\nPASS next-use checksum c3ec706e00000000 02dc4648006840c8\nPASS old-policy checksum c3ec706e00000000 02dc4648006840c8\nPASS redirected checksum c3ec706e00000000 02dc4648006840c8\nPASS call-return checksum c3ec706e00000000 02dc4648006840c8\nPASS exceptional V pressure next-use checksum 82ca0ba46236e8e4 02dc4648006840c8\nPASS exceptional V pressure nextuse checksum 82ca0ba46236e8e4 02dc4648006840c8\n",
+      "stderr": "",
+      "passed": true,
+      "seconds": 282.0438347180001
+    },
+    {
+      "name": "natural-loop-cache",
+      "command": [
+        "python3",
+        "tests/attesor/regioncache-check.py",
+        "/private/tmp/attesor-final-target/release/attesor"
+      ],
+      "returncode": 0,
+      "stdout": "jit selftest [blocks]: ok=855 mismatch=0 skipped=9145 insns=2908 fallback_insns=113\njit selftest [fpblocks]: ok=10000 mismatch=0 skipped=0 insns=64997 fallback_insns=0\njit selftest [tbiblocks]: ok=10000 mismatch=0 skipped=0 native=140000 fallback_insns=20000\njit selftest [selchain]: ok=3611 mismatch=0 skipped=6389 native=3611 dead_flag_skips=2629\nPASS baseline JIT checksum 96375f0288ae7017 4086ce9cb7a237c2\nPASS region JIT checksum 96375f0288ae7017 4086ce9cb7a237c2\nPASS region commpage checksum 96375f0288ae7017 4086ce9cb7a237c2\nPASS region old predictor checksum 96375f0288ae7017 4086ce9cb7a237c2\nPASS region AOT cold: empty private cache, no load\nPASS region prewarmed AOT load aot: loaded 18 blocks for arm64\n checksum 96375f0288ae7017 4086ce9cb7a237c2\nPASS region warm AOT reload aot: loaded 18 blocks for arm64\n checksum 96375f0288ae7017 4086ce9cb7a237c2\nPASS region AOT identity: baseline rejects opt-in cache\n",
+      "stderr": "",
+      "passed": true,
+      "seconds": 27.287143504999904
+    },
+    {
+      "name": "fp16-exception-state",
+      "command": [
+        "python3",
+        "tests/attesor/fp16-status-check.py",
+        "/private/tmp/attesor-final-target/release/attesor"
+      ],
+      "returncode": 0,
+      "stdout": "PASS integer-reference: fp16-status PASS cases=60000 digest=725b1a2cd2c9de4f clear-isolation=PASS double-boundaries=PASS\nPASS JIT: fp16-status PASS cases=60000 digest=725b1a2cd2c9de4f clear-isolation=PASS double-boundaries=PASS\nPASS interpreter: fp16-status PASS cases=60000 digest=725b1a2cd2c9de4f clear-isolation=PASS double-boundaries=PASS\ndefault jit selftest [bffffc00:0e216800]: ok=20000 mismatch=0 skipped=0 native=20000\nFPCR jit selftest [bffffc00:0e216800]: ok=20000 mismatch=0 skipped=0 native=20000\n",
+      "stderr": "",
+      "passed": true,
+      "seconds": 34.66567438700008
+    },
+    {
+      "name": "icache-thread-handoff",
+      "command": [
+        "python3",
+        "tests/attesor/icache-handoff-check.py",
+        "/private/tmp/attesor-final-target/release/attesor"
+      ],
+      "returncode": 0,
+      "stdout": "PASS default: icache-handoff direct PASS rounds=4\nPASS default: icache-handoff indirect PASS rounds=4\nPASS immediate-jit: icache-handoff direct PASS rounds=4\nPASS immediate-jit: icache-handoff indirect PASS rounds=4\nPASS callret: icache-handoff direct PASS rounds=4\nPASS callret: icache-handoff indirect PASS rounds=4\nPASS redirect: icache-handoff direct PASS rounds=4\nPASS redirect: icache-handoff indirect PASS rounds=4\nPASS interpreter: icache-handoff direct PASS rounds=4\nPASS interpreter: icache-handoff indirect PASS rounds=4\nPASS ordinary-indirect workload agrees with independent native reference: checksum 0000000000001001\n",
+      "stderr": "",
+      "passed": true,
+      "seconds": 19.20997402299986
+    }
+  ],
+  "unverified": [
+    "arbitrary application compatibility",
+    "real Finder/Dock UI",
+    "hardware VideoToolbox",
+    "whole-application startup speedup"
+  ]
+}

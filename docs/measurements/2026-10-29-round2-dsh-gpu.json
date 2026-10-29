@@ -1,0 +1,199 @@
+{
+  "success": true,
+  "scope": "Owned-entry startup, matching DevTools page URL, optional application-log readiness, and browser SystemInfo GPU metadata only. Not full UI validation, frame rendering verification, or a performance benchmark.",
+  "artifacts": "/private/tmp/attesor-perf/final-dsh-gpu-6is817w7",
+  "output": "/private/tmp/attesor-perf/final-dsh-gpu.json",
+  "target_pattern": "^dsh-app://",
+  "ready_regex": null,
+  "expect_renderer": [
+    "Metal",
+    "NVIDIA"
+  ],
+  "cdp_methods": [
+    "SystemInfo.getInfo"
+  ],
+  "elapsed_is_not_a_benchmark": true,
+  "app": "/Applications/DeepSeek Harness.app",
+  "entry": "/Applications/DeepSeek Harness.app/Contents/MacOS/DeepSeek Harness",
+  "attesor": "/Users/zhez/bin/attesor",
+  "attesor_sha256": "c19e12ad398809cec1e9cc2bb3a4610c1dff7d34f2686a3629126665a1814550",
+  "runner": "/Users/zhez/attesor-launcher/run-app",
+  "runner_sha256": "98cf4b6b54d91f863e0f2335fd08d521a35d0e3ff93f563c1e496234545e1725",
+  "owned_entry": {
+    "arm64": true,
+    "owned_x86_stub": true,
+    "sha256": "06e8ab84e40dbef6d971fbd94ddbc678d7b438c21636c294db7cb847f4d82c5a"
+  },
+  "home_preserved": true,
+  "app_argument_templates": [],
+  "existing_instance_check": "none found; fail-closed process inspection",
+  "cache_mode": "new empty private cache",
+  "logs": {
+    "entry": "/private/tmp/attesor-perf/final-dsh-gpu-6is817w7/entry.log",
+    "private_application_copy": "/private/tmp/attesor-perf/final-dsh-gpu-6is817w7/application.log",
+    "existing_runner_log": "/Users/zhez/Library/Logs/Attesor/DeepSeek Harness.log",
+    "policy": "source read-only tail from starting inode/offset; never truncated/deleted"
+  },
+  "command": [
+    "/Applications/DeepSeek Harness.app/Contents/MacOS/DeepSeek Harness",
+    "--user-data-dir=/private/tmp/aep-ykq9g12d/profile",
+    "--remote-debugging-address=127.0.0.1",
+    "--remote-debugging-port=54261"
+  ],
+  "private_profile": "/private/tmp/aep-ykq9g12d/profile",
+  "private_dsh_home": "/private/tmp/aep-ykq9g12d/dsh",
+  "private_cache": "/private/tmp/attesor-perf/final-dsh-gpu-6is817w7/cache",
+  "loopback_port": 54261,
+  "private_data": "/private/tmp/aep-ykq9g12d",
+  "app_arguments_use_shell": false,
+  "launch_environment": {
+    "HOME": "/Users/zhez",
+    "ATTESOR": "/Users/zhez/bin/attesor",
+    "ATTESOR_BIN": "/Users/zhez/bin/attesor",
+    "ATTESOR_CACHE": "/private/tmp/attesor-perf/final-dsh-gpu-6is817w7/cache",
+    "ATTESOR_NO_AOT_BUILD": "1",
+    "ATTESOR_AOT_CHECKPOINT": "0",
+    "ATTESOR_STATS": "1",
+    "ATTESOR_NO_ALERT": "1",
+    "ATTESOR_APPS_GPU": "1",
+    "DSH_HOME": "/private/tmp/aep-ykq9g12d/dsh",
+    "ATTESOR_GPU_DIR": null,
+    "ATTESOR_JIT_ON": null,
+    "ATTESOR_JIT_OFF": null,
+    "ATTESOR_JIT_DISABLE": null,
+    "ATTESOR_NATIVE_LIBS": null,
+    "ATTESOR_NATIVE_DIR": null
+  },
+  "started_pid": 20193,
+  "last_readiness_error": "timed out",
+  "devtools_listener_pids": [
+    20193
+  ],
+  "observed_targets": [
+    {
+      "id": "20885F41CB6D599F677AE277FE8803A4",
+      "type": "page",
+      "url": "dsh-app://app/"
+    }
+  ],
+  "readiness": {
+    "matching_targets": [
+      {
+        "id": "20885F41CB6D599F677AE277FE8803A4",
+        "type": "page",
+        "url": "dsh-app://app/"
+      }
+    ],
+    "log_ready": null,
+    "remote_target_ready": true,
+    "scope": "target URL and optional log only; full UI not assessed"
+  },
+  "browser_version": {
+    "Browser": "Chrome/152.0.7977.130",
+    "Protocol-Version": "1.3",
+    "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) @deepseek-ai/dsh-desktop/0.2.1-rc.3 Chrome/152.0.7977.130 Electron/44.7.0 Safari/537.36"
+  },
+  "gpu": {
+    "devices": [
+      {
+        "vendorId": 4318,
+        "deviceId": 9568,
+        "vendorString": "Google Inc. (NVIDIA)",
+        "deviceString": "ANGLE (NVIDIA, ANGLE Metal Renderer: NVIDIA GeForce RTX 3060 Laptop GPU (NVMTL over NVIDIA GeForce RTX 3060 Laptop GPU (NVK GA106-B)), Version 26.7.2 (Build 25G332))",
+        "driverVendor": "NVIDIA",
+        "driverVersion": "26.7.2"
+      }
+    ],
+    "auxAttributes": {
+      "amdSwitchable": false,
+      "canSupportThreadedTextureMailbox": false,
+      "directRenderingVersion": "",
+      "displayType": "ANGLE_METAL",
+      "glExtensions": "GL_AMD_performance_monitor GL_ANGLE_base_vertex_base_instance_shader_builtin GL_ANGLE_blob_cache GL_ANGLE_client_arrays GL_ANGLE_clip_cull_distance GL_ANGLE_depth_texture GL_ANGLE_framebuffer_blit GL_ANGLE_framebuffer_multisample GL_ANGLE_get_serialized_context_string GL_ANGLE_get_tex_level_parameter GL_ANGLE_instanced_arrays GL_ANGLE_memory_size GL_ANGLE_pack_reverse_row_order GL_ANGLE_polygon_mode GL_ANGLE_program_binary_readiness_query GL_ANGLE_program_cache_control GL_ANGLE_provoking_vertex GL_ANGLE_renderability_validation GL_ANGLE_request_extension GL_ANGLE_rgbx_internal_format GL_ANGLE_robust_client_memory GL_ANGLE_shader_pixel_local_storage GL_ANGLE_stencil_texturing GL_ANGLE_texture_compression_dxt3 GL_ANGLE_texture_compression_dxt5 GL_ANGLE_translated_shader_source GL_APPLE_clip_distance GL_ARM_rgba8 GL_CHROMIUM_bind_generates_resource GL_CHROMIUM_bind_uniform_location GL_CHROMIUM_copy_texture GL_CHROMIUM_lose_context GL_EXT_base_instance GL_EXT_blend_func_extended GL_EXT_blend_minmax GL_EXT_clip_control GL_EXT_color_buffer_float GL_EXT_color_buffer_half_float GL_EXT_compressed_ETC1_RGB8_sub_texture GL_EXT_conservative_depth GL_EXT_debug_label GL_EXT_debug_marker GL_EXT_depth_clamp GL_EXT_discard_framebuffer GL_EXT_disjoint_timer_query GL_EXT_draw_buffers GL_EXT_draw_buffers_indexed GL_EXT_draw_elements_base_vertex GL_EXT_float_blend GL_EXT_frag_depth GL_EXT_instanced_arrays GL_EXT_map_buffer_range GL_EXT_occlusion_query_boolean GL_EXT_polygon_offset_clamp GL_EXT_read_format_bgra GL_EXT_render_snorm GL_EXT_robustness GL_EXT_sRGB GL_EXT_shader_texture_lod GL_EXT_texture_compression_bptc GL_EXT_texture_compression_dxt1 GL_EXT_texture_compression_rgtc GL_EXT_texture_compression_s3tc_srgb GL_EXT_texture_filter_anisotropic GL_EXT_texture_format_BGRA8888 GL_EXT_texture_mirror_clamp_to_edge GL_EXT_texture_norm16 GL_EXT_texture_rg GL_EXT_texture_shadow_lod GL_EXT_texture_storage GL_KHR_debug GL_KHR_parallel_shader_compile GL_KHR_robustness GL_MESA_framebuffer_flip_y GL_NV_framebuffer_blit GL_NV_pixel_buffer_object GL_NV_shader_noperspective_interpolation GL_OES_EGL_image GL_OES_compressed_ETC1_RGB8_texture GL_OES_depth24 GL_OES_depth32 GL_OES_depth_texture GL_OES_draw_buffers_indexed GL_OES_draw_elements_base_vertex GL_OES_element_index_uint GL_OES_fbo_render_mipmap GL_OES_get_program_binary GL_OES_mapbuffer GL_OES_packed_depth_stencil GL_OES_required_internalformat GL_OES_rgb8_rgba8 GL_OES_sample_variables GL_OES_standard_derivatives GL_OES_surfaceless_context GL_OES_texture_3D GL_OES_texture_float GL_OES_texture_float_linear GL_OES_texture_half_float GL_OES_texture_half_float_linear GL_OES_texture_npot GL_OES_texture_stencil8 GL_OES_vertex_array_object ",
+      "glImplementationParts": "(gl=egl-angle,angle=metal)",
+      "glRenderer": "ANGLE (NVIDIA, ANGLE Metal Renderer: NVIDIA GeForce RTX 3060 Laptop GPU (NVMTL over NVIDIA GeForce RTX 3060 Laptop GPU (NVK GA106-B)), Version 26.7.2 (Build 25G332))",
+      "glResetNotificationStrategy": 33362,
+      "glVendor": "Google Inc. (NVIDIA)",
+      "glVersion": "OpenGL ES 3.0 (ANGLE 2.1.28499 git hash: a939d4098385)",
+      "glWsExtensions": "",
+      "glWsVendor": "",
+      "glWsVersion": "",
+      "inProcessGpu": false,
+      "initializationTime": 0.90931,
+      "isAsan": false,
+      "isClangCoverage": false,
+      "jpegDecodeAcceleratorSupported": false,
+      "maxMsaaSamples": "8",
+      "optimus": false,
+      "passthroughCmdDecoder": true,
+      "pixelShaderVersion": "3.00",
+      "processCrashCount": 0,
+      "sandboxed": false,
+      "skiaBackendType": "GraphiteDawnMetal",
+      "subpixelFontRendering": true,
+      "targetCpuBits": 64,
+      "vertexShaderVersion": "3.00",
+      "visibilityCallbackCallCount": 0
+    },
+    "featureStatus": {
+      "2d_canvas": "enabled",
+      "direct_rendering_display_compositor": "disabled_off_ok",
+      "gpu_compositing": "enabled",
+      "multiple_raster_threads": "enabled_on",
+      "opengl": "enabled_on",
+      "rasterization": "enabled",
+      "raw_draw": "disabled_off_ok",
+      "skia_graphite": "enabled_on",
+      "trees_in_viz": "disabled_off",
+      "video_decode": "enabled",
+      "video_encode": "enabled",
+      "webgl": "enabled",
+      "webgpu": "enabled",
+      "webnn": "disabled_off"
+    },
+    "driverBugWorkarounds": [
+      "disable_2d_canvas_auto_flush",
+      "enable_webgl_timer_query_extensions",
+      "force_enable_color_buffer_float",
+      "force_low_power_gpu",
+      "unpack_overlapping_rows_separately_unpack_buffer",
+      "disabled_extension_GL_KHR_blend_equation_advanced",
+      "disabled_extension_GL_KHR_blend_equation_advanced_coherent"
+    ],
+    "videoDecoding": [],
+    "videoEncoding": []
+  },
+  "gpu_validation": {
+    "passed": true,
+    "renderer_identity": "ANGLE (NVIDIA, ANGLE Metal Renderer: NVIDIA GeForce RTX 3060 Laptop GPU (NVMTL over NVIDIA GeForce RTX 3060 Laptop GPU (NVK GA106-B)), Version 26.7.2 (Build 25G332))\nGoogle Inc. (NVIDIA)\nOpenGL ES 3.0 (ANGLE 2.1.28499 git hash: a939d4098385)\nANGLE_METAL\n(gl=egl-angle,angle=metal)",
+    "checks": {
+      "renderer_present": true,
+      "not_software": true,
+      "hardware_compositing": true,
+      "expected_renderer": [
+        {
+          "pattern": "Metal",
+          "matched": true
+        },
+        {
+          "pattern": "NVIDIA",
+          "matched": true
+        }
+      ]
+    }
+  },
+  "cleanup": {
+    "owned_pids": [
+      20193,
+      20313,
+      20316,
+      20320,
+      20331
+    ],
+    "remaining_owned_pids": [],
+    "unknown_same_app_pids": [],
+    "policy": "own session plus observed descendants with matching process identity"
+  },
+  "aot_load_evidence": [],
+  "private_data_removed": true
+}
