@@ -1,0 +1,584 @@
+# Track N raw evidence — 2026-10-29 JST
+Base: e1efa68241f688fe96360eed7040353cc10301dc; branch nativelib
+Host macOS 26.7.2 x86_64; guest sysroot directory 26.6.2__Mac14,2
+All guest runs used private caches under this worktree or our temporary directories.
+Initial survey preceded bridge changes. Initial result() argument evaluation did not explicitly sequence checksum vs clock; final survey fixes this.
+Observed initial native-1 uptime context: 22:06  2 users, load averages: 17.71 11.85 10.50
+
+## INITIAL survey native-1
+compression-LZFSE-encode 15.847000 67e00f2689ba7242
+compression-LZFSE-decode 0.997000 549f986c90a50383
+compression-LZ4-encode 0.414000 2b9fec9bda6b50c2
+compression-LZ4-decode 0.271000 549f986c90a50383
+compression-zlib-encode 16.959000 4ac976a60d6981ca
+compression-zlib-decode 1.510000 549f986c90a50383
+CommonCrypto-SHA256 50.443000 9e0d383f7d03fdf6
+CommonCrypto-AES-CBC 8.375000 5d6e0766143d84fc
+vImage-convolve 2.917000 d944f4516193b031
+vImage-scale 1.178000 e05eb0cdff05535e
+vDSP-dot 3.205000 b6a588d556d82f73
+vDSP-FFT 0.121000 b7bdeea03601e99e
+CoreFoundation-dictionary-string 14.251000 f2d654d992512433
+ImageIO-PNG-encode 6.693000 6a7b474da11d2605
+ImageIO-PNG-decode 4.480000 1d384e68c0150383
+ImageIO-JPEG-encode 2.198000 ddbfe6e5a100a9bb
+ImageIO-JPEG-decode 3.858000 0c86dfb3674c8de3
+ImageIO-HEIC-encode SKIP encoder-unavailable
+ImageIO-HEIC-decode SKIP encoder-unavailable
+
+## INITIAL survey native-1 stderr
+sysctlbyname for kern.hv_vmm_present failed with status -1kIOSurfaceMethodSetCoreVideoBridgedKeys failed: 10000003
+
+## INITIAL survey arm-1
+22:06  2 users, load averages: 17.71 11.85 10.50
+compression-LZFSE-encode 67.054199 67e00f2689ba7242
+compression-LZFSE-decode 5.696045 549f986c90a50383
+compression-LZ4-encode 5.301025 84ce2c3d220c483e
+compression-LZ4-decode 3.630859 549f986c90a50383
+compression-zlib-encode 72.284912 4ac976a60d6981ca
+compression-zlib-decode 7.187012 549f986c90a50383
+CommonCrypto-SHA256 34.949951 9e0d383f7d03fdf6
+CommonCrypto-AES-CBC 26.845947 5d6e0766143d84fc
+vImage-convolve 35.642090 d944f4516193b031
+vImage-scale 86.989014 e05eb0cdff05535e
+vDSP-dot 8.242920 b6a588d556d82f73
+vDSP-FFT 26.929932 21099118fd5c1959
+CoreFoundation-dictionary-string 96.572998 f2d654d992512433
+ImageIO-PNG-encode 110.473877 6a7b474da11d2605
+ImageIO-PNG-decode 83.968018 1d384e68c0150383
+ImageIO-JPEG-encode 53.027100 ddbfe6e5a100a9bb
+ImageIO-JPEG-decode 50.216064 0c86dfb3674c8de3
+ImageIO-HEIC-encode SKIP encoder-unavailable
+ImageIO-HEIC-decode SKIP encoder-unavailable
+
+## INITIAL survey arm-1 stderr
+sysctlbyname for kern.hv_vmm_present failed with status -1kIOSurfaceMethodSetCoreVideoBridgedKeys failed: 10000003
+
+## INITIAL survey native-2
+22:07  2 users, load averages: 11.53 10.97 10.23
+compression-LZFSE-encode 10.243000 67e00f2689ba7242
+compression-LZFSE-decode 0.823000 549f986c90a50383
+compression-LZ4-encode 0.352000 2b9fec9bda6b50c2
+compression-LZ4-decode 0.226000 549f986c90a50383
+compression-zlib-encode 15.186000 4ac976a60d6981ca
+compression-zlib-decode 0.505000 549f986c90a50383
+CommonCrypto-SHA256 46.202000 9e0d383f7d03fdf6
+CommonCrypto-AES-CBC 7.680000 5d6e0766143d84fc
+vImage-convolve 1.049000 d944f4516193b031
+vImage-scale 1.218000 e05eb0cdff05535e
+vDSP-dot 2.678000 b6a588d556d82f73
+vDSP-FFT 0.077000 b7bdeea03601e99e
+CoreFoundation-dictionary-string 12.413000 f2d654d992512433
+ImageIO-PNG-encode 5.974000 6a7b474da11d2605
+ImageIO-PNG-decode 3.385000 1d384e68c0150383
+ImageIO-JPEG-encode 1.308000 ddbfe6e5a100a9bb
+ImageIO-JPEG-decode 1.541000 0c86dfb3674c8de3
+ImageIO-HEIC-encode SKIP encoder-unavailable
+ImageIO-HEIC-decode SKIP encoder-unavailable
+
+## INITIAL survey native-2 stderr
+sysctlbyname for kern.hv_vmm_present failed with status -1kIOSurfaceMethodSetCoreVideoBridgedKeys failed: 10000003
+
+## INITIAL survey arm-2
+22:07  2 users, load averages: 11.53 10.97 10.23
+compression-LZFSE-encode 66.056885 67e00f2689ba7242
+compression-LZFSE-decode 4.533203 549f986c90a50383
+compression-LZ4-encode 3.634033 84ce2c3d220c483e
+compression-LZ4-decode 2.483887 549f986c90a50383
+compression-zlib-encode 59.421875 4ac976a60d6981ca
+compression-zlib-decode 5.920166 549f986c90a50383
+CommonCrypto-SHA256 33.489990 9e0d383f7d03fdf6
+CommonCrypto-AES-CBC 25.583008 5d6e0766143d84fc
+vImage-convolve 32.928955 d944f4516193b031
+vImage-scale 77.341064 e05eb0cdff05535e
+vDSP-dot 8.045898 b6a588d556d82f73
+vDSP-FFT 25.620117 21099118fd5c1959
+CoreFoundation-dictionary-string 96.355957 f2d654d992512433
+ImageIO-PNG-encode 111.082031 6a7b474da11d2605
+ImageIO-PNG-decode 77.005859 1d384e68c0150383
+ImageIO-JPEG-encode 49.935059 ddbfe6e5a100a9bb
+ImageIO-JPEG-decode 60.067871 0c86dfb3674c8de3
+ImageIO-HEIC-encode SKIP encoder-unavailable
+ImageIO-HEIC-decode SKIP encoder-unavailable
+
+## INITIAL survey arm-2 stderr
+sysctlbyname for kern.hv_vmm_present failed with status -1kIOSurfaceMethodSetCoreVideoBridgedKeys failed: 10000003
+
+## INITIAL survey native-3
+22:07  2 users, load averages: 11.53 10.97 10.23
+compression-LZFSE-encode 10.932000 67e00f2689ba7242
+compression-LZFSE-decode 0.806000 549f986c90a50383
+compression-LZ4-encode 0.360000 2b9fec9bda6b50c2
+compression-LZ4-decode 0.210000 549f986c90a50383
+compression-zlib-encode 16.518000 4ac976a60d6981ca
+compression-zlib-decode 0.568000 549f986c90a50383
+CommonCrypto-SHA256 49.057000 9e0d383f7d03fdf6
+CommonCrypto-AES-CBC 8.153000 5d6e0766143d84fc
+vImage-convolve 1.215000 d944f4516193b031
+vImage-scale 1.409000 e05eb0cdff05535e
+vDSP-dot 3.267000 b6a588d556d82f73
+vDSP-FFT 0.083000 b7bdeea03601e99e
+CoreFoundation-dictionary-string 16.522000 f2d654d992512433
+ImageIO-PNG-encode 8.474000 6a7b474da11d2605
+ImageIO-PNG-decode 4.771000 1d384e68c0150383
+ImageIO-JPEG-encode 1.727000 ddbfe6e5a100a9bb
+ImageIO-JPEG-decode 2.408000 0c86dfb3674c8de3
+ImageIO-HEIC-encode SKIP encoder-unavailable
+ImageIO-HEIC-decode SKIP encoder-unavailable
+
+## INITIAL survey native-3 stderr
+sysctlbyname for kern.hv_vmm_present failed with status -1kIOSurfaceMethodSetCoreVideoBridgedKeys failed: 10000003
+
+## INITIAL survey arm-3
+22:07  2 users, load averages: 11.53 10.97 10.23
+compression-LZFSE-encode 103.522949 67e00f2689ba7242
+compression-LZFSE-decode 5.874023 549f986c90a50383
+compression-LZ4-encode 4.825928 84ce2c3d220c483e
+compression-LZ4-decode 4.456055 549f986c90a50383
+compression-zlib-encode 103.155029 4ac976a60d6981ca
+compression-zlib-decode 12.092773 549f986c90a50383
+CommonCrypto-SHA256 46.727051 9e0d383f7d03fdf6
+CommonCrypto-AES-CBC 33.772949 5d6e0766143d84fc
+vImage-convolve 48.077881 d944f4516193b031
+vImage-scale 109.891113 e05eb0cdff05535e
+vDSP-dot 10.458984 b6a588d556d82f73
+vDSP-FFT 37.725098 21099118fd5c1959
+CoreFoundation-dictionary-string 147.625000 f2d654d992512433
+ImageIO-PNG-encode 156.829834 6a7b474da11d2605
+ImageIO-PNG-decode 132.708984 1d384e68c0150383
+ImageIO-JPEG-encode 83.833008 ddbfe6e5a100a9bb
+ImageIO-JPEG-decode 66.603027 0c86dfb3674c8de3
+ImageIO-HEIC-encode SKIP encoder-unavailable
+ImageIO-HEIC-decode SKIP encoder-unavailable
+
+## INITIAL survey arm-3 stderr
+sysctlbyname for kern.hv_vmm_present failed with status -1kIOSurfaceMethodSetCoreVideoBridgedKeys failed: 10000003
+
+## FINAL survey native-1
+22:18  2 users, load averages: 5.98 9.62 10.86
+compression-LZFSE-encode 11.115000 67e00f2689ba7242
+compression-LZFSE-decode 0.965000 549f986c90a50383
+compression-LZ4-encode 0.403000 2b9fec9bda6b50c2
+compression-LZ4-decode 0.273000 549f986c90a50383
+compression-zlib-encode 17.387000 4ac976a60d6981ca
+compression-zlib-decode 0.652000 549f986c90a50383
+CommonCrypto-SHA256 50.274000 9e0d383f7d03fdf6
+CommonCrypto-AES-CBC 9.502000 5d6e0766143d84fc
+vImage-convolve 1.215000 d944f4516193b031
+vImage-scale 1.325000 e05eb0cdff05535e
+vDSP-dot 3.071000 b6a588d556d82f73
+vDSP-FFT 0.155000 b7bdeea03601e99e
+CoreFoundation-dictionary-string 15.080000 f2d654d992512433
+ImageIO-PNG-encode 7.077000 6a7b474da11d2605
+ImageIO-PNG-decode 4.445000 1d384e68c0150383
+ImageIO-JPEG-encode 1.595000 ddbfe6e5a100a9bb
+ImageIO-JPEG-decode 1.790000 0c86dfb3674c8de3
+ImageIO-HEIC-encode SKIP encoder-unavailable
+ImageIO-HEIC-decode SKIP encoder-unavailable
+
+## FINAL survey native-1 stderr
+sysctlbyname for kern.hv_vmm_present failed with status -1kIOSurfaceMethodSetCoreVideoBridgedKeys failed: 10000003
+
+## FINAL survey off-1
+22:18  2 users, load averages: 6.06 9.57 10.84
+compression-LZFSE-encode 66.321777 67e00f2689ba7242
+compression-LZFSE-decode 5.024170 549f986c90a50383
+compression-LZ4-encode 3.802979 84ce2c3d220c483e
+compression-LZ4-decode 2.805908 549f986c90a50383
+compression-zlib-encode 62.827881 4ac976a60d6981ca
+compression-zlib-decode 6.864014 549f986c90a50383
+CommonCrypto-SHA256 37.287109 9e0d383f7d03fdf6
+CommonCrypto-AES-CBC 28.074951 5d6e0766143d84fc
+vImage-convolve 33.011963 d944f4516193b031
+vImage-scale 78.707031 e05eb0cdff05535e
+vDSP-dot 8.572998 b6a588d556d82f73
+vDSP-FFT 28.198975 21099118fd5c1959
+CoreFoundation-dictionary-string 105.300049 f2d654d992512433
+ImageIO-PNG-encode 103.192139 6a7b474da11d2605
+ImageIO-PNG-decode 78.239990 1d384e68c0150383
+ImageIO-JPEG-encode 50.809814 ddbfe6e5a100a9bb
+ImageIO-JPEG-decode 45.567139 0c86dfb3674c8de3
+ImageIO-HEIC-encode SKIP encoder-unavailable
+ImageIO-HEIC-decode SKIP encoder-unavailable
+
+## FINAL survey off-1 stderr
+sysctlbyname for kern.hv_vmm_present failed with status -1kIOSurfaceMethodSetCoreVideoBridgedKeys failed: 10000003
+
+## FINAL survey native-2
+22:18  2 users, load averages: 6.06 9.57 10.84
+compression-LZFSE-encode 12.928000 67e00f2689ba7242
+compression-LZFSE-decode 0.828000 549f986c90a50383
+compression-LZ4-encode 0.425000 2b9fec9bda6b50c2
+compression-LZ4-decode 0.267000 549f986c90a50383
+compression-zlib-encode 16.007000 4ac976a60d6981ca
+compression-zlib-decode 0.727000 549f986c90a50383
+CommonCrypto-SHA256 55.151000 9e0d383f7d03fdf6
+CommonCrypto-AES-CBC 9.457000 5d6e0766143d84fc
+vImage-convolve 1.264000 d944f4516193b031
+vImage-scale 1.366000 e05eb0cdff05535e
+vDSP-dot 2.776000 b6a588d556d82f73
+vDSP-FFT 0.088000 b7bdeea03601e99e
+CoreFoundation-dictionary-string 16.390000 f2d654d992512433
+ImageIO-PNG-encode 7.853000 6a7b474da11d2605
+ImageIO-PNG-decode 4.403000 1d384e68c0150383
+ImageIO-JPEG-encode 1.666000 ddbfe6e5a100a9bb
+ImageIO-JPEG-decode 1.728000 0c86dfb3674c8de3
+ImageIO-HEIC-encode SKIP encoder-unavailable
+ImageIO-HEIC-decode SKIP encoder-unavailable
+
+## FINAL survey native-2 stderr
+sysctlbyname for kern.hv_vmm_present failed with status -1kIOSurfaceMethodSetCoreVideoBridgedKeys failed: 10000003
+
+## FINAL survey off-2
+22:18  2 users, load averages: 6.06 9.57 10.84
+compression-LZFSE-encode 85.939941 67e00f2689ba7242
+compression-LZFSE-decode 5.360107 549f986c90a50383
+compression-LZ4-encode 5.049805 84ce2c3d220c483e
+compression-LZ4-decode 3.530029 549f986c90a50383
+compression-zlib-encode 86.730957 4ac976a60d6981ca
+compression-zlib-decode 7.100098 549f986c90a50383
+CommonCrypto-SHA256 41.854004 9e0d383f7d03fdf6
+CommonCrypto-AES-CBC 31.011963 5d6e0766143d84fc
+vImage-convolve 39.003906 d944f4516193b031
+vImage-scale 92.802979 e05eb0cdff05535e
+vDSP-dot 8.845947 b6a588d556d82f73
+vDSP-FFT 27.046875 21099118fd5c1959
+CoreFoundation-dictionary-string 102.302979 f2d654d992512433
+ImageIO-PNG-encode 110.524170 6a7b474da11d2605
+ImageIO-PNG-decode 88.807129 1d384e68c0150383
+ImageIO-JPEG-encode 60.502930 ddbfe6e5a100a9bb
+ImageIO-JPEG-decode 55.880859 0c86dfb3674c8de3
+ImageIO-HEIC-encode SKIP encoder-unavailable
+ImageIO-HEIC-decode SKIP encoder-unavailable
+
+## FINAL survey off-2 stderr
+sysctlbyname for kern.hv_vmm_present failed with status -1kIOSurfaceMethodSetCoreVideoBridgedKeys failed: 10000003
+
+## FINAL survey native-3
+22:18  2 users, load averages: 6.06 9.57 10.84
+compression-LZFSE-encode 10.952000 67e00f2689ba7242
+compression-LZFSE-decode 0.924000 549f986c90a50383
+compression-LZ4-encode 0.416000 2b9fec9bda6b50c2
+compression-LZ4-decode 0.234000 549f986c90a50383
+compression-zlib-encode 16.989000 4ac976a60d6981ca
+compression-zlib-decode 0.589000 549f986c90a50383
+CommonCrypto-SHA256 48.396000 9e0d383f7d03fdf6
+CommonCrypto-AES-CBC 8.204000 5d6e0766143d84fc
+vImage-convolve 1.187000 d944f4516193b031
+vImage-scale 1.413000 e05eb0cdff05535e
+vDSP-dot 3.645000 b6a588d556d82f73
+vDSP-FFT 0.122000 b7bdeea03601e99e
+CoreFoundation-dictionary-string 14.322000 f2d654d992512433
+ImageIO-PNG-encode 6.329000 6a7b474da11d2605
+ImageIO-PNG-decode 3.901000 1d384e68c0150383
+ImageIO-JPEG-encode 1.520000 ddbfe6e5a100a9bb
+ImageIO-JPEG-decode 1.789000 0c86dfb3674c8de3
+ImageIO-HEIC-encode SKIP encoder-unavailable
+ImageIO-HEIC-decode SKIP encoder-unavailable
+
+## FINAL survey native-3 stderr
+sysctlbyname for kern.hv_vmm_present failed with status -1kIOSurfaceMethodSetCoreVideoBridgedKeys failed: 10000003
+
+## FINAL survey off-3
+22:18  2 users, load averages: 6.06 9.57 10.84
+compression-LZFSE-encode 65.187988 67e00f2689ba7242
+compression-LZFSE-decode 5.705078 549f986c90a50383
+compression-LZ4-encode 4.128906 84ce2c3d220c483e
+compression-LZ4-decode 3.520996 549f986c90a50383
+compression-zlib-encode 76.054199 4ac976a60d6981ca
+compression-zlib-decode 7.565918 549f986c90a50383
+CommonCrypto-SHA256 38.580811 9e0d383f7d03fdf6
+CommonCrypto-AES-CBC 33.263916 5d6e0766143d84fc
+vImage-convolve 36.925049 d944f4516193b031
+vImage-scale 102.770996 e05eb0cdff05535e
+vDSP-dot 9.698975 b6a588d556d82f73
+vDSP-FFT 34.263916 21099118fd5c1959
+CoreFoundation-dictionary-string 109.489014 f2d654d992512433
+ImageIO-PNG-encode 111.187988 6a7b474da11d2605
+ImageIO-PNG-decode 93.500000 1d384e68c0150383
+ImageIO-JPEG-encode 53.456055 ddbfe6e5a100a9bb
+ImageIO-JPEG-decode 48.077881 0c86dfb3674c8de3
+ImageIO-HEIC-encode SKIP encoder-unavailable
+ImageIO-HEIC-decode SKIP encoder-unavailable
+
+## FINAL survey off-3 stderr
+sysctlbyname for kern.hv_vmm_present failed with status -1kIOSurfaceMethodSetCoreVideoBridgedKeys failed: 10000003
+
+## ab native-1
+22:13  2 users, load averages: 14.64 15.76 12.88
+vImage-convolve-128 27.007000 ms
+bytes=1048576 hash=d944f4516193b031
+
+## ab native-1 stderr
+bridge-calls=0
+
+## ab off-1
+22:13  2 users, load averages: 14.64 15.76 12.88
+vImage-convolve-128 967.868164 ms
+bytes=1048576 hash=d944f4516193b031
+
+## ab off-1 stderr
+bridge-calls=0
+
+## ab on-1
+22:13  2 users, load averages: 14.64 15.76 12.88
+vImage-convolve-128 36.810059 ms
+bytes=1048576 hash=d944f4516193b031
+
+## ab on-1 stderr
+bridge-calls=129
+
+## ab native-2
+22:13  2 users, load averages: 14.64 15.76 12.88
+vImage-convolve-128 32.796000 ms
+bytes=1048576 hash=d944f4516193b031
+
+## ab native-2 stderr
+bridge-calls=0
+
+## ab off-2
+22:13  2 users, load averages: 14.64 15.76 12.88
+vImage-convolve-128 952.302002 ms
+bytes=1048576 hash=d944f4516193b031
+
+## ab off-2 stderr
+bridge-calls=0
+
+## ab on-2
+22:13  2 users, load averages: 14.64 15.76 12.88
+vImage-convolve-128 39.014160 ms
+bytes=1048576 hash=d944f4516193b031
+
+## ab on-2 stderr
+bridge-calls=129
+
+## ab native-3
+22:13  2 users, load averages: 14.64 15.76 12.88
+vImage-convolve-128 36.081000 ms
+bytes=1048576 hash=d944f4516193b031
+
+## ab native-3 stderr
+bridge-calls=0
+
+## ab off-3
+22:13  2 users, load averages: 15.31 15.88 12.94
+vImage-convolve-128 1050.794922 ms
+bytes=1048576 hash=d944f4516193b031
+
+## ab off-3 stderr
+bridge-calls=0
+
+## ab on-3
+22:13  2 users, load averages: 15.31 15.88 12.94
+vImage-convolve-128 43.364990 ms
+bytes=1048576 hash=d944f4516193b031
+
+## ab on-3 stderr
+bridge-calls=129
+
+## ab-final native-1
+22:19  2 users, load averages: 10.11 10.20 10.97
+vImage-convolve-128 41.460000 ms
+bytes=1048576 hash=d944f4516193b031
+
+## ab-final native-1 stderr
+bridge-calls=0
+
+## ab-final off-1
+22:19  2 users, load averages: 10.11 10.20 10.97
+vImage-convolve-128 1588.562012 ms
+bytes=1048576 hash=d944f4516193b031
+
+## ab-final off-1 stderr
+bridge-calls=0
+
+## ab-final on-1
+22:19  2 users, load averages: 11.95 10.58 11.10
+vImage-convolve-128 30.808838 ms
+bytes=1048576 hash=d944f4516193b031
+
+## ab-final on-1 stderr
+bridge-calls=129
+
+## ab-final native-2
+22:19  2 users, load averages: 11.95 10.58 11.10
+vImage-convolve-128 30.329000 ms
+bytes=1048576 hash=d944f4516193b031
+
+## ab-final native-2 stderr
+bridge-calls=0
+
+## ab-final off-2
+22:19  2 users, load averages: 11.95 10.58 11.10
+vImage-convolve-128 942.902832 ms
+bytes=1048576 hash=d944f4516193b031
+
+## ab-final off-2 stderr
+bridge-calls=0
+
+## ab-final on-2
+22:19  2 users, load averages: 11.95 10.58 11.10
+vImage-convolve-128 32.902100 ms
+bytes=1048576 hash=d944f4516193b031
+
+## ab-final on-2 stderr
+bridge-calls=129
+
+## ab-final native-3
+22:19  2 users, load averages: 11.39 10.48 11.06
+vImage-convolve-128 26.868000 ms
+bytes=1048576 hash=d944f4516193b031
+
+## ab-final native-3 stderr
+bridge-calls=0
+
+## ab-final off-3
+22:19  2 users, load averages: 11.39 10.48 11.06
+vImage-convolve-128 932.979980 ms
+bytes=1048576 hash=d944f4516193b031
+
+## ab-final off-3 stderr
+bridge-calls=0
+
+## ab-final on-3
+22:19  2 users, load averages: 11.39 10.48 11.06
+vImage-convolve-128 30.577148 ms
+bytes=1048576 hash=d944f4516193b031
+
+## ab-final on-3 stderr
+bridge-calls=129
+
+## vimage-check-final.log
+/private/tmp/attesor-vimage.gg5B4A/native/libattesornative.dylib: replacing existing signature
+/private/tmp/attesor-vimage.gg5B4A/native/libattesorvimage.dylib: replacing existing signature
+native-vimage: PASS seed=1 bridge-calls=0
+native-vimage: PASS seed=1 bridge-calls=0
+PASS bytes seed=1 libraries=0
+native-vimage: PASS seed=1 bridge-calls=136
+PASS bytes seed=1 libraries=vimage
+native-vimage: PASS seed=1 bridge-calls=0
+PASS bytes seed=1 libraries=zlib
+native-vimage: PASS seed=1 bridge-calls=136
+PASS bytes seed=1 libraries=zlib,vimage
+native-vimage: PASS seed=42 bridge-calls=0
+native-vimage: PASS seed=42 bridge-calls=0
+PASS bytes seed=42 libraries=0
+native-vimage: PASS seed=42 bridge-calls=136
+PASS bytes seed=42 libraries=vimage
+native-vimage: PASS seed=42 bridge-calls=0
+PASS bytes seed=42 libraries=zlib
+native-vimage: PASS seed=42 bridge-calls=136
+PASS bytes seed=42 libraries=zlib,vimage
+native-vimage: PASS seed=3735928559 bridge-calls=0
+native-vimage: PASS seed=3735928559 bridge-calls=0
+PASS bytes seed=0xdeadbeef libraries=0
+native-vimage: PASS seed=3735928559 bridge-calls=136
+PASS bytes seed=0xdeadbeef libraries=vimage
+native-vimage: PASS seed=3735928559 bridge-calls=0
+PASS bytes seed=0xdeadbeef libraries=zlib
+native-vimage: PASS seed=3735928559 bridge-calls=136
+PASS bytes seed=0xdeadbeef libraries=zlib,vimage
+native-vimage: PASS seed=1 bridge-calls=0
+native-vimage: PASS seed=1 bridge-calls=136
+PASS --chain
+native-vimage: PASS seed=1 bridge-calls=0
+PASS --chain-off
+native-vimage suite: PASS
+
+## zlib-check.log
+/tmp/attesor-native-check.6J4dVw/native/libattesornative.dylib: replacing existing signature
+/tmp/attesor-native-check.6J4dVw/native/libattesorvimage.dylib: replacing existing signature
+bridge-calls=0
+native-zlib: PASS
+bridge-calls=4332
+native-zlib: PASS
+bridge-calls=4332
+native-zlib: PASS
+native-chain: PASS
+bridge-calls=0
+native-zlib: PASS
+native-chain: PASS
+native-zlib suite: PASS
+
+## sensitivity-final.log
+/private/tmp/attesor-vimage-fault.hiMLik/libattesorvimage.dylib: replacing existing signature
+native-vimage: PASS seed=1 bridge-calls=0
+native-vimage: PASS seed=1 bridge-calls=136
+PASS sensitivity: divisor+1 rejected; 1087955/1394517 bytes differ
+
+## scale-rejected.txt
+scale 60x12 -> 13x27; stride 67 -> 24; DoNotTile; xorshift seed=1
+x86 bytes=648 ARM bytes=648 mismatched-bytes=156
+
+## Final build
+    Finished `release` profile [optimized + debuginfo] target(s) in 10.71s
+
+## Final workspace test result lines
+test result: ok. 68 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.16s
+test result: ok. 9 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+## headless js-0.status
+0
+
+## headless js-0.out
+loops         541 ms 28665
+objects       645 ms -259384288
+json          229 ms 80000
+regex         227 ms 400000
+strings       104 ms 2025151008
+closures      293 ms 19360
+sort          576 ms 6448448
+
+## headless js-0.err
+[1029/221357.898094:ERROR:electron/shell/common/mac/codesign_util.cc:79] task_name_for_pid: (os/kern) failure (5)
+
+## headless js-vimage.status
+0
+
+## headless js-vimage.out
+loops         504 ms 28665
+objects       643 ms -259384288
+json          234 ms 80000
+regex         237 ms 400000
+strings        97 ms 2025151008
+closures      363 ms 19360
+sort          555 ms 6448448
+
+## headless js-vimage.err
+[1029/221402.843724:ERROR:electron/shell/common/mac/codesign_util.cc:79] task_name_for_pid: (os/kern) failure (5)
+
+## headless tls-0.status
+0
+
+## headless tls-0.out
+sha256 ca6073392ee71dbd
+sha512 fcf47d64f5ceadd9
+gcm 89788ae8c19a5009 tag de047988105bcc38
+ecdsa verify true
+ecdh true
+string 13 e5b7a6e4b88ae8a792e9a1b6e6a08f
+https error ENOTFOUND
+
+## headless tls-0.err
+[1029/221407.115246:ERROR:electron/shell/common/mac/codesign_util.cc:79] task_name_for_pid: (os/kern) failure (5)
+
+## headless tls-vimage.status
+0
+
+## headless tls-vimage.out
+sha256 ca6073392ee71dbd
+sha512 fcf47d64f5ceadd9
+gcm 89788ae8c19a5009 tag de047988105bcc38
+ecdsa verify true
+ecdh true
+string 13 e5b7a6e4b88ae8a792e9a1b6e6a08f
+https error ENOTFOUND
+
+## headless tls-vimage.err
+[1029/221410.397606:ERROR:electron/shell/common/mac/codesign_util.cc:79] task_name_for_pid: (os/kern) failure (5)
+
+## Git write failure
+fatal: Unable to create worktree index.lock: Operation not permitted
+No commits or pushes; per-step patches and messages saved under target/.

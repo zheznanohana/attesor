@@ -21,7 +21,7 @@ fi
 gpu/build.sh
 native/build.sh
 mkdir -p "$PREFIX/native"
-install -S -m 755 native/out/libattesornative.dylib "$PREFIX/native/"
+for l in libattesornative libattesorvimage; do install -S -m 755 "native/out/$l.dylib" "$PREFIX/native/"; done
 mkdir -p "$PREFIX/gpu"
 install -S -m 755 "$BIN" "$PREFIX/attesor"
 for l in libmclbridge libmclmetal libattesorui libattesorexec; do install -S -m 755 "gpu/out/$l.dylib" "$PREFIX/gpu/"; done
