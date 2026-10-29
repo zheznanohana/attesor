@@ -13,6 +13,7 @@ No DOM, page evaluation, screenshot, UI, input, or benchmark command is used.
 import argparse
 import base64
 import fcntl
+import errno
 import hashlib
 import json
 import os
@@ -93,19 +94,19 @@ def owned_entry(exe):
 
 
 def processes():
-    result = subprocess.run(['/bin/ps', '-axww', '-o', 'pid=,ppid=,pgid=,lstart=,command='],
+    result = subprocess.run(['/bin/ps', '-axww', '-o', 'pid=,ppid=,pgid=,uid=,lstart=,command='],
                             capture_output=True, text=True, timeout=15,
                             env={**os.environ, 'LC_ALL': 'C'})
     if result.returncode:
         raise RuntimeError('cannot inspect existing/owned processes: ' + result.stderr.strip())
     rows = {}
     for line in result.stdout.splitlines():
-        fields = line.split(None, 8)
-        if len(fields) == 9:
+        fields = line.split(None, 9)
+        if len(fields) == 10:
             try:
-                pid, ppid, pgid = map(int, fields[:3])
-                rows[pid] = dict(pid=pid, ppid=ppid, pgid=pgid,
-                                 started=' '.join(fields[3:8]), command=fields[8])
+                pid, ppid, pgid, uid = map(int, fields[:4])
+                rows[pid] = dict(pid=pid, ppid=ppid, pgid=pgid, uid=uid,
+                                 started=' '.join(fields[4:9]), command=fields[9])
             except ValueError:
                 pass
     if os.getpid() not in rows:
@@ -128,6 +129,154 @@ def refresh_owned(rows, owned, root_pid):
                 changed = True
             elif pid in owned and row['started'] == owned[pid]['started']:
                 owned[pid] = row  # exec changes argv, not process identity
+
+
+def command_names(pids):
+    """Read executable names only; never place full argv in signal errors."""
+    if not pids:
+        return {}
+    result = subprocess.run(['/bin/ps', '-p', ','.join(str(p) for p in sorted(set(pids))),
+                             '-o', 'pid=,comm='], capture_output=True, text=True, timeout=15)
+    if result.returncode not in [0, 1]:
+        raise RuntimeError('cannot read cleanup executable names')
+    names = {}
+    for line in result.stdout.splitlines():
+        fields = line.strip().split(None, 1)
+        if len(fields) == 2 and fields[0].isdigit():
+            names[int(fields[0])] = Path(fields[1]).name
+    return names
+
+
+def process_identity(row, names):
+    # Explicit allowlist prevents argv, URLs, tokens and profile paths from
+    # leaking into cleanup exceptions. Start time is the existing PID identity.
+    if not row:
+        return None
+    return dict(pid=row.get('pid'), ppid=row.get('ppid'), pgid=row.get('pgid'),
+                uid=row.get('uid'), started=row.get('started'),
+                command_name=names.get(row.get('pid')),
+                command_name_status='observed' if row.get('pid') in names else 'unavailable')
+
+
+def cleanup_owned(child, owned, app, inspect=None, name_lookup=None,
+                  send_pid=None, send_group=None, pause=None):
+    """Same ownership boundary as the launcher; each failed signal is audited.
+
+    Dependencies are injectable so EPERM/continuation can be verified without
+    launching apps or sending a signal to any real process.
+    """
+    inspect = inspect or processes
+    name_lookup = name_lookup or command_names
+    send_pid = send_pid or os.kill
+    send_group = send_group or os.killpg
+    pause = pause or time.sleep
+    errors, attempts = [], []
+    names = {}
+    last_rows = {}
+
+    def error_record(error, operation, phase, **context):
+        if isinstance(error, OSError):
+            message = error.strerror or 'OS operation failed'
+        elif isinstance(error, subprocess.TimeoutExpired):
+            message = 'subprocess operation timed out'
+        else:
+            message = 'cleanup helper failed'
+        return dict(operation=operation, phase=phase, error_type=type(error).__name__,
+                    errno=getattr(error, 'errno', None), message=message,
+                    timeout=getattr(error, 'timeout', None),
+                    returncode=getattr(error, 'returncode', None),
+                    caller=dict(pid=os.getpid(), uid=os.getuid(), euid=os.geteuid()), **context)
+
+    def observe_names(rows):
+        candidates = [pid for pid, row in rows.items() if row['pgid'] == child.pid or pid in owned]
+        try:
+            names.update(name_lookup(candidates))
+        except (OSError, RuntimeError, subprocess.SubprocessError) as error:
+            errors.append(error_record(error, 'read_command_names', 'cleanup', pids=sorted(candidates)))
+
+    def signal_one(operation, target, sig, rows, old=None, phase='normal'):
+        if operation == 'killpg':
+            members = [process_identity(row, names) for row in rows.values() if row['pgid'] == target]
+            leader = rows.get(target) or owned.get(target) or dict(pid=target, pgid=target)
+            context = dict(pgid=target, leader=process_identity(leader, names), members=members,
+                           ownership='session created by this Popen', popen_pid=child.pid)
+            send = send_group
+        else:
+            context = dict(pid=target, process=process_identity(rows.get(target), names),
+                           expected_identity=process_identity(old, names),
+                           ownership='observed descendant with matching start identity')
+            send = send_pid
+        action = dict(operation=operation, phase=phase, signal=int(sig),
+                      signal_name=signal.Signals(sig).name, **context)
+        try:
+            send(target, sig)
+            action['outcome'] = 'sent'
+        except OSError as error:
+            if error.errno == errno.ESRCH:
+                # The target exited between the snapshot and signal. Retain
+                # complete audit context; final identity inspection decides
+                # whether cleanup completed, rather than manufacturing a FAIL.
+                action.update(outcome='already_exited', errno=error.errno,
+                              error_type=type(error).__name__, message=error.strerror)
+            else:
+                action['outcome'] = 'failed'
+                errors.append(error_record(error, operation, phase, signal=int(sig),
+                                           signal_name=signal.Signals(sig).name, **context))
+        attempts.append(action)
+
+    try:
+        last_rows = inspect()
+        refresh_owned(last_rows, owned, child.pid)
+        observe_names(last_rows)
+        for sig in [signal.SIGTERM, signal.SIGKILL]:
+            current = inspect()
+            last_rows = current
+            observe_names(current)
+            group = [r for r in current.values() if r['pgid'] == child.pid]
+            if group:
+                signal_one('killpg', child.pid, sig, current)
+            for pid, old in owned.items():
+                now = current.get(pid)
+                if now and now['started'] == old['started'] and now['pgid'] != child.pid:
+                    signal_one('kill', pid, sig, current, old=old)
+            try:
+                child.wait(timeout=3)
+            except subprocess.TimeoutExpired:
+                pass
+            pause(0.1)
+        current = inspect()
+        last_rows = current
+        observe_names(current)
+        remaining = [pid for pid, old in owned.items() if pid in current and
+                     current[pid]['started'] == old['started']]
+        if remaining:
+            errors.append(dict(operation='verify_cleanup', phase='final',
+                               message='owned processes still present',
+                               processes=[process_identity(current[pid], names) for pid in remaining]))
+        unknown = [r for r in same_app(current, app, ancestors(current)) if r['pid'] not in owned]
+        if unknown:
+            errors.append(dict(operation='verify_cleanup', phase='final',
+                               message='unowned same-app processes remain; not signalled',
+                               processes=[process_identity(row, names) for row in unknown]))
+        detail = dict(owned_pids=sorted(owned), remaining_owned_pids=remaining,
+                      unknown_same_app_pids=[r['pid'] for r in unknown])
+    except (OSError, RuntimeError, subprocess.SubprocessError) as error:
+        errors.append(error_record(error, 'process_snapshot_or_wait', 'cleanup',
+                                   popen_pid=child.pid,
+                                   known_process=process_identity(owned.get(child.pid), names)))
+        # Preserve the existing narrow fallback: only a still-live Popen handle
+        # authorizes its own created session. Do not guess escaped child identity.
+        if child.poll() is None:
+            signal_one('killpg', child.pid, signal.SIGKILL, last_rows, phase='own-session-fallback')
+            try:
+                child.wait(timeout=5)
+            except (OSError, subprocess.SubprocessError) as error:
+                errors.append(error_record(error, 'wait', 'own-session-fallback', pid=child.pid))
+        detail = dict(owned_pids=sorted(owned), remaining_owned_pids=None,
+                      unknown_same_app_pids=None, verification='unavailable after inspection failure')
+    detail.update(signal_attempts=attempts,
+                  policy='own session plus observed descendants with matching process identity')
+    return detail, errors
 
 
 def listener_pids(port):
@@ -480,55 +629,11 @@ def main():
                 report['socket_close_error'] = str(error)
                 report['success'] = False
         if child:
-            # Only the session created by this Popen and observed descendants are
-            # eligible for cleanup. Never kill by app name or profile substring.
-            cleanup_errors = []
-            try:
-                rows = processes()
-                refresh_owned(rows, owned, child.pid)
-                for sig in [signal.SIGTERM, signal.SIGKILL]:
-                    current = processes()
-                    group = [r for r in current.values() if r['pgid'] == child.pid]
-                    if group:
-                        try:
-                            os.killpg(child.pid, sig)
-                        except ProcessLookupError:
-                            pass
-                    for pid, old in owned.items():
-                        now = current.get(pid)
-                        if now and now['started'] == old['started'] and now['pgid'] != child.pid:
-                            try:
-                                os.kill(pid, sig)
-                            except ProcessLookupError:
-                                pass
-                    try:
-                        child.wait(timeout=3)
-                    except subprocess.TimeoutExpired:
-                        pass
-                    time.sleep(0.1)
-                current = processes()
-                remaining = [pid for pid, old in owned.items() if pid in current and
-                             current[pid]['started'] == old['started']]
-                if remaining:
-                    cleanup_errors.append('owned processes still present: ' + str(remaining))
-                unknown = [r['pid'] for r in same_app(current, app, ancestors(current)) if r['pid'] not in owned]
-                if unknown:
-                    cleanup_errors.append('unowned same-app processes remain; not signalled: ' + str(unknown))
-                report['cleanup'] = dict(owned_pids=sorted(owned), remaining_owned_pids=remaining,
-                                         unknown_same_app_pids=unknown,
-                                         policy='own session plus observed descendants with matching process identity')
-            except (OSError, RuntimeError, subprocess.SubprocessError) as error:
-                cleanup_errors.append(str(error))
-                # Even if process inspection fails, a still-live Popen handle
-                # authorizes terminating the session created for this run.
-                if child.poll() is None:
-                    try:
-                        os.killpg(child.pid, signal.SIGKILL)
-                        child.wait(timeout=5)
-                    except (OSError, subprocess.SubprocessError) as fallback_error:
-                        cleanup_errors.append('own-session fallback: ' + str(fallback_error))
+            detail, cleanup_errors = cleanup_owned(child, owned, app)
+            report['cleanup'] = detail
             if cleanup_errors:
                 report['cleanup_errors'] = cleanup_errors
+                report.setdefault('error', 'owned-process cleanup failed; see cleanup_errors')
                 report['success'] = False
         if tail:
             try:

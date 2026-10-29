@@ -87,3 +87,28 @@ These checks cover pure metadata gates, owned-entry file parsing, source-log tai
 isolation/rotation and private JSON permissions. They do not start applications,
 HTTP listeners, or browser connections. Actual application validation must be run
 serially by the integrator after other CPU work has stopped.
+
+
+## Cleanup diagnostics
+
+Cleanup errors are structured objects. A failed `kill`/`killpg` includes the
+operation, signal name/number, PID or process-group ID, errno/type, and observed
+identity (UID, parent/group IDs, process start time and executable name). A group
+error retains its observed member identities. If name lookup is unavailable it
+is marked explicitly; it is never guessed from potentially sensitive argv.
+Full command arguments are excluded from these error objects and signal audit
+records, including subprocess timeout messages that could otherwise embed argv.
+
+Each signal attempt is recorded in `cleanup.signal_attempts`. A failure does not
+stop attempts on other already-authorized targets or silently clear the error
+when a later signal succeeds. No permission elevation, broader PID match, or
+permission-error exception is added. EPERM and other actual rejections remain
+errors even if a later signal succeeds. ESRCH is recorded with its full target
+context as `outcome=already_exited`; a process that exited during cleanup is not
+a synthetic failure. Final process-start identity checks still decide whether
+owned targets remain. Existing ownership checks and the narrow live-Popen
+session fallback remain in force.
+
+`electron-probe-unit.py` injects process snapshots, name lookup and signal calls
+to verify EPERM continuation, target UID/start identity and argument redaction.
+It never starts an application or delivers a real signal.
