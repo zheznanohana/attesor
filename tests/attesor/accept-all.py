@@ -25,7 +25,7 @@ def main():
     output.parent.mkdir(parents=True, exist_ok=True)
     cpu_output = output.with_suffix('.cpu.json')
     jobs = [
-        ('workspace-unit-tests', ['cargo', 'test', '--workspace']),
+        ('workspace-unit-tests', ['cargo', 'test', '--workspace', '--', '--test-threads=1']),
         ('cpu-semantics', ['python3', 'tests/attesor/accept.py', '--attesor', str(binary),
                            '--count', str(args.count), '--output', str(cpu_output)]),
         ('crypto', ['env', 'ATTESOR=' + str(binary), 'tests/attesor/crypto-check.sh']),
@@ -37,6 +37,14 @@ def main():
         ('native-zlib', ['env', 'ATTESOR=' + str(binary), 'tests/attesor/native-zlib-check.sh']),
         ('thread-startup', ['python3', 'tests/attesor/thread-startup-check.py', str(binary)]),
         ('launcher-fixtures', ['python3', 'tests/attesor/launcher-check.py', '--attesor', str(binary)]),
+        ('startup-driver', ['python3', 'tests/attesor/startup-driver-check.py']),
+        ('exec-modes-and-runtime-options', ['python3', 'tests/attesor/exec-modes-check.py', str(binary)]),
+        ('aot-static-prewarm', ['python3', 'tests/attesor/aot-prewarm.py', '--attesor', str(binary)]),
+        ('tbi-mask', ['python3', 'tests/attesor/tbi-mask-check.py', str(binary)]),
+        ('direct-test-branches', ['python3', 'tests/attesor/direct-branch-check.py', str(binary)]),
+        ('register-next-use', ['python3', 'tests/attesor/nextuse-check.py', str(binary)]),
+        ('fp16-exception-state', ['python3', 'tests/attesor/fp16-status-check.py', str(binary)]),
+        ('icache-thread-handoff', ['python3', 'tests/attesor/icache-handoff-check.py', str(binary)]),
     ]
     results = []
     for label, command in jobs:
