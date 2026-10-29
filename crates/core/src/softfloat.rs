@@ -196,7 +196,6 @@ pub fn fmla<T: Fp>(a: T, n: T, m: T) -> T {
     fix(n.mul_add(m, a))
 }
 
-#[inline(always)]
 /// FPCR.FZ for comparisons: flush a denormal input to a signed zero (FPUnpack). Max/min do no
 /// arithmetic, so the host DAZ the FPCR sync sets never sees their inputs; a multiply by an opaque 1.0
 /// applies it (and is exact without DAZ). NaNs keep their bits for the NaN rules.
@@ -205,6 +204,7 @@ fn fz_input<T: Fp>(x: T) -> T {
     if x.is_nan() { x } else { x * std::hint::black_box(T::from_f64(1.0)) }
 }
 
+#[inline(always)]
 pub fn fmax<T: Fp>(a: T, b: T) -> T {
     let (a, b) = (fz_input(a), fz_input(b));
     if let Some(n) = process_nans(a, b) {
