@@ -1,0 +1,20 @@
+{
+  "intel-code": {
+    "executable": "/tmp/attesor-native-baselines/intel-reference/Visual Studio Code.app/Contents/MacOS/Code",
+    "returncode": 0,
+    "stdout": "{\"sha256\":\"0a0cc9b6f091a315d9001ca4adb51c8cd223f23c08880ba522b34338f1284cba\",\"ciphertext\":\"71c265d29172232c81a88c7ae016d357134fcde35e113b98f67689ce68ab7b5a\",\"workers\":[694140833,1208046114,1721951395],\"child\":\"PASS\"}\n",
+    "stderr": ""
+  },
+  "arm-code": {
+    "executable": "/Applications/Visual Studio Code.app/Contents/MacOS/Code",
+    "returncode": 0,
+    "stdout": "{\"sha256\":\"0a0cc9b6f091a315d9001ca4adb51c8cd223f23c08880ba522b34338f1284cba\",\"ciphertext\":\"71c265d29172232c81a88c7ae016d357134fcde35e113b98f67689ce68ab7b5a\",\"workers\":[694140833,1208046114,1721951395],\"child\":\"PASS\"}\n",
+    "stderr": ""
+  },
+  "arm-dsh": {
+    "executable": "/Applications/DeepSeek Harness.app/Contents/MacOS/DeepSeek Harness",
+    "returncode": 0,
+    "stdout": "{\"sha256\":\"0a0cc9b6f091a315d9001ca4adb51c8cd223f23c08880ba522b34338f1284cba\",\"ciphertext\":\"71c265d29172232c81a88c7ae016d357134fcde35e113b98f67689ce68ab7b5a\",\"workers\":[694140833,1208046114,1721951395],\"child\":\"PASS\"}\n",
+    "stderr": ""
+  }
+}
