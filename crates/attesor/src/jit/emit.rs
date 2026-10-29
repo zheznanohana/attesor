@@ -1786,6 +1786,7 @@ pub fn has_f16c() -> bool {
 /// created and registered the label for `pc` if it wants intra-unit jumps.
 /// Returns the guest address just past the block.
 pub fn emit_block(u: &mut Unit, pc: u64, read: &dyn Fn(u64) -> Option<u32>) -> u64 {
+    super::loops::census(pc, read);
     u.fuse = None;
     u.loop_cache = None;
     u.region = None;
@@ -1848,6 +1849,12 @@ pub fn emit_block(u: &mut Unit, pc: u64, read: &dyn Fn(u64) -> Option<u32>) -> u
             u.loop_cache = Some(LoopCache { pc, fast, reg });
             u.rc.reg = reg;
         }
+    }
+    // Diagnostic-only exact block-PC publication, after the private backedge
+    // label too. Existing sampling otherwise sees stale PCs in chained loops.
+    if super::loops::census_enabled() {
+        u.a.mov(rax, pc).unwrap();
+        u.a.mov(qword_ptr(r15 + off::PC), rax).unwrap();
     }
     // Native FP code follows FPCR.RMode/FZ through MXCSR, but not DN/AHP/FZ16: a block with any SIMD&FP
     // instruction checks those on entry and hands itself to the interpreter when one is set.

@@ -230,6 +230,7 @@ pub fn unregister() { CURRENT.with(|c| c.set(std::ptr::null())); }
 
 #[derive(Default)]
 struct Counts {
+    pcs: BTreeMap<u64, u64>,
     states: [u64; 9],
     // Full tables are persisted, even though the human-readable tables are truncated.
     images: BTreeMap<String, [u64; 2]>,
@@ -294,6 +295,7 @@ fn start() {
                     let state = (state & 255) as usize;
                     d.counts.states[state] += 1;
                     if state == State::Jit as usize || state == State::Interp as usize {
+                        if crate::jit::loops::census_enabled() { *d.counts.pcs.entry(pc).or_default() += 1; }
                         let (image, symbol) = d.resolved.entry(pc).or_insert_with(|| crate::symbols::attribute(pc));
                         d.counts.images.entry(image.clone()).or_default()[usize::from(state == State::Interp as usize)] += 1;
                         *d.counts.symbols.entry(format!("{image}`{symbol}")).or_default() += 1;
@@ -400,6 +402,9 @@ impl Data {
                 ["state", state, n] => {
                     if let (Some(i), Ok(n)) = (STATES.iter().position(|s| s == state), n.parse()) { self.counts.states[i] = n; }
                 }
+                ["pc", pc, n] => {
+                    if let (Ok(pc), Ok(n)) = (u64::from_str_radix(pc, 16), n.parse()) { self.counts.pcs.insert(pc, n); }
+                }
                 ["image", image, jit, interp] => {
                     if let (Ok(j), Ok(i)) = (jit.parse(), interp.parse()) { self.counts.images.insert(image.to_string(), [j, i]); }
                 }
@@ -482,6 +487,7 @@ impl Data {
         }
         if let Some(available) = self.bridge_selectors { let _ = writeln!(out, "bridge-selectors\t{available}"); }
         for (name, n) in &c.images { let _ = writeln!(out, "image\t{}\t{}\t{}", clean(name), n[0], n[1]); }
+        for (pc, n) in &c.pcs { let _ = writeln!(out, "pc\t{pc:x}\t{n}"); }
         for (name, n) in &c.symbols { let _ = writeln!(out, "symbol\t{}\t{n}", clean(name)); }
         let path = self.path();
         let tmp = path.with_extension("tmp");

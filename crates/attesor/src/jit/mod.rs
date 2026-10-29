@@ -3,6 +3,7 @@
 
 pub mod emit;
 pub mod selftest;
+pub mod loops;
 
 use emit::{StubKind, Unit, EXIT_CONTINUE, EXIT_PENDING, EXIT_SVC, HELPER_COMMPAGE, HELPER_INTERP};
 use iced_x86::BlockEncoderOptions;
