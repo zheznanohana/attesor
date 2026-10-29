@@ -1,0 +1,156 @@
+# Track N: measurement-first baseline
+Captured before implementing the vImage bridge (2026-10-29 JST).
+Host macOS 26.7.2 x86_64; guest sysroot 26.6.2__Mac14,2.
+Build: clang -w -O2 -arch {x86_64,arm64} tests/attesor/native-libraries-bench.c -framework Accelerate -framework CoreFoundation -framework CoreGraphics -framework ImageIO -lcompression -o <private output>
+Guest: TMPDIR=/private/tmp ATTESOR_CACHE=$PWD/target/n-native/cache ATTESOR_NATIVE_LIBS=0 target/release/attesor --no-aot <arm64 binary>
+Initial result() did not explicitly sequence the clock vs checksum argument; the final probe fixes this and a separate final survey confirms the ranking.
+Native-1 observed uptime context: 22:06  2 users, load averages: 17.71 11.85 10.50
+
+## survey-native-1.txt
+compression-LZFSE-encode 15.847000 67e00f2689ba7242
+compression-LZFSE-decode 0.997000 549f986c90a50383
+compression-LZ4-encode 0.414000 2b9fec9bda6b50c2
+compression-LZ4-decode 0.271000 549f986c90a50383
+compression-zlib-encode 16.959000 4ac976a60d6981ca
+compression-zlib-decode 1.510000 549f986c90a50383
+CommonCrypto-SHA256 50.443000 9e0d383f7d03fdf6
+CommonCrypto-AES-CBC 8.375000 5d6e0766143d84fc
+vImage-convolve 2.917000 d944f4516193b031
+vImage-scale 1.178000 e05eb0cdff05535e
+vDSP-dot 3.205000 b6a588d556d82f73
+vDSP-FFT 0.121000 b7bdeea03601e99e
+CoreFoundation-dictionary-string 14.251000 f2d654d992512433
+ImageIO-PNG-encode 6.693000 6a7b474da11d2605
+ImageIO-PNG-decode 4.480000 1d384e68c0150383
+ImageIO-JPEG-encode 2.198000 ddbfe6e5a100a9bb
+ImageIO-JPEG-decode 3.858000 0c86dfb3674c8de3
+ImageIO-HEIC-encode SKIP encoder-unavailable
+ImageIO-HEIC-decode SKIP encoder-unavailable
+
+## survey-native-1.err
+sysctlbyname for kern.hv_vmm_present failed with status -1kIOSurfaceMethodSetCoreVideoBridgedKeys failed: 10000003
+
+## survey-arm-1.txt
+22:06  2 users, load averages: 17.71 11.85 10.50
+compression-LZFSE-encode 67.054199 67e00f2689ba7242
+compression-LZFSE-decode 5.696045 549f986c90a50383
+compression-LZ4-encode 5.301025 84ce2c3d220c483e
+compression-LZ4-decode 3.630859 549f986c90a50383
+compression-zlib-encode 72.284912 4ac976a60d6981ca
+compression-zlib-decode 7.187012 549f986c90a50383
+CommonCrypto-SHA256 34.949951 9e0d383f7d03fdf6
+CommonCrypto-AES-CBC 26.845947 5d6e0766143d84fc
+vImage-convolve 35.642090 d944f4516193b031
+vImage-scale 86.989014 e05eb0cdff05535e
+vDSP-dot 8.242920 b6a588d556d82f73
+vDSP-FFT 26.929932 21099118fd5c1959
+CoreFoundation-dictionary-string 96.572998 f2d654d992512433
+ImageIO-PNG-encode 110.473877 6a7b474da11d2605
+ImageIO-PNG-decode 83.968018 1d384e68c0150383
+ImageIO-JPEG-encode 53.027100 ddbfe6e5a100a9bb
+ImageIO-JPEG-decode 50.216064 0c86dfb3674c8de3
+ImageIO-HEIC-encode SKIP encoder-unavailable
+ImageIO-HEIC-decode SKIP encoder-unavailable
+
+## survey-arm-1.err
+sysctlbyname for kern.hv_vmm_present failed with status -1kIOSurfaceMethodSetCoreVideoBridgedKeys failed: 10000003
+
+## survey-native-2.txt
+22:07  2 users, load averages: 11.53 10.97 10.23
+compression-LZFSE-encode 10.243000 67e00f2689ba7242
+compression-LZFSE-decode 0.823000 549f986c90a50383
+compression-LZ4-encode 0.352000 2b9fec9bda6b50c2
+compression-LZ4-decode 0.226000 549f986c90a50383
+compression-zlib-encode 15.186000 4ac976a60d6981ca
+compression-zlib-decode 0.505000 549f986c90a50383
+CommonCrypto-SHA256 46.202000 9e0d383f7d03fdf6
+CommonCrypto-AES-CBC 7.680000 5d6e0766143d84fc
+vImage-convolve 1.049000 d944f4516193b031
+vImage-scale 1.218000 e05eb0cdff05535e
+vDSP-dot 2.678000 b6a588d556d82f73
+vDSP-FFT 0.077000 b7bdeea03601e99e
+CoreFoundation-dictionary-string 12.413000 f2d654d992512433
+ImageIO-PNG-encode 5.974000 6a7b474da11d2605
+ImageIO-PNG-decode 3.385000 1d384e68c0150383
+ImageIO-JPEG-encode 1.308000 ddbfe6e5a100a9bb
+ImageIO-JPEG-decode 1.541000 0c86dfb3674c8de3
+ImageIO-HEIC-encode SKIP encoder-unavailable
+ImageIO-HEIC-decode SKIP encoder-unavailable
+
+## survey-native-2.err
+sysctlbyname for kern.hv_vmm_present failed with status -1kIOSurfaceMethodSetCoreVideoBridgedKeys failed: 10000003
+
+## survey-arm-2.txt
+22:07  2 users, load averages: 11.53 10.97 10.23
+compression-LZFSE-encode 66.056885 67e00f2689ba7242
+compression-LZFSE-decode 4.533203 549f986c90a50383
+compression-LZ4-encode 3.634033 84ce2c3d220c483e
+compression-LZ4-decode 2.483887 549f986c90a50383
+compression-zlib-encode 59.421875 4ac976a60d6981ca
+compression-zlib-decode 5.920166 549f986c90a50383
+CommonCrypto-SHA256 33.489990 9e0d383f7d03fdf6
+CommonCrypto-AES-CBC 25.583008 5d6e0766143d84fc
+vImage-convolve 32.928955 d944f4516193b031
+vImage-scale 77.341064 e05eb0cdff05535e
+vDSP-dot 8.045898 b6a588d556d82f73
+vDSP-FFT 25.620117 21099118fd5c1959
+CoreFoundation-dictionary-string 96.355957 f2d654d992512433
+ImageIO-PNG-encode 111.082031 6a7b474da11d2605
+ImageIO-PNG-decode 77.005859 1d384e68c0150383
+ImageIO-JPEG-encode 49.935059 ddbfe6e5a100a9bb
+ImageIO-JPEG-decode 60.067871 0c86dfb3674c8de3
+ImageIO-HEIC-encode SKIP encoder-unavailable
+ImageIO-HEIC-decode SKIP encoder-unavailable
+
+## survey-arm-2.err
+sysctlbyname for kern.hv_vmm_present failed with status -1kIOSurfaceMethodSetCoreVideoBridgedKeys failed: 10000003
+
+## survey-native-3.txt
+22:07  2 users, load averages: 11.53 10.97 10.23
+compression-LZFSE-encode 10.932000 67e00f2689ba7242
+compression-LZFSE-decode 0.806000 549f986c90a50383
+compression-LZ4-encode 0.360000 2b9fec9bda6b50c2
+compression-LZ4-decode 0.210000 549f986c90a50383
+compression-zlib-encode 16.518000 4ac976a60d6981ca
+compression-zlib-decode 0.568000 549f986c90a50383
+CommonCrypto-SHA256 49.057000 9e0d383f7d03fdf6
+CommonCrypto-AES-CBC 8.153000 5d6e0766143d84fc
+vImage-convolve 1.215000 d944f4516193b031
+vImage-scale 1.409000 e05eb0cdff05535e
+vDSP-dot 3.267000 b6a588d556d82f73
+vDSP-FFT 0.083000 b7bdeea03601e99e
+CoreFoundation-dictionary-string 16.522000 f2d654d992512433
+ImageIO-PNG-encode 8.474000 6a7b474da11d2605
+ImageIO-PNG-decode 4.771000 1d384e68c0150383
+ImageIO-JPEG-encode 1.727000 ddbfe6e5a100a9bb
+ImageIO-JPEG-decode 2.408000 0c86dfb3674c8de3
+ImageIO-HEIC-encode SKIP encoder-unavailable
+ImageIO-HEIC-decode SKIP encoder-unavailable
+
+## survey-native-3.err
+sysctlbyname for kern.hv_vmm_present failed with status -1kIOSurfaceMethodSetCoreVideoBridgedKeys failed: 10000003
+
+## survey-arm-3.txt
+22:07  2 users, load averages: 11.53 10.97 10.23
+compression-LZFSE-encode 103.522949 67e00f2689ba7242
+compression-LZFSE-decode 5.874023 549f986c90a50383
+compression-LZ4-encode 4.825928 84ce2c3d220c483e
+compression-LZ4-decode 4.456055 549f986c90a50383
+compression-zlib-encode 103.155029 4ac976a60d6981ca
+compression-zlib-decode 12.092773 549f986c90a50383
+CommonCrypto-SHA256 46.727051 9e0d383f7d03fdf6
+CommonCrypto-AES-CBC 33.772949 5d6e0766143d84fc
+vImage-convolve 48.077881 d944f4516193b031
+vImage-scale 109.891113 e05eb0cdff05535e
+vDSP-dot 10.458984 b6a588d556d82f73
+vDSP-FFT 37.725098 21099118fd5c1959
+CoreFoundation-dictionary-string 147.625000 f2d654d992512433
+ImageIO-PNG-encode 156.829834 6a7b474da11d2605
+ImageIO-PNG-decode 132.708984 1d384e68c0150383
+ImageIO-JPEG-encode 83.833008 ddbfe6e5a100a9bb
+ImageIO-JPEG-decode 66.603027 0c86dfb3674c8de3
+ImageIO-HEIC-encode SKIP encoder-unavailable
+ImageIO-HEIC-decode SKIP encoder-unavailable
+
+## survey-arm-3.err
+sysctlbyname for kern.hv_vmm_present failed with status -1kIOSurfaceMethodSetCoreVideoBridgedKeys failed: 10000003
