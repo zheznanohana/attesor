@@ -49,6 +49,16 @@ jobs:
           test -s "$GITHUB_WORKSPACE/research-results/runtime-survey.txt"
           grep -q 'decompiled=true' "$GITHUB_WORKSPACE/research-results/runtime-survey.txt"
           grep -E 'ERROR|WARN|REPORT:|Survey.java' "$RUNNER_TEMP/ghidra-headless.log" | tail -30 > "$GITHUB_WORKSPACE/research-results/ghidra-status.txt" || true
+          target=/Library/Apple/usr/libexec/oah/libRosettaRuntime
+          if test -r "$target"; then
+            "$RUNNER_TEMP/ghidra_12.2_PUBLIC/support/analyzeHeadless" "$RUNNER_TEMP/ghidra-projects" RosettaLibrary \
+              -import "$target" -analysisTimeoutPerFile 240 -max-cpu 2 \
+              -scriptPath "$GITHUB_WORKSPACE/research/rosetta" \
+              -postScript Survey.java "$GITHUB_WORKSPACE/research-results/library-survey.txt" \
+              > "$RUNNER_TEMP/ghidra-library.log" 2>&1
+            grep -q 'decompiled=true' "$GITHUB_WORKSPACE/research-results/library-survey.txt"
+            grep -E 'ERROR|WARN|REPORT:|Survey.java' "$RUNNER_TEMP/ghidra-library.log" | tail -30 > "$GITHUB_WORKSPACE/research-results/ghidra-library-status.txt" || true
+          fi
       - name: Upload small text evidence only (one day retention)
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
