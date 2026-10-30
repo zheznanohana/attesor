@@ -119,6 +119,7 @@ pub struct Unit {
     vpair: bool,
     vtrace: bool,
     fpflags: bool,
+    fpguard: bool,
     fpflags_sinks:u64,
     leafra: bool,
     leafinline: bool,
@@ -551,6 +552,7 @@ impl Unit {
             vpair: vpair_enabled(),
             vtrace: vtrace_enabled(),
             fpflags: fpflags_enabled(),
+            fpguard: fpguard_enabled(),
             fpflags_sinks:0,
             leafra: leafra_enabled(),
             leafinline: leafinline_enabled(),
@@ -2353,6 +2355,11 @@ fn vpair_enabled() -> bool {
     *ON.get_or_init(||!jit_off("vpair")&&std::env::var("ATTESOR_JIT_ON").unwrap_or_default().split(',').any(|t|t=="vpair"))
 }
 
+fn fpguard_enabled()->bool {
+    static F:std::sync::OnceLock<bool>=std::sync::OnceLock::new();
+    *F.get_or_init(||!jit_off("fpguard")&&std::env::var("ATTESOR_JIT_ON").unwrap_or_default().split(',').any(|g|g=="fpguard"))
+}
+
 fn fpflags_enabled()->bool {
     static F:std::sync::OnceLock<bool>=std::sync::OnceLock::new();
     *F.get_or_init(||!jit_off("fpflags")&&std::env::var("ATTESOR_JIT_ON").unwrap_or_default().split(',').any(|g|g=="fpflags"))
@@ -2645,7 +2652,7 @@ pub(super) fn prepare_bgtrans() {
         loopra_enabled(), regioncache_enabled(), has_avx(), has_fma(),
         has_aes(), has_pclmul(), has_sha(), has_f16c(), loopra2_enabled(),
         has_avx512(), avx512_enabled(), avx512_nan_enabled(), super::fastenc_enabled(),
-        super::loops::census_enabled(), super::cost::probes(), vloop_enabled(), vloop2_enabled(), vchain_enabled(), vscalar_enabled(), funra_enabled(), funflags_enabled(), selectra_enabled(), regflags_enabled(), cfgflags_enabled(), xspill_enabled(), fmovra_enabled(), vpair_enabled(), vtrace_enabled(), fpflags_enabled(), leafra_enabled(), csetfast_enabled(), csetpair_enabled(), leafinline_enabled(), leafflags_enabled(), super::bliccache::enabled());
+        super::loops::census_enabled(), super::cost::probes(), vloop_enabled(), vloop2_enabled(), vchain_enabled(), vscalar_enabled(), funra_enabled(), funflags_enabled(), selectra_enabled(), regflags_enabled(), cfgflags_enabled(), xspill_enabled(), fmovra_enabled(), vpair_enabled(), vtrace_enabled(), fpflags_enabled(), fpguard_enabled(), leafra_enabled(), csetfast_enabled(), csetpair_enabled(), leafinline_enabled(), leafflags_enabled(), super::bliccache::enabled());
 }
 
 /// Translate one basic block starting at `pc` into `u`. The caller must have
@@ -2841,6 +2848,7 @@ fn emit_block_inner(u: &mut Unit, pc: u64, read: &dyn Fn(u64) -> Option<u32>, mu
     u.region = multi;
     let mut fp_sink:Option<fp_flags::Plan>=None;
     let mut fp_body=None;
+    let mut fp_guard_outlined=false;
     if u.notbi_enabled { u.notbi.clear(); } // no facts cross public/private loop entries
     u.loop_exit_flags = None;
     u.loop_exit_compare = None;
@@ -2908,21 +2916,38 @@ fn emit_block_inner(u: &mut Unit, pc: u64, read: &dyn Fn(u64) -> Option<u32>, mu
                 &&!u.commpage_checks&&disabled_classes()==0 {
                 fp_flags::plan(pc,read,&|p|u.labels.contains_key(&p))
             }else {None};
-            let public_guard=plan.map(|_|u.a.create_label());
-            if let Some(g)=public_guard {u.a.jmp(g).unwrap();}
-            let mut fast_label = fast;
-            u.a.set_label(&mut fast_label).unwrap();
-            u.region = Some(region);
-            if let Some(plan)=plan {
-                let body=u.a.create_label();fp_body=Some(body);fp_sink=Some(plan);
-                // Every backedge still checks FPCR. On rejection, the previous
-                // tail CMP is reconstructed BEFORE canonical writeback/deopt.
-                u.a.test(dword_ptr(r15+off::FPCR),FPCR_NONDEFAULT as i32).unwrap();u.a.jz(body).unwrap();
-                {u.dead_flags=false;let mut e=E{u,pc,fuse_in:None,scalar_inputs:None};
-                    e.fpflags_compare(plan);e.flags_sub();e.mov_imm(rax,pc);
-                    a!(e,mov(qword_ptr(r15+off::PC),rax));a!(e,mov(qword_ptr(r15+off::EXIT_REASON),EXIT_INTERP as i32));
-                    let exit=e.dispatcher_exit();a!(e,jmp(exit));}
-                let mut g=public_guard.unwrap();u.a.set_label(&mut g).unwrap();
+            if let Some(plan)=plan.filter(|_|u.fpguard) {
+                // A public entry cannot reconstruct a CMP that has not run.
+                // Both paths keep their FPCR check, but only private rejection
+                // repairs the previous iteration's known comparison.
+                let mut public_bad=u.a.create_label();let mut private_bad=u.a.create_label();let mut body=u.a.create_label();
+                u.a.test(dword_ptr(r15+off::FPCR),FPCR_NONDEFAULT as i32).unwrap();u.a.jnz(public_bad).unwrap();u.a.jmp(body).unwrap();
+                let mut fast_label=fast;u.a.set_label(&mut fast_label).unwrap();u.region=Some(region);
+                u.a.test(dword_ptr(r15+off::FPCR),FPCR_NONDEFAULT as i32).unwrap();u.a.jnz(private_bad).unwrap();
+                u.a.set_label(&mut body).unwrap();fp_guard_outlined=true;fp_sink=Some(plan);
+                u.cold_paths.push(Box::new(move |u| {
+                    u.a.set_label(&mut public_bad).unwrap();
+                    fp_flags::reject(u,pc,region,None);
+                    u.a.set_label(&mut private_bad).unwrap();
+                    fp_flags::reject(u,pc,region,Some(plan));
+                }));
+            }else {
+                let public_guard=plan.map(|_|u.a.create_label());
+                if let Some(g)=public_guard {u.a.jmp(g).unwrap();}
+                let mut fast_label = fast;
+                u.a.set_label(&mut fast_label).unwrap();
+                u.region = Some(region);
+                if let Some(plan)=plan {
+                    let body=u.a.create_label();fp_body=Some(body);fp_sink=Some(plan);
+                    // Every backedge still checks FPCR. On rejection, the previous
+                    // tail CMP is reconstructed BEFORE canonical writeback/deopt.
+                    u.a.test(dword_ptr(r15+off::FPCR),FPCR_NONDEFAULT as i32).unwrap();u.a.jz(body).unwrap();
+                    {u.dead_flags=false;let mut e=E{u,pc,fuse_in:None,scalar_inputs:None};
+                        e.fpflags_compare(plan);e.flags_sub();e.mov_imm(rax,pc);
+                        a!(e,mov(qword_ptr(r15+off::PC),rax));a!(e,mov(qword_ptr(r15+off::EXIT_REASON),EXIT_INTERP as i32));
+                        let exit=e.dispatcher_exit();a!(e,jmp(exit));}
+                    let mut g=public_guard.unwrap();u.a.set_label(&mut g).unwrap();
+                }
             }
             if multi.is_none() { u.region_exits.push(region); }
         }
@@ -2959,7 +2984,7 @@ fn emit_block_inner(u: &mut Unit, pc: u64, read: &dyn Fn(u64) -> Option<u32>, mu
             }
             p += 4;
         }
-        if fp {
+        if fp && !fp_guard_outlined {
             let mut body = fp_body.unwrap_or_else(||u.a.create_label());
             u.a.test(dword_ptr(r15 + off::FPCR), FPCR_NONDEFAULT as i32).unwrap();
             u.a.jz(body).unwrap();
@@ -9377,9 +9402,12 @@ mod loopra_tests {
             let branch_pc=words.len();words.push(0x54000001|(((-(branch_pc as i32)as u32)&0x7ffff)<<5));
             let exit=PC+words.len()as u64*4;words.push(0xd4001001);
             let read=|p:u64|p.checked_sub(PC).and_then(|o|words.get((o/4)as usize)).copied();
-            let mut u=Unit::new(kind,false);u.fpflags=true;u.vloop=true;u.vchain=true;u.vscalar=true;u.vpair=true;u.loopra=true;u.loopra2=false;u.leafinline=false;u.avx512=high;u.avx512_nan=nan512;
+            let mut u=Unit::new(kind,false);u.fpflags=true;u.fpguard=true;u.vloop=true;u.vchain=true;u.vscalar=true;u.vpair=true;u.loopra=true;u.loopra2=false;u.leafinline=false;u.avx512=high;u.avx512_nan=nan512;
             for p in [PC,exit] {let l=u.a.create_label();u.labels.insert(p,l);}
             emit_block(&mut u,PC,&read);emit_block(&mut u,exit,&read);assert_eq!(u.fpflags_sinks,1);assert_eq!(u.insns_fallback,0);
+            let guards:Vec<_>=u.a.instructions().windows(2).filter(|p|p[0].mnemonic()==iced_x86::Mnemonic::Test
+                &&p[0].memory_base()==iced_x86::Register::R15&&p[0].memory_displacement64()==off::FPCR as u64).collect();
+            assert_eq!(guards.len(),2);assert!(guards.iter().all(|p|p[1].mnemonic()==iced_x86::Mnemonic::Jne));
             let(host,_)=assemble(u,0);
             let vals:Vec<u64>=if double {vec![0,0x8000000000000000,1,1f64.to_bits(),0x7ff0000000000000,0xfff0000000000000,0x7ff8000000000042,0x7ff0000000000073]}
                 else {vec![0,0x80000000,1,1f32.to_bits()as u64,0x7f800000,0xff800000,0x7fc00042,0x7f800073]};
@@ -9413,7 +9441,7 @@ mod loopra_tests {
                 0xb9000043,if counter64 {0x9100054a}else {0x1100054a},if counter64 {0xf1000d5f}else {0x71000d5f}]);
             let at=words.len();words.push(0x54000001|(((-(at as i32)as u32)&0x7ffff)<<5));
             let read=|p:u64|p.checked_sub(PC).and_then(|o|words.get((o/4)as usize)).copied();
-            let mut u=Unit::new(kind,false);u.fpflags=true;u.vloop=true;u.vchain=true;u.vscalar=true;u.loopra=true;u.loopra2=false;u.leafinline=false;u.avx512=high;
+            let mut u=Unit::new(kind,false);u.fpflags=true;u.fpguard=true;u.vloop=true;u.vchain=true;u.vscalar=true;u.loopra=true;u.loopra2=false;u.leafinline=false;u.avx512=high;
             let l=u.a.create_label();u.labels.insert(PC,l);emit_block(&mut u,PC,&read);assert_eq!(u.fpflags_sinks,1);let(host,_)=assemble(u,0);
             let padding=1f64.to_bits();
             for counter in [0,1,if counter64 {0x7fffffffffffffff}else {0x7fffffff},if counter64 {0x8000000000000000}else {0x80000000}] {for a in [0u64,1f64.to_bits(),0x7ff0000000000073] {

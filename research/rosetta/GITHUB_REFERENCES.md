@@ -538,3 +538,19 @@ Next bounded hypothesis: outline the exact public/private FPCR rejection paths
 so the normal private guard falls through into the hot body instead of a taken
 jump over both rejection blocks. Keep both guards and different incoming-NZCV
 contracts. This layout optimization is NOT implemented or measured in88.
+
+
+## Codegen89: outlined FPCR rejection (`fpguard`, default OFF)
+
+Move both strict fpflags-loop FPCR rejection blocks out of the hot body; private
+check now falls through on normal mode. Retain one check per public entry and
+private iteration, public original-NZCV preservation and private exact previous-CMP
+repair. Captured fixed assignment; no inferred body cache at cold exit. Three
+focused tests passed (8192 differential+96 public+96 private cases); added emitter
+assertions require both tests to branch to rejection only on nonzero FPCR bits.
+Original full bench fixture one screen: matmul native21.517ms, control(fpflags)
+40.041ms, fpguard39.244ms (-1.99%),54.83% native. Too small for clear improvement;
+NO repetition. All7 checksum lines match. No claim that57.19% historical88 and
+this54.83% snapshot are directly comparable. Keep fpguard OFF the selected
+configuration pending stronger evidence; no workspace/AOT/application matrix.
+Production unchanged. Full same-config60% goal remains incomplete.

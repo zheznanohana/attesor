@@ -42,6 +42,22 @@ pub(super) fn plan(pc:u64,read:&dyn Fn(u64)->Option<u32>,cut:&dyn Fn(u64)->bool)
     None
 }
 
+/// Outlined exit: no fallthrough/resume and no compiler cache inference from
+/// the body. The captured fixed assignment is the exact private entry contract;
+/// the region's existing dispatcher tail performs its canonical writeback.
+pub(super) fn reject(u:&mut Unit,pc:u64,region:LoopRa,cmp:Option<Plan>) {
+    let saved_region=u.region.replace(region);
+    let saved_dead=std::mem::replace(&mut u.dead_flags,false);
+    let saved_rc=std::mem::replace(&mut u.rc,RegCache::new());
+    let mut e=E{u,pc,fuse_in:None,scalar_inputs:None};
+    if let Some(p)=cmp {e.fpflags_compare(p);e.flags_sub();}
+    e.mov_imm(rax,pc);
+    e.u.a.mov(qword_ptr(r15+off::PC),rax).unwrap();
+    e.u.a.mov(qword_ptr(r15+off::EXIT_REASON),EXIT_INTERP as i32).unwrap();
+    e.u.a.jmp(region.exit).unwrap();
+    e.u.region=saved_region;e.u.dead_flags=saved_dead;e.u.rc=saved_rc;
+}
+
 #[cfg(test)]mod tests {
     use super::*;
     #[test]fn fpflags_planner_native_observer_boundaries() {
