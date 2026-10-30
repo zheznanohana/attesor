@@ -651,3 +651,38 @@ captures (never reread mutable guest data during NaN replay), one final NaN guar
 and strict cold replay of all4 steps; runtime trip/alignment guard and full final
 X/V/NZCV state. This is a general source-shape optimization, not algorithm or
 benchmark substitution. No batch implementation or performance gain claimed yet.
+
+
+## Codegen92: four-step ordered scalar MAC (`vbatch`, default OFF)
+
+Implemented the closed8-word source-shape plan, runtime trip range/alignment
+guards,10 free AVX512 V-map slots (8 immutable raw input captures+2 cold work
+slots),4 separately rounded MUL/ADD steps in original order, one final unordered
+guard, strict full replay without guest-memory reread, complete final V/GPR/NZCV
+commit. No FMA/reassociation/algorithm replacement or host pointer. Existing
+FPCR checks retained at batch boundaries; read-only proof covers inside batch.
+Actual hot+cold Cpu/FPCR store/Call checks and dedicated cold scratch/capture
+register+memory checks pass before registration. Source/end-PC overflow and
+shape/bounds/alias/type/ISA/capacity gates reject safely. Default/production OFF.
+
+8 focused tests pass:32768 new X/V/NZCV/FPCR cases (S/D, addressing scales, high
+guest names, original ADD operand orders, Plain/Patchable, starts0/4, all rounding
+modes,FZ, varied NaN/subnormal/infinity/zero inputs),224 pre-effect rejects and
+related previous proof/FPCR cases. These mixed8-value sequences emphasize NaN
+replay: explicit guaranteed-all-finite hot-path coverage and replay counting
+should be added before considering promotion. Do not infer complete hot-path
+coverage from the count. Original fixture all7 checksum lines match native.
+
+Single original bench screen is NEGATIVE: native22.476ms, control35.636ms,
+vbatch73.926ms (+107.45%,30.40% native). No repeat. A compiled-source dump confirms
+4 ordered steps and immutable captures, but low-bank scalar loads/commits and
+the unordered test are legacy SSE mixed with VEX and high-register EVEX.
+That is an observed encoding difference, NOT proof of the slowdown cause.
+Next new variant: normalize hot low-bank vector operations to VEX while retaining
+EVEX for16..31; add finite-only differential cases and test-only replay counts.
+Do not blame AVX512 frequency or transitions without measurement. Intel general
+AVX/SSE guidance concerns256-bit/legacy transitions and does not by itself
+establish a128-bit Tiger Lake explanation:
+https://www.intel.com/content/dam/develop/external/us/en/documents/11mc12-avoiding-2bavx-sse-2btransition-2bpenalties-2brh-2bfinal-809104.pdf
+
+No selected-profile change or60% acceptance. Goal active/incomplete.
