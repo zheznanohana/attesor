@@ -19,6 +19,8 @@ use std::collections::HashMap;
 
 #[path = "notbi.rs"]
 mod notbi;
+#[path = "functions.rs"]
+mod functions;
 
 pub const HELPER_INTERP: usize = 0;
 pub const HELPER_COMMPAGE: usize = 1;
@@ -94,10 +96,16 @@ pub struct Unit {
     loopra: bool,
     loopra2: bool,
     vloop: bool,
+    vloop2: bool,
     vchain: bool,
     // Straight-line scalar-write proofs, S and D respectively. Never seeded
     // from a previous block/backedge: the first public entry must be correct.
     vzero: [u32; 2],
+    funra: bool,
+    funflags: bool,
+    regflags: bool,
+    selectra: bool,
+    function_entry: Option<u64>,
     // Private clones only: never published in the JIT registry or AOT index.
     region_labels: HashMap<u64, CodeLabel>,
     pub extra_guest_range: Option<(u64, u64)>,
@@ -325,9 +333,15 @@ struct LoopRa {
     // Experimental fixed V locations on a proven single-block FP loop.
     // Scratch xmm0..7 remain separate; all public exits materialize Cpu.
     vreg: [u8; NVREGS],
+    // Optional unused GPR holding compact CMP flags: SF15/ZF14/borrow8/OF0.
+    // CMP-only private CFGs. Public-edge writeback also changes host CF.
+    flags: u8,
 }
 
 impl LoopRa {
+    fn packed_flags(self) -> Option<R64> {
+        (self.flags<NLOOPREGS as u8).then(||LOOPREGS[self.flags as usize])
+    }
     fn vslot(self, n: u32) -> Option<usize> {
         self.vreg.iter().position(|&r| r as u32 == n)
     }
@@ -346,6 +360,12 @@ impl LoopRa {
                 else { a.movdqu(xmmword_ptr(r15 + voff(n as u32)), VREGS[s]).unwrap(); }
             }
         }
+        if let Some(f)=self.packed_flags() {
+            a.bt(f,15).unwrap();a.setc(byte_ptr(r15+off::NF)).unwrap();
+            a.bt(f,14).unwrap();a.setc(byte_ptr(r15+off::ZF)).unwrap();
+            a.bt(f,8).unwrap();a.setnc(byte_ptr(r15+off::CF)).unwrap();
+            a.bt(f,0).unwrap();a.setc(byte_ptr(r15+off::VF)).unwrap();
+        }
     }
     fn reload(self, a: &mut CodeAssembler) {
         for (s, n) in self.reg.into_iter().enumerate() {
@@ -356,6 +376,17 @@ impl LoopRa {
                 if high_xmm(VREGS[s]) { a.vmovdqu64(VREGS[s], xmmword_ptr(r15 + voff(n as u32))).unwrap(); }
                 else { a.movdqu(VREGS[s], xmmword_ptr(r15 + voff(n as u32))).unwrap(); }
             }
+        }
+        if let Some(f)=self.packed_flags() {
+            let d=LOOPREGS32[self.flags as usize];
+            // Do not clobber EAX: interpreter helpers return status there.
+            a.movzx(d,byte_ptr(r15+off::CF)).unwrap();a.xor(d,1).unwrap();a.shl(d,8).unwrap();
+            for (offset,shift) in [(off::NF,15),(off::ZF,14),(off::VF,0)] {
+                a.movzx(edx,byte_ptr(r15+offset)).unwrap();
+                if shift!=0 {a.shl(edx,shift).unwrap();}
+                a.or(d,edx).unwrap();
+            }
+            let _=f;
         }
     }
 }
@@ -455,8 +486,14 @@ impl Unit {
             loopra: loopra_enabled(),
             loopra2: loopra2_enabled(),
             vloop: vloop_enabled(),
+            vloop2: vloop2_enabled(),
             vchain: vchain_enabled(),
             vzero: [0; 2],
+            funra: funra_enabled(),
+            funflags: funflags_enabled(),
+            regflags: regflags_enabled(),
+            selectra: selectra_enabled(),
+            function_entry: None,
             region_labels: HashMap::new(),
             extra_guest_range: None,
             region: None,
@@ -1158,6 +1195,35 @@ impl<'a> E<'a> {
         self.u.skip_next=true;self.u.insns_translated+=1;
         true
     }
+    /// One branch for two adjacent plain selects sharing live flags. Unlike a
+    /// chain of CMOVs this permits prediction to remove condition dependencies.
+    /// Each path retains guest instruction order, aliases and W zero-extension.
+    fn selectra_pair(&mut self, insn:u32)->bool {
+        if !self.u.selectra||self.u.region.is_none()||disabled_classes()!=0 {return false;}
+        let Some(next)=self.u.look.first().copied() else {return false;};
+        let plain=|w:u32|w&0x7fe00c00==0x1a800000;
+        let cond=bits(insn,15,12);
+        if !plain(insn)||!plain(next)||bits(next,15,12)!=cond||self.u.labels.contains_key(&(self.pc+4)) {return false;}
+        let Some(kind)=self.fuse_in else {return false;};
+        let Some(cc_false)=x86_cc(kind,cond^1) else {return false;};
+        let mut otherwise=self.new_label();let mut done=self.new_label();
+        self.jcc(cc_false,otherwise);
+        for w in [insn,next] {self.selected_move(w,true);}
+        a!(self,jmp(done));self.u.a.set_label(&mut otherwise).unwrap();
+        let false_start=self.u.a.instructions().len();
+        for w in [insn,next] {self.selected_move(w,false);}
+        if self.u.a.instructions().len()==false_start {a!(self,nop());}
+        self.u.a.set_label(&mut done).unwrap();
+        self.u.fuse=Some(kind);self.u.skip_next=true;self.u.insns_translated+=1;
+        true
+    }
+    fn selected_move(&mut self,w:u32,when_true:bool) {
+        let d=w&31;if d==31 {return;}
+        let n=if when_true {bits(w,9,5)}else {bits(w,20,16)};
+        let sf=bit(w,31)!=0;let source=self.src(n,false,sf,rcx);let dest=self.dst(d,false,rcx);
+        if sf {self.copy(dest,source,true);}else {a!(self,mov(r32_of(dest),r32_of(source)));}
+        self.stx(d,dest,false);
+    }
     /// Register contracts are the same as the hot FP helper: only xmm0-xmm7
     /// and rax/rcx/rdx/r11 plus dead opmask k1 may be scratched, with no cache
     /// fills or helper calls. r11 must be preserved while the TBI mask is live.
@@ -1331,6 +1397,13 @@ impl<'a> E<'a> {
         if self.u.dead_flags {
             return;
         }
+        if let Some(r)=self.u.region.and_then(|r|r.packed_flags()) {
+            // Only CMP writers: RAX has no architectural result to preserve.
+            // Break the partial-register dependency on the preceding address/
+            // value before SETO+LAHF. MOV, unlike XOR, keeps fused host flags.
+            a!(self,mov(eax,0u32));a!(self,seto(al));a!(self,lahf());a!(self,movzx(r32_of(r),ax));
+            return;
+        }
         a!(self, sets(byte_ptr(r15 + off::NF)));
         a!(self, sete(byte_ptr(r15 + off::ZF)));
         a!(self, setae(byte_ptr(r15 + off::CF)));
@@ -1402,6 +1475,25 @@ impl<'a> E<'a> {
 
     /// Evaluate condition `cond` into `al` (0/1).
     fn cond_to_al(&mut self, cond: u32) {
+        if let Some(r)=self.u.region.and_then(|r|r.packed_flags()) {
+            let inverse=cond&1!=0;
+            match cond>>1 {
+                0|1|2|3 => {
+                    let bit=match cond>>1 {0=>14,1=>8,2=>15,_=>0};
+                    a!(self,bt(r,bit));
+                    if inverse ^ (cond>>1==1) {a!(self,setnc(al));}else {a!(self,setc(al));}
+                }
+                4 => {a!(self,test(r,0x4100));if inverse {a!(self,setnz(al));}else {a!(self,setz(al));}}
+                5|6 => {
+                    a!(self,mov(eax,r32_of(r)));a!(self,shr(eax,15));a!(self,xor(eax,r32_of(r)));a!(self,and(eax,1));
+                    if cond>>1==6 {a!(self,bt(r,14));a!(self,adc(eax,0));}
+                    a!(self,test(eax,eax));
+                    if inverse {a!(self,setnz(al));}else {a!(self,setz(al));}
+                }
+                _ => a!(self,mov(eax,1u32)),
+            }
+            return;
+        }
         let base = cond >> 1;
         match base {
             0 => a!(self, movzx(eax, byte_ptr(r15 + off::ZF))),
@@ -1944,9 +2036,36 @@ fn vloop_enabled() -> bool {
     *ON.get_or_init(|| !jit_off("vloop") && std::env::var("ATTESOR_JIT_ON").unwrap_or_default().split(',').any(|t| t=="vloop"))
 }
 
+fn vloop2_enabled() -> bool {
+    static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *ON.get_or_init(|| !jit_off("vloop2") && std::env::var("ATTESOR_JIT_ON").unwrap_or_default().split(',').any(|t|t=="vloop2"))
+}
+
 fn vchain_enabled() -> bool {
     static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
     *ON.get_or_init(|| !jit_off("vchain") && std::env::var("ATTESOR_JIT_ON").unwrap_or_default().split(',').any(|t|t=="vchain"))
+}
+
+fn funra_enabled() -> bool {
+    static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *ON.get_or_init(|| !jit_off("funra") && std::env::var("ATTESOR_JIT_ON").unwrap_or_default().split(',').any(|t|t=="funra"))
+}
+
+fn funflags_enabled() -> bool {
+    static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *ON.get_or_init(|| !jit_off("funflags") && std::env::var("ATTESOR_JIT_ON").unwrap_or_default().split(',').any(|t|t=="funflags")
+        && unsafe {std::arch::x86_64::__cpuid(0x80000000).eax>=0x80000001 && std::arch::x86_64::__cpuid(0x80000001).ecx&1!=0})
+}
+
+fn selectra_enabled() -> bool {
+    static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *ON.get_or_init(|| !jit_off("selectra") && std::env::var("ATTESOR_JIT_ON").unwrap_or_default().split(',').any(|t|t=="selectra"))
+}
+
+fn regflags_enabled() -> bool {
+    static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *ON.get_or_init(|| !jit_off("regflags") && std::env::var("ATTESOR_JIT_ON").unwrap_or_default().split(',').any(|t|t=="regflags")
+        && unsafe {std::arch::x86_64::__cpuid(0x80000000).eax>=0x80000001 && std::arch::x86_64::__cpuid(0x80000001).ecx&1!=0})
 }
 
 /// Experimental write-through natural-loop region; public entries remain canonical.
@@ -2030,6 +2149,41 @@ fn vloop_layout(u: &Unit, pc: u64, read: &dyn Fn(u64) -> Option<u32>) -> [u8; NV
         } else if !flags_safe_passthrough(w) && !flags_safe_writer(w) { return empty; }
     }
     empty
+}
+
+/// A single fixed assignment for every path of an already-proven private CFG.
+/// Whole V registers, including unchanged upper bits, are loaded at the only
+/// public entry and all are synchronized on exits. No phi/LRU guess at joins.
+fn vregion_layout(u:&Unit,l:&super::loops::Loop)->[u8;NVREGS] {
+    let empty=[0xff;NVREGS];
+    if !u.vloop||!u.vloop2||u.quick||u.no_internal_jumps||u.commpage_checks||disabled_classes()!=0 {return empty;}
+    let mut mask=0u32;let mut fp=false;
+    for &w in l.words.values() {
+        if is_terminator(w) {
+            if w&0xfc000000==0x14000000||w&0xff000010==0x54000000
+                ||w&0x7e000000==0x34000000||w&0x7e000000==0x36000000 {continue;}
+            return empty;
+        }
+        let ty=bits(w,23,22);
+        let binary=w&0xff200c00==0x1e200800&&ty<=1&&bits(w,15,12)<=3;
+        let sqrt=w&0xff3ffc00==0x1e21c000&&ty<=1;
+        let from_gpr=w&0x7f3efc00==0x1e260000&&bit(w,16)!=0&&bits(w,20,19)==0
+            && ((bit(w,31)!=0&&ty==1)||(bit(w,31)==0&&ty==0));
+        let immediate=w&0xff201fe0==0x1e201000&&ty<=1;
+        if binary||sqrt {
+            fp=true;mask|=(1<<(w&31))|(1<<bits(w,9,5));
+            if binary {mask|=1<<bits(w,20,16);}
+        } else if from_gpr||immediate {fp=true;mask|=1<<(w&31);}
+        else if (w>>25)&5==4&&bit(w,26)!=0 {
+            let single=w&0x3b000000==0x39000000||w&0x3b200000==0x38000000||w&0x3b200c00==0x38200800;
+            if !single||bits(w,31,30)<2||bits(w,23,22)>1||!flags_safe_passthrough(w) {return empty;}
+            fp=true;mask|=1<<(w&31);
+        } else if !flags_safe_passthrough(w)&&!flags_safe_writer(w) {return empty;}
+    }
+    if !fp||mask.count_ones()as usize>if u.avx512 {NVREGS}else {BASE_NVREGS} {return empty;}
+    let mut regs=empty;
+    for(s,n)in(0..32).filter(|&n|mask&(1<<n)!=0).enumerate(){regs[s]=n as u8;}
+    regs
 }
 
 /// AVX permits unaligned 128-bit arithmetic memory operands (without AVX2).
@@ -2126,13 +2280,30 @@ pub(super) fn prepare_bgtrans() {
         loopra_enabled(), regioncache_enabled(), has_avx(), has_fma(),
         has_aes(), has_pclmul(), has_sha(), has_f16c(), loopra2_enabled(),
         has_avx512(), avx512_enabled(), avx512_nan_enabled(), super::fastenc_enabled(),
-        super::loops::census_enabled(), super::cost::probes(), vloop_enabled(), vchain_enabled());
+        super::loops::census_enabled(), super::cost::probes(), vloop_enabled(), vloop2_enabled(), vchain_enabled(), funra_enabled(), funflags_enabled(), selectra_enabled(), regflags_enabled());
 }
 
 /// Translate one basic block starting at `pc` into `u`. The caller must have
 /// created and registered the label for `pc` if it wants intra-unit jumps.
 /// Returns the guest address just past the block.
 pub fn emit_block(u: &mut Unit, pc: u64, read: &dyn Fn(u64) -> Option<u32>) -> u64 {
+    if u.funra && u.loopra && !u.quick && !u.no_internal_jumps && !u.commpage_checks
+        && disabled_classes()==0 && u.function_entry.is_none() && u.region_labels.is_empty() {
+        if let Some(mut f)=functions::recursive(pc,read) {
+            f.starts.extend(u.labels.keys().filter(|p|f.words.contains_key(p)).copied());
+            let mut n=0;
+            for &p in f.words.keys() {
+                if f.starts.contains(&p)||n==MAX_BLOCK_INSNS {f.starts.insert(p);n=0;}
+                n+=1;
+            }
+            if f.starts.len()<=32 {
+                u.function_entry=Some(pc);
+                let end=emit_multi_region(u,&f,read);
+                u.function_entry=None;
+                return end;
+            }
+        }
+    }
     if u.loopra2 && u.loopra && !u.no_internal_jumps
         && loop_layout::<NLOOPREGS>(u, pc, read).is_none() {
         if let Some(mut l) = super::loops::allocation(pc, read).filter(|l| l.starts.len() > 1) {
@@ -2157,7 +2328,7 @@ pub fn emit_block(u: &mut Unit, pc: u64, read: &dyn Fn(u64) -> Option<u32>) -> u
             // loop and silently replaces its stronger backedge contract.
             // Prefer the proven scalar inner loop; do not infer an assignment
             // across joins or select paths by executable/benchmark identity.
-            let inner_vloop = u.vloop && l.starts.iter().any(|&p| {
+            let inner_vloop = u.vloop && vregion_layout(u,&l)[0]==0xff && l.starts.iter().any(|&p| {
                 let snapshot = |at| l.words.get(&at).copied();
                 p != pc && loop_layout::<NLOOPREGS>(u, p, &snapshot).is_some()
                     && vloop_layout(u, p, &snapshot)[0] != 0xff
@@ -2173,7 +2344,7 @@ pub fn emit_block(u: &mut Unit, pc: u64, read: &dyn Fn(u64) -> Option<u32>) -> u
 fn emit_multi_region(u: &mut Unit, l: &super::loops::Loop, read: &dyn Fn(u64) -> Option<u32>) -> u64 {
     assert!(GUEST_FAULTS_FATAL); // identical fatal-fault contract to phase 1
     if super::loops::census_enabled() {
-        eprintln!("loopra2-region\t{:x}\t{}\t{}", l.header, l.starts.len(), l.words.len());
+        eprintln!("{}-region\t{:x}\t{}\t{}",if u.function_entry.is_some(){"funra"}else{"loopra2"},l.header,l.starts.len(),l.words.len());
     }
     let mut counts = [0u32; 32];
     for &w in l.words.values() {
@@ -2186,10 +2357,22 @@ fn emit_multi_region(u: &mut Unit, l: &super::loops::Loop, read: &dyn Fn(u64) ->
     regs.sort_by_key(|&n| (std::cmp::Reverse(counts[n]), n));
     let mut reg = [0xff; NLOOPREGS];
     for (s, n) in regs.into_iter().take(NLOOPREGS).enumerate() { reg[s] = n as u8; }
+    let vreg=if u.function_entry.is_none(){vregion_layout(u,l)}else {[0xff;NVREGS]};
+    // Do not treat "not a known GPR writer" as proof of flag transparency:
+    // FCMP/FCCMP, MSR NZCV and ADC/SBC have separate native flag paths.
+    let proven_flags=u.function_entry.is_some() || vreg[0]!=0xff || l.words.values().all(|&w|
+        flags_safe_passthrough(w)||flags_safe_writer(w)||w&0x3fe00800==0x1a800000
+        ||w&0xfc000000==0x14000000||w&0xff000010==0x54000000
+        ||w&0x7e000000==0x34000000||w&0x7e000000==0x36000000);
+    let flags=if proven_flags && ((u.funflags && u.function_entry.is_some()) || (u.regflags && u.function_entry.is_none()))
+        && l.words.values().any(|&w|flags_safe_writer(w)) && l.words.values().all(|&w|
+        !flags_safe_writer(w)||(w&31==31 && matches!(fusable_setter(w),Some(FuseKind::Sub)))) {
+        reg.iter().position(|&n|n==0xff).map_or(0xff,|s|s as u8)
+    }else {0xff};
     let region = LoopRa { pc: l.header, fast: u.a.create_label(), exit: u.a.create_label(), reg,
         // Every predecessor/iteration can have written any assigned slot.
         // A compile-order dirtiness mask is NOT a dataflow solution at joins.
-        dirty: u32::MAX, vreg: [0xff; NVREGS] };
+        dirty: u32::MAX, vreg,flags };
     u.region_exits.push(region);
     let mut saved = Vec::new();
     for &p in &l.starts {
@@ -2256,11 +2439,11 @@ fn emit_block_inner(u: &mut Unit, pc: u64, read: &dyn Fn(u64) -> Option<u32>, mu
             // feature before implementing resumable guest faults.
             assert!(GUEST_FAULTS_FATAL);
             let vreg = if multi.is_none() { vloop_layout(u, pc, read) } else { [0xff; NVREGS] };
-            let region = multi.unwrap_or_else(|| LoopRa { pc, fast: u.a.create_label(), exit: u.a.create_label(), reg, dirty: 0, vreg });
+            let region = multi.unwrap_or_else(|| LoopRa { pc, fast: u.a.create_label(), exit: u.a.create_label(), reg, dirty: 0, vreg,flags:0xff });
             let fast = region.fast;
             // JIT-only instrumentation: absolute host addresses must never enter
             // an AOT blob. Count executed public entries, not translations.
-            if u.stub_kind == StubKind::Patchable && super::COUNT_LOOP_REGIONS.load(std::sync::atomic::Ordering::Relaxed) {
+            if u.function_entry.is_none() && u.stub_kind == StubKind::Patchable && super::COUNT_LOOP_REGIONS.load(std::sync::atomic::Ordering::Relaxed) {
                 u.a.mov(rax, &super::STATS_LOOP_REGIONS as *const _ as u64).unwrap();
                 u.a.lock().inc(qword_ptr(rax)).unwrap();
                 if multi.is_some() {
@@ -2268,12 +2451,18 @@ fn emit_block_inner(u: &mut Unit, pc: u64, read: &dyn Fn(u64) -> Option<u32>, mu
                     u.a.lock().inc(qword_ptr(rax)).unwrap();
                 }
             }
-            if u.stub_kind == StubKind::Plain && super::stats_enabled() {
+            if u.function_entry.is_none() && u.stub_kind == StubKind::Plain && super::stats_enabled() {
                 // Cpu belongs to this thread; no host pointer or locked shared
                 // counter enters the disk blob. Count entries, not backedges.
                 u.a.inc(qword_ptr(r15 + off::AOT_LOOP_REGIONS)).unwrap();
             }
             region.reload(&mut u.a);
+            if u.function_entry==Some(pc) {
+                // Private recursive calls bypass this canonical public entry.
+                // A zero native-continuation marker separates this activation
+                // from an unrelated caller's existing host-call frames.
+                u.a.push(0i32).unwrap();u.a.push(0i32).unwrap();
+            }
             if !u.commpage_checks && !jit_off("tbimask") {
                 u.a.mov(r11, 0x00ff_ffff_ffff_ffffu64).unwrap();
                 u.tbi_mask_live = true;
@@ -2433,7 +2622,8 @@ fn emit_block_inner(u: &mut Unit, pc: u64, read: &dyn Fn(u64) -> Option<u32>, mu
         let term = is_terminator(insn);
         e.u.insns_translated += 1;
         let vchain = count+1<MAX_BLOCK_INSNS && e.vchain_pair(insn);
-        let translated = vchain || e.translate(insn);
+        let selectpair = !vchain && count+1<MAX_BLOCK_INSNS && e.selectra_pair(insn);
+        let translated = vchain || selectpair || e.translate(insn);
         e.u.dead_flags = false;
         e.u.dead_v = 0;
         e.u.vc_dest = [0xff; 2];
@@ -2442,7 +2632,7 @@ fn emit_block_inner(u: &mut Unit, pc: u64, read: &dyn Fn(u64) -> Option<u32>, mu
             e.u.vc = VCache::new(); // fused pair (writes the next one's Vd too) or helper call (clobbers caller-saved V cache)
             // The audited scalar pair never writes r11, even on its cold path.
             // Other fusions retain their old conservative contract.
-            if called || !vchain {e.u.tbi_mask_live = false;}
+            if called || !(vchain||selectpair) {e.u.tbi_mask_live = false;}
         }
         if !translated {
             if term {
@@ -3367,6 +3557,10 @@ impl<'a> E<'a> {
                     a!(self, mov(qword_ptr(r15 + off::PROFILE_STATE), crate::profile::State::CallReturn as i32));
                 }
                 self.st_imm(30, next);
+                if self.u.function_entry==Some(target) {
+                    self.host_call(next,|e|e.goto(target));
+                    return true;
+                }
                 if self.u.callret {
                     self.host_call(next, |e| e.goto(target));
                     return true;
@@ -3476,6 +3670,21 @@ impl<'a> E<'a> {
                     self.blr_site_cached(pc);
                     return true;
                 }
+            }
+            if opc==2 && self.u.function_entry.is_some() {
+                let mut scan=self.new_label();let mut mismatch=self.new_label();
+                let mut boundary=self.new_label();let mut plain=self.new_label();
+                self.u.a.set_label(&mut scan).unwrap();
+                a!(self,cmp(rsp,qword_ptr(r15+off::HOST_SP)));a!(self,jae(plain));
+                a!(self,cmp(qword_ptr(rsp),0));a!(self,je(boundary));
+                a!(self,cmp(rax,qword_ptr(rsp+8)));a!(self,jne(mismatch));
+                a!(self,ret());
+                self.u.a.set_label(&mut mismatch).unwrap();
+                a!(self,add(rsp,16));a!(self,jmp(scan));
+                self.u.a.set_label(&mut boundary).unwrap();a!(self,add(rsp,16));
+                self.u.a.set_label(&mut plain).unwrap();
+                // A caller outside this private assignment observes Cpu.
+                self.writeback();
             }
             if opc == 2 && self.u.callret {
                 // Each frame is [host continuation, expected guest PC]. A changed
@@ -3593,7 +3802,7 @@ impl<'a> E<'a> {
     /// See docs/tasks/STAGE3-RESULTS.md for lifetime/concurrency requirements.
     fn host_call(&mut self, next: u64, callee: impl Fn(&mut Self)) {
         const RAS_LIMIT: i32 = 256;
-        debug_assert!(self.u.region.is_none(), "calls must not enter loopra regions");
+        debug_assert!(self.u.region.is_none()||self.u.function_entry.is_some(), "calls must not enter ordinary loopra regions");
         let mut l_plain = self.new_label();
         let mut l_callee = self.new_label();
         let mut l_epoch = self.new_label();
@@ -4308,6 +4517,17 @@ impl<'a> E<'a> {
 
     /// Store the 64-bit value in rax to Vd (upper half zero unless `dup_hi`).
     fn vst_rax(&mut self, d: u32, dup_hi: bool) {
+        if let Some(s)=self.u.region.and_then(|r|r.vslot(d)) {
+            let dst=VREGS[s];
+            if high_xmm(dst) {
+                evex!(self,vmovq(dst,rax));
+                if dup_hi {evex!(self,vpunpcklqdq(dst,dst,dst));}
+            } else {
+                a!(self,movq(dst,rax));
+                if dup_hi {a!(self,punpcklqdq(dst,dst));}
+            }
+            return;
+        }
         a!(self, mov(qword_ptr(r15 + voff(d)), rax));
         if dup_hi {
             a!(self, mov(qword_ptr(r15 + voff(d) + 8), rax));
@@ -5184,6 +5404,7 @@ impl<'a> E<'a> {
             if to_fp {
                 self.ld(rax, rn, false, sf);
                 self.vst_rax(rd, false);
+                self.scalar_zero(rd,ftype==1);
             } else {
                 if sf {
                     a!(self, mov(rax, qword_ptr(r15 + voff(rn))));
@@ -5246,6 +5467,7 @@ impl<'a> E<'a> {
             let bitsv = if ftype == 1 { d } else { (f64::from_bits(d) as f32).to_bits() as u64 };
             self.mov_imm(rax, bitsv);
             self.vst_rax(rd, false);
+            self.scalar_zero(rd,ftype==1);
             return true;
         }
         // FADD/FSUB/FMUL/FDIV
@@ -8554,6 +8776,187 @@ mod loopra_tests {
     }
 
     #[test]
+    fn regflags_rejects_other_native_flag_writers_and_carry_readers() {
+        for middle in [0x1e612000,0xd51b4200,0x9a010000,0xf1000400] {
+            // CMP; CBZ exit; unproven instruction; B header; SVC.
+            let words=[0xf100041f,0xb4000061,middle,0x17fffffd,0xd4001001];
+            let mut u=Unit::new(StubKind::Plain,false);u.loopra=true;u.loopra2=true;u.regflags=true;
+            let l=u.a.create_label();u.labels.insert(PC,l);
+            emit_block(&mut u,PC,&|p|p.checked_sub(PC).and_then(|o|words.get((o/4)as usize)).copied());
+            assert_eq!(u.region_exits.len(),1);
+            assert!(u.region_exits[0].packed_flags().is_none(),"{middle:08x}");
+        }
+    }
+
+    #[test]
+    fn vloop2_diamond_gpr_to_fp_alias_nan_and_public_exit() {
+        if disabled_classes()!=0 {return;}
+        for kind in [StubKind::Plain,StubKind::Patchable] {
+        for packed in [false,true] {
+        for double in [false,true] {
+            let ty=(double as u32)<<22;
+            let words=[0xf100087f,0x54000080,
+                if double {0x9e6700a1}else {0x1e2700a1}, // FMOV D/S1,X/W5
+                0x1e220821|ty,0x1e212800|ty,
+                if packed {0xd1000463}else {0xf1000463},
+                if packed {0xb5ffff43}else {0x54ffff41},
+                if double {0xfd000000}else {0xbd000000},0xd4001001];
+            let read=|p:u64|p.checked_sub(PC).and_then(|v|words.get((v/4)as usize)).copied();
+            let mut u=Unit::new(kind,false);u.vloop=true;u.vloop2=true;u.vchain=true;u.loopra=true;u.loopra2=true;
+            u.regflags=packed;
+            for offset in [0,28] {let l=u.a.create_label();u.labels.insert(PC+offset,l);}
+            emit_block(&mut u,PC,&read);emit_block(&mut u,PC+28,&read);
+            assert!(u.region_exits[0].vslot(0).is_some());
+            assert_eq!(u.region_exits[0].packed_flags().is_some(),packed);
+            let(host,_)=assemble(u,0);
+            let values=if double {vec![1.25f64.to_bits(),0x8000000000000000,0x7ff0000000000000,0x7ff0000000000042]}
+                else {vec![1.25f32.to_bits()as u64,0x80000000,0x7f800000,0x7f800042]};
+            for value in values {
+                let mut out=0u64;let mut c=cpu();
+                for n in 0..32 {c.v[n]=[n as u64,0xfeedbeef00000000+n as u64];}
+                c.v[0][0]=if double {0.5f64.to_bits()}else {0x1234000000000000|0.5f32.to_bits()as u64};
+                c.v[2][0]=if double {2f64.to_bits()}else {0x1234000000000000|2f32.to_bits()as u64};
+                c.x[0]=&mut out as *mut _ as u64;c.x[3]=3;c.x[5]=value;
+                let mut reference=cpu();reference.x=c.x;reference.v=c.v;
+                interp::sys_sync_host_fp_mode(0);
+                for _ in 0..64 {
+                    let p=reference.pc();let w=read(p).unwrap();
+                    if matches!(interp::exec(&mut reference,w),Err(interp::Exit::Svc(_))) {break;}
+                    if reference.pc()==p {reference.set_pc(p+4);}
+                }
+                let expected=out;out=0;
+                interp::sys_sync_host_fp_mode(0);
+                unsafe {crate::jit::attesor_jit_enter(&mut *c,host);}
+                assert_eq!(out,expected);assert_eq!(c.v,reference.v);assert_eq!(c.x,reference.x);assert_eq!(c.nzcv(),reference.nzcv());
+            }
+            let mut c=cpu();c.fpcr=1<<25;c.x[3]=1;c.v[0]=[1,2];let before=c.v;
+            unsafe {crate::jit::attesor_jit_enter(&mut *c,host);}
+            assert_eq!(c.exit_reason,EXIT_INTERP);assert_eq!(c.pc(),PC+8);assert_eq!(c.v,before);
+            assert_eq!(c.nzcv(),0b1000);
+        }}}
+        interp::sys_sync_host_fp_mode(0);
+    }
+
+    #[test]
+    fn vloop2_gpr_transfer_full_bits_and_extended_xmm() {
+        for high in [false,true].into_iter().filter(|&h|!h||has_avx512()) {
+        for duplicate in [false,true] {
+        for value in [0,0x8000000000000000,0x7ff0000000000042,u64::MAX] {
+            let mut u=Unit::new(StubKind::Plain,false);u.avx512=high;
+            let mut entry=u.a.create_label();u.a.set_label(&mut entry).unwrap();u.labels.insert(PC,entry);
+            let mut vreg=[0xff;NVREGS];vreg[if high {9}else {0}]=20;
+            let region=LoopRa{pc:PC,fast:u.a.create_label(),exit:u.a.create_label(),reg:[0xff;NLOOPREGS],dirty:0,vreg,flags:0xff};
+            u.region=Some(region);u.region_exits.push(region);
+            let mut e=E{u:&mut u,pc:PC,fuse_in:None,scalar_inputs:None};
+            e.mov_imm(rax,value);e.vst_rax(20,duplicate);e.st_pc_and_exit(PC+4);
+            let(host,_)=assemble(u,0);let mut c=cpu();c.v[20]=[0x1234,0x5678];
+            unsafe {crate::jit::attesor_jit_enter(&mut *c,host);}
+            assert_eq!(c.v[20],[value,if duplicate {value}else {0}]);
+        }}}
+    }
+
+    #[test]
+    fn selectra_group_aliases_zero_register_width_and_live_flag_chain() {
+        if disabled_classes()!=0 {return;}
+        use iced_x86::Register;
+        for kind in [StubKind::Plain,StubKind::Patchable] {
+        for sf in [false,true] {
+        for mixed in [false,true] {
+        for cond in 0..14 {
+        for (d,n,m) in [(0,1,2),(0,0,2),(0,1,0),(0,0,0),(0,1,1),(31,0,1),(0,31,1),(0,1,31),(0,31,31),(1,1,0)] {
+            let select=|d:u32,n:u32,m:u32,c:u32|0x1a800000u32|((sf as u32)<<31)|(m<<16)|(c<<12)|(n<<5)|d;
+            let words=[0xeb05009f,select(d,n,m,cond),select(6,d,6,cond)^if mixed {0x80000000}else {0},0xf100079c,0x54ffff81,0xd4001001];
+            let mut u=Unit::new(kind,false);u.loopra=true;u.loopra2=false;u.selectra=true;
+            for offset in [0,20] {let l=u.a.create_label();u.labels.insert(PC+offset,l);}
+            let read=|p:u64|p.checked_sub(PC).and_then(|o|words.get((o/4)as usize)).copied();
+            emit_block(&mut u,PC,&read);emit_block(&mut u,PC+20,&read);
+            assert!(!u.a.instructions().iter().any(|i|i.mnemonic()==iced_x86::Mnemonic::Cmovne && i.op0_register().full_register()==Register::RCX));
+            let(host,_)=assemble(u,0);
+            for a in [0,1,u64::MAX,1<<63,i64::MAX as u64] {
+            for b in [0,1,u64::MAX,1<<63,i64::MAX as u64] {
+                let mut c=cpu();for r in 0..32 {c.x[r]=0xfedcba9800000000+r as u64*79;}
+                c.x[4]=a;c.x[5]=b;c.x[28]=1+(a&1);
+                let mut reference=cpu();reference.x=c.x;
+                for _ in 0..32 {
+                    let p=reference.pc();let w=read(p).unwrap();
+                    if matches!(interp::exec(&mut reference,w),Err(interp::Exit::Svc(_))) {break;}
+                    if reference.pc()==p {reference.set_pc(p+4);}
+                }
+                unsafe {crate::jit::attesor_jit_enter(&mut *c,host);}
+                assert_eq!(c.x,reference.x,"sf={sf} cond={cond} regs={d},{n},{m} compare={a:x},{b:x}");
+                assert_eq!(c.nzcv(),reference.nzcv());
+            }}
+        }}}}}
+    }
+
+    #[test]
+    fn funra_packed_cmp_flags_all_conditions_and_canonical_roundtrip() {
+        for cond in 0..16 {
+            let mut u=Unit::new(StubKind::Plain,false);
+            let mut entry=u.a.create_label();u.a.set_label(&mut entry).unwrap();u.labels.insert(PC,entry);
+            let region=LoopRa{pc:PC,fast:u.a.create_label(),exit:u.a.create_label(),reg:[0xff;NLOOPREGS],
+                dirty:0,vreg:[0xff;NVREGS],flags:7};
+            u.region=Some(region);u.region_exits.push(region);region.reload(&mut u.a);
+            let mut e=E{u:&mut u,pc:PC,fuse_in:None,scalar_inputs:None};
+            e.cond_to_al(cond);a!(e,movzx(eax,al));e.stx(0,rax,false);e.st_pc_and_exit(PC+4);
+            let(host,_)=assemble(u,0);
+            for nzcv in 0..16 {
+                let mut c=cpu();c.set_nzcv(nzcv);let expected=c.cond(cond)as u64;
+                unsafe {crate::jit::attesor_jit_enter(&mut *c,host);}
+                assert_eq!(c.x[0],expected,"NZCV={nzcv:x} cond={cond}");assert_eq!(c.nzcv(),nzcv);
+            }
+        }
+    }
+
+    #[test]
+    fn funra_recursive_gpr_state_returns_tags_and_marker_boundary() {
+        if disabled_classes()!=0 {return;}
+        // Ordinary clang-shaped recursive GPR code. It executes the original
+        // guest prologue, arithmetic, recursive BL and epilogue unchanged.
+        let original=[0xa9be4ff4,0xa9017bfd,0x910043fd,0x7100081f,0x5400006a,
+            0x52800013,0x1400000b,0x52800013,0xaa0003f4,0x51000680,0x97fffff6,
+            0xaa0003e8,0x51000a80,0x0b130113,0x71000e9f,0xaa0003f4,0x54ffff28,
+            0x0b130000,0xa9417bfd,0xa8c24ff4,0xd65f03c0];
+        for kind in [StubKind::Plain,StubKind::Patchable] {
+        for packed in [false,true] {
+        for outside_callret in [false,true] {
+        for tamper in [false,true] {
+            let mut words=original.to_vec();
+            if tamper {words.insert(words.len()-1,0x1000005e);} // ADR LR, outside
+            let return_pc=PC+words.len()as u64*4;
+            let read=|p:u64|p.checked_sub(PC).and_then(|n|words.get((n/4)as usize)).copied();
+            assert!(functions::recursive(PC,&read).is_some());
+            let mut u=Unit::new(kind,false);u.funra=true;u.funflags=packed;u.loopra=true;u.callret=outside_callret;
+            let entry=u.a.create_label();u.labels.insert(PC,entry);
+            emit_block(&mut u,PC,&read);
+            assert_eq!(u.region_exits.len(),1);assert_eq!(u.function_entry,None);
+            assert_eq!(u.region_exits[0].packed_flags().is_some(),packed);
+            assert_eq!(u.extra_guest_range,Some((PC,return_pc)));
+            let(host,_)=assemble(u,0);
+            for n in [0,1,2,5,10,16,0x80000000,0xffffffff] {
+                let mut stack=vec![0u64;2048];
+                let top=stack.as_mut_ptr()as u64+stack.len()as u64*8;
+                let mut c=cpu();
+                for i in 0..32 {c.x[i]=0x1234567890000000+i as u64;c.v[i]=[i as u64,0xfeed+i as u64];}
+                c.x[0]=n;c.x[30]=return_pc;c.x[31]=top|if n%2!=0 {0xab00000000000000}else {0};
+                c.set_nzcv(15);
+                let mut r=cpu();r.x=c.x;r.v=c.v;r.set_nzcv(c.nzcv());
+                let mut steps=0;
+                while r.pc()!=return_pc {
+                    let p=r.pc();let w=read(p).expect("reference outside function");
+                    interp::exec(&mut r,w).unwrap();if r.pc()==p {r.set_pc(p+4);}
+                    steps+=1;assert!(steps<100000);
+                }
+                unsafe {crate::jit::attesor_jit_enter(&mut *c,host);}
+                assert_eq!(c.pc(),return_pc,"n={n} tamper={tamper}");
+                assert_eq!(c.x,r.x,"n={n} tamper={tamper} caller_callret={outside_callret}");
+                assert_eq!(c.v,r.v);assert_eq!(c.nzcv(),r.nzcv());
+                assert_eq!(c.exit_reason,EXIT_CONTINUE);
+            }
+        }}}}
+    }
+
+    #[test]
     fn vchain_observation_barriers_and_scalar_zero_width() {
         if !has_avx() || disabled_classes()!=0 {return;}
         for reject in 0..7 {
@@ -8561,7 +8964,7 @@ mod loopra_tests {
             let mut vreg=[0xff;NVREGS];vreg[..4].copy_from_slice(&[0,1,2,3]);
             if reject==6 {vreg[0]=0xff;}
             u.region=Some(LoopRa{pc:PC,fast:u.a.create_label(),exit:u.a.create_label(),
-                reg:[0xff;NLOOPREGS],dirty:0,vreg});
+                reg:[0xff;NLOOPREGS],dirty:0,vreg,flags:0xff});
             u.look=vec![0x1e622863]; // FADD D3,D3,D2
             if reject==2 {let l=u.a.create_label();u.labels.insert(PC+4,l);}
             if reject==3 {u.look[0]^=1<<22;} // mixed S/D

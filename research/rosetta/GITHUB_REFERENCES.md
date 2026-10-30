@@ -58,3 +58,80 @@ regressed. This is exploratory, not a confirmed 60% result or a promotion to
 defaults. Per owner instruction, subsequent iterations use only targeted small
 checks and one target screen; full/multi-round acceptance is deferred until a
 substantial breakthrough or merge candidate.
+
+
+## Successful bounded AOT observation (not guest execution)
+
+Run [41099675131](https://github.com/zheznanohana/attesor/actions/runs/41099675131)
+on standard ARM64 macOS 26.6.2 (25G83) completed all four own-source cases.
+`libRosettaAot.dylib` SHA-256:
+`49c3db39b684cd433c19d50cdd9ff6cc924cbb3c912d208e339fc1bcfd51d277`;
+reported API version `0x16f0240000000`. The library validated 100 ABI routine
+names from the pinned MIT-licensed x87sidecar source. IR text was nonempty and
+generated output sizes were 40 / 40 / 32 / 40 bytes (arith / flags / fpchain / loop).
+
+The short arithmetic and FP bodies use register operands without per-operation
+CPU-struct traffic. The FP example remains FMUL then FADD, not FMA. The loop
+uses SUBS and B.NE. The return-shaped suffix loads guest/shadow values, compares
+them and conditionally takes a mismatch path before a host RET. These are
+observations of these particular outputs, not recovery of a global allocator,
+a validated runtime ABI, or a license to remove Attesor return/epoch checks.
+Synthetic context/runtime offsets were used; fixups were not applied; generated
+code was never executed. The raw object may also contain stubs/metadata.
+Two preceding attempts failed (routine-name validation, then readonly name-table
+discovery); they are not counted as successful code-generation observations.
+
+## Subsequent local experiments (codegen 72, all default OFF)
+
+* `funra`: bounded, closed GPR recursive CFG, one private register assignment.
+  Execute original guest instructions; no Fibonacci/algorithm substitution.
+  LR matching, native-stack bound and epoch checks remain; an activation marker
+  prevents unwinding an unrelated parent's frames.
+* `funflags`: on CMP-only function CFGs with a spare assigned GPR, retain compact
+  NZCV in that GPR and synchronize canonical bytes at observation boundaries.
+* `selectra`: one branch for two adjacent same-condition plain CSELs. Both
+  paths retain instruction order, aliasing and W zero-extension.
+* `vloop2`: a fixed union V assignment across an already-proven private CFG;
+  admit audited S/D arithmetic, ordinary S/D memory and GP-to-FP moves. Whole
+  128-bit state is loaded/synchronized; never infer join values from emit order.
+* `regflags`: extend compact flags to whitelisted CMP-only private loop CFGs.
+  Explicitly reject other native flag writers/readers (including FCMP, MSR NZCV,
+  ADC/SBC and non-CMP SUBS). MOV EAX,0 before SETO/LAHF avoids a partial-register
+  dependency without destroying the live flags needed by the fused branch.
+
+The ten GPR slots and 8/24 V-cache slots already existed. This work changes
+lifetimes/contracts, not an inverted Rosetta table or another capacity increase.
+All experimental switches are exact tokens, OFF wins, and are part of cache
+identity. Full DEFAULT_ON must be retained when explicitly setting JIT_ON.
+Production binary/defaults have not been replaced.
+
+Historical single screens (different binaries/batches, **not additive**):
+
+| Experiment | Same-batch control -> candidate | Native throughput ratio | Interpretation |
+|---|---|---|---|
+| funra, fib(32) | 25.510 -> 21.129 ms | 24.18% | exploratory -17.2% time |
+| funflags, fib(32) | 20.520 -> 17.033 ms | 32.35% | exploratory -17.0% time |
+| individual-CSEL move experiment | 443.3 -> 441.9 ms | not acceptance | no meaningful gain; replaced |
+| grouped CSEL, branchy | 445.6 -> 419.5 ms | 55.0% | exploratory -5.9% time |
+| vloop2, N-body | 80.3 -> 77.2 ms | 27.46% | -3.9%, not a breakthrough; no repeat |
+| regflags before dependency fix, N-body | 77.6 -> 80.2 ms | 28.18% | regression; not promoted |
+| regflags after dependency fix, N-body | 74.9 -> 75.5 ms | 29.01% | +0.8% time, still no gain; keep OFF |
+
+Latest code has only directed checks, not the earlier full-workspace acceptance.
+They cover recursive state/tagged SP/LR mismatch/marker boundaries, all packed
+conditions and canonical roundtrip, CSEL aliases/widths/live flags, CFG FP
+diamonds with NaN/public exits/FPCR guard, low/high-XMM bit transfers and flag
+eligibility barriers. The last full-workspace result above belongs to codegen70.
+Real external parent frames, recursion overflow/epoch/SMC/concurrency, disk AOT
+and full regression for the new contracts remain pending before promotion.
+
+Per owner request, do not run full/multi-round suites for each edit. Use a small
+related correctness check and one existing-fixture screen. Extra fixture metrics
+are retained, not selected away; none is six-workload acceptance. Reserve larger
+acceptance for an obvious breakthrough or a merge candidate. All six original
+sub-60% targets remain unconfirmed, with both qsort sizes still required.
+
+The final regflags screen also regressed qsort4M (1039.1 -> 1133.5 ms)
+and branchy (429.8 -> 469.9 ms); no repeat or default promotion is justified.
+Absolute numbers across batches are not a paired comparison. The dependency
+fix preserves semantics but is not established as a performance improvement.
