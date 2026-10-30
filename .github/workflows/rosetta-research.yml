@@ -11,6 +11,9 @@ concurrency:
   cancel-in-progress: false
 jobs:
   survey:
+    # Heavy decompilation is explicit; ordinary probe/document edits must not
+    # repeat the entire Ghidra download/build/survey.
+    if: github.event_name == 'workflow_dispatch' || contains(github.event.head_commit.message, '[full-survey]')
     runs-on: macos-26
     timeout-minutes: 25
     steps:

@@ -1,0 +1,26 @@
+name: Small Rosetta AOT API probe
+on:
+  workflow_dispatch:
+  push:
+    branches: [research/rosetta-stage1]
+    paths: ['research/rosetta/aot_probe.cpp', 'research/rosetta/aot_collect.py', '.github/workflows/rosetta-aot-probe.yml']
+permissions:
+  contents: read
+jobs:
+  aot-probe:
+    runs-on: macos-26
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
+        with:
+          persist-credentials: false
+      - name: Four bounded own-source probes, no generated-code execution
+        run: python3 research/rosetta/aot_collect.py aot-results
+      - name: Upload text observations only
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: rosetta-aot-text
+          path: aot-results/
+          retention-days: 1
+          if-no-files-found: error
