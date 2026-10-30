@@ -478,3 +478,63 @@ and branch-clone logs are emission counts, not dynamic execution coverage.
 Production/defaults remain unchanged. Full six-category/same-configuration60%
 acceptance, with both qsort scales retained, is still incomplete. This evidence
 supports a small confirmed4M improvement, not the overall requested leap.
+
+
+## Codegen88: scalar-FP loop NZCV sinking (`fpflags`, default OFF)
+
+Source inspection ruled out the previous upper64 normalization hypothesis for
+actual matmul: scalar loads already make vchain's product operand upper-zero.
+No normalization transform was implemented. Instead the inner loop still
+materialized four NZCV bytes at every CMP because the old liveness proof rejected
+FP. Add a bounded exact single-block proof: scalar S/D MUL/DIV/ADD/SUB/SQRT,
+validated ordinary memory and native GP operations, no flags reader, helper,
+interior public entry, unknown instruction or system observer; terminate with
+CMP Wn/Xn,#imm (not SP) and B.cond back to the exact header. Require an existing
+V-resident fixed-map region. The actual hot prefix must contain no native CALL.
+Only the final CMP's stores are sunk to the canonical public exit. Neither FP
+operations nor separate rounding, NaN selection or original algorithms change.
+
+Every private backedge still checks FPCR DN/AHP/FZ16. Its rejection reconstructs
+that exact previous W/X CMP from the unchanged operand before materializing
+NZCV and canonicalizing the fixed map. Public entry uses the original guard,
+retaining incoming NZCV if rejected before executing the loop. No entry-mode
+marker, epoch/return/invalidation change or new embedded host pointer. Plain
+and Patchable emit paths checked; real warm-AOT/application/concurrency gates
+remain pending. Codegen identity bumped88. Defaults/installed binary unchanged.
+
+Three focused tests pass: strict planner barriers;8,192 interpreter-vs-native
+full X/V/NZCV/FPCR cases across S/D, W/X counter, four rounding modes, signed
+zero/subnormal/infinities/signaling+quiet NaN payloads, tagged pointers, low and
+high AVX-512 register pressure, NaN repair modes and Plain/Patchable;96 public
+unsupported-FPCR rejections preserve original state;96 deterministic private
+FPCR rejections reconstruct the actual last comparison (including signed
+boundary counters). The latter uses a test-only ordinary data store into the
+own Cpu's FPCR cell to simulate a mode change, not permission for guest MSR.
+No whole-workspace or configuration matrix. Release build succeeded with
+existing warnings. Compile telemetry identifies exactly one sink in the original
+matmul header `500000f48`, tail CMP `500000f60`; not a dynamic execution count.
+
+One unchanged original bench fixture screen showed51.227->42.478ms(-17.08%),
+justifying only two extra matmul-target confirmation rounds using the same full
+fixture. All seven original checksum lines match native in every execution.
+Round2 reverses candidate/control order. Other measured metrics are incidental,
+not new full-suite or all-category threshold acceptance.
+
+|round|native(ms)|control(ms)|fpflags(ms)|paired time change|
+|---|---|---|---|---|
+|1|21.345|51.227|42.478|-17.08%|
+|2|21.801|49.696|37.321|-24.90%|
+|3|21.272|49.527|36.198|-26.91%|
+
+Median control49.696->candidate37.321ms,
+-24.90% by ratio of medians; median paired change
+-24.90%. Median native ratio
+57.19%, still below60 and not a guaranteed floor.
+Control is the full latest experimental87 configuration, including leafflags;
+not the installed production baseline. Do not add gains from historical batches.
+The single common-config six-category goal (both qsort sizes) is incomplete.
+
+Next bounded hypothesis: outline the exact public/private FPCR rejection paths
+so the normal private guard falls through into the hot body instead of a taken
+jump over both rejection blocks. Keep both guards and different incoming-NZCV
+contracts. This layout optimization is NOT implemented or measured in88.

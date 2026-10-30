@@ -23,6 +23,8 @@ mod notbi;
 mod functions;
 #[path = "fp_trace.rs"]
 mod fp_trace;
+#[path = "fp_flags.rs"]
+mod fp_flags;
 #[path = "leaf.rs"]
 mod leaf;
 
@@ -116,6 +118,8 @@ pub struct Unit {
     fmovra: bool,
     vpair: bool,
     vtrace: bool,
+    fpflags: bool,
+    fpflags_sinks:u64,
     leafra: bool,
     leafinline: bool,
     leafflags: bool,
@@ -546,6 +550,8 @@ impl Unit {
             fmovra: fmovra_enabled(),
             vpair: vpair_enabled(),
             vtrace: vtrace_enabled(),
+            fpflags: fpflags_enabled(),
+            fpflags_sinks:0,
             leafra: leafra_enabled(),
             leafinline: leafinline_enabled(),
             leafflags: leafflags_enabled(),
@@ -2347,6 +2353,11 @@ fn vpair_enabled() -> bool {
     *ON.get_or_init(||!jit_off("vpair")&&std::env::var("ATTESOR_JIT_ON").unwrap_or_default().split(',').any(|t|t=="vpair"))
 }
 
+fn fpflags_enabled()->bool {
+    static F:std::sync::OnceLock<bool>=std::sync::OnceLock::new();
+    *F.get_or_init(||!jit_off("fpflags")&&std::env::var("ATTESOR_JIT_ON").unwrap_or_default().split(',').any(|g|g=="fpflags"))
+}
+
 fn vtrace_enabled() -> bool {
     static ON:std::sync::OnceLock<bool>=std::sync::OnceLock::new();
     *ON.get_or_init(||!jit_off("vtrace")&&std::env::var("ATTESOR_JIT_ON").unwrap_or_default().split(',').any(|t|t=="vtrace"))
@@ -2634,7 +2645,7 @@ pub(super) fn prepare_bgtrans() {
         loopra_enabled(), regioncache_enabled(), has_avx(), has_fma(),
         has_aes(), has_pclmul(), has_sha(), has_f16c(), loopra2_enabled(),
         has_avx512(), avx512_enabled(), avx512_nan_enabled(), super::fastenc_enabled(),
-        super::loops::census_enabled(), super::cost::probes(), vloop_enabled(), vloop2_enabled(), vchain_enabled(), vscalar_enabled(), funra_enabled(), funflags_enabled(), selectra_enabled(), regflags_enabled(), cfgflags_enabled(), xspill_enabled(), fmovra_enabled(), vpair_enabled(), vtrace_enabled(), leafra_enabled(), csetfast_enabled(), csetpair_enabled(), leafinline_enabled(), leafflags_enabled(), super::bliccache::enabled());
+        super::loops::census_enabled(), super::cost::probes(), vloop_enabled(), vloop2_enabled(), vchain_enabled(), vscalar_enabled(), funra_enabled(), funflags_enabled(), selectra_enabled(), regflags_enabled(), cfgflags_enabled(), xspill_enabled(), fmovra_enabled(), vpair_enabled(), vtrace_enabled(), fpflags_enabled(), leafra_enabled(), csetfast_enabled(), csetpair_enabled(), leafinline_enabled(), leafflags_enabled(), super::bliccache::enabled());
 }
 
 /// Translate one basic block starting at `pc` into `u`. The caller must have
@@ -2828,6 +2839,8 @@ fn emit_block_inner(u: &mut Unit, pc: u64, read: &dyn Fn(u64) -> Option<u32>, mu
     u.fuse = None;
     u.loop_cache = None;
     u.region = multi;
+    let mut fp_sink:Option<fp_flags::Plan>=None;
+    let mut fp_body=None;
     if u.notbi_enabled { u.notbi.clear(); } // no facts cross public/private loop entries
     u.loop_exit_flags = None;
     u.loop_exit_compare = None;
@@ -2891,9 +2904,26 @@ fn emit_block_inner(u: &mut Unit, pc: u64, read: &dyn Fn(u64) -> Option<u32>, mu
                 u.a.mov(r11, 0x00ff_ffff_ffff_ffffu64).unwrap();
                 u.tbi_mask_live = true;
             }
+            let plan=if u.fpflags&&multi.is_none()&&region.vreg[0]!=0xff&&u.vchain&&has_avx()
+                &&!u.commpage_checks&&disabled_classes()==0 {
+                fp_flags::plan(pc,read,&|p|u.labels.contains_key(&p))
+            }else {None};
+            let public_guard=plan.map(|_|u.a.create_label());
+            if let Some(g)=public_guard {u.a.jmp(g).unwrap();}
             let mut fast_label = fast;
             u.a.set_label(&mut fast_label).unwrap();
             u.region = Some(region);
+            if let Some(plan)=plan {
+                let body=u.a.create_label();fp_body=Some(body);fp_sink=Some(plan);
+                // Every backedge still checks FPCR. On rejection, the previous
+                // tail CMP is reconstructed BEFORE canonical writeback/deopt.
+                u.a.test(dword_ptr(r15+off::FPCR),FPCR_NONDEFAULT as i32).unwrap();u.a.jz(body).unwrap();
+                {u.dead_flags=false;let mut e=E{u,pc,fuse_in:None,scalar_inputs:None};
+                    e.fpflags_compare(plan);e.flags_sub();e.mov_imm(rax,pc);
+                    a!(e,mov(qword_ptr(r15+off::PC),rax));a!(e,mov(qword_ptr(r15+off::EXIT_REASON),EXIT_INTERP as i32));
+                    let exit=e.dispatcher_exit();a!(e,jmp(exit));}
+                let mut g=public_guard.unwrap();u.a.set_label(&mut g).unwrap();
+            }
             if multi.is_none() { u.region_exits.push(region); }
         }
     } else if u.regioncache && !u.no_internal_jumps {
@@ -2930,7 +2960,7 @@ fn emit_block_inner(u: &mut Unit, pc: u64, read: &dyn Fn(u64) -> Option<u32>, mu
             p += 4;
         }
         if fp {
-            let mut body = u.a.create_label();
+            let mut body = fp_body.unwrap_or_else(||u.a.create_label());
             u.a.test(dword_ptr(r15 + off::FPCR), FPCR_NONDEFAULT as i32).unwrap();
             u.a.jz(body).unwrap();
             let mut e = E { u, pc, fuse_in: None, scalar_inputs: None };
@@ -3025,6 +3055,11 @@ fn emit_block_inner(u: &mut Unit, pc: u64, read: &dyn Fn(u64) -> Option<u32>, mu
                 u.dead_flags = true;
                 u.loop_exit_compare = Some(cmp);
             }
+        }
+        if fp_sink.is_some_and(|p|p.cmp_pc==cur)
+            && !u.a.instructions()[loop_body_start..].iter().any(|i|i.mnemonic()==iced_x86::Mnemonic::Call) {
+            u.dead_flags=true;u.loop_exit_flags=Some(FuseKind::Sub);u.loop_exit_compare=None;u.fpflags_sinks+=1;
+            if std::env::var_os("ATTESOR_FPFLAGS_LOG").is_some() {eprintln!("fpflags-sink\t{pc:x}\t{cur:x}");}
         }
         u.dead_v = 0;
         if !u.quick && !jit_off("vdead") && !jit_off("vcache") && !jit_off("scalaralias")
@@ -4332,6 +4367,11 @@ impl<'a> E<'a> {
         }
         if std::env::var_os("ATTESOR_LEAFINLINE_LOG").is_some() {eprintln!("leafinline-call\t{call_pc:x}\t{target:x}\t{}",p.words.len());}
         self.goto(continuation);true
+    }
+
+    fn fpflags_compare(&mut self,p:fp_flags::Plan) {
+        let r=self.src(p.rn,false,p.sf,rax);
+        if p.sf {a!(self,cmp(r,p.imm));}else {a!(self,cmp(r32_of(r),p.imm));}
     }
 
     /// Two-word, 16-byte-aligned frames: push guest PC, then CALL pushes host
@@ -9322,6 +9362,73 @@ mod loopra_tests {
 
     fn cpu() -> Box<Cpu> {
         let mut c = Cpu::new(); crate::jit::setup_cpu(&mut c); c.set_pc(PC); c
+    }
+
+    #[test]
+    fn fpflags_scalar_loop_rounding_nan_full_state_and_guard_entries() {
+        if !has_avx()||disabled_classes()!=0 {return;}
+        let mut checked=0;let mut rejected=0;
+        for double in [false,true] {for counter64 in [false,true] {for high in [false,true].into_iter().filter(|&v|!v||has_avx512()) {for nan512 in [false,true].into_iter().filter(|&v|!v||has_avx512()) {for kind in [StubKind::Plain,StubKind::Patchable] {
+            let shift=if high {24}else {0};let(d,n,m)=(shift,shift+1,shift+2);let ty=(double as u32)<<22;
+            let mut words=Vec::new();if high {for r in 0..8 {words.push(0xfd400080|r);}}
+            words.extend([if double {0xfd400000|n}else {0xbd400000|n},if double {0xfd400020|m}else {0xbd400020|m},
+                0x1e200800|ty|(m<<16)|(n<<5)|n,0x1e202800|ty|(n<<16)|(d<<5)|d,
+                (if counter64 {0x9100054a}else {0x1100054a}), (if counter64 {0xf1000d5f}else {0x71000d5f})]);
+            let branch_pc=words.len();words.push(0x54000001|(((-(branch_pc as i32)as u32)&0x7ffff)<<5));
+            let exit=PC+words.len()as u64*4;words.push(0xd4001001);
+            let read=|p:u64|p.checked_sub(PC).and_then(|o|words.get((o/4)as usize)).copied();
+            let mut u=Unit::new(kind,false);u.fpflags=true;u.vloop=true;u.vchain=true;u.vscalar=true;u.vpair=true;u.loopra=true;u.loopra2=false;u.leafinline=false;u.avx512=high;u.avx512_nan=nan512;
+            for p in [PC,exit] {let l=u.a.create_label();u.labels.insert(p,l);}
+            emit_block(&mut u,PC,&read);emit_block(&mut u,exit,&read);assert_eq!(u.fpflags_sinks,1);assert_eq!(u.insns_fallback,0);
+            let(host,_)=assemble(u,0);
+            let vals:Vec<u64>=if double {vec![0,0x8000000000000000,1,1f64.to_bits(),0x7ff0000000000000,0xfff0000000000000,0x7ff8000000000042,0x7ff0000000000073]}
+                else {vec![0,0x80000000,1,1f32.to_bits()as u64,0x7f800000,0xff800000,0x7fc00042,0x7f800073]};
+            let padding=1f64.to_bits();
+            for &a in &vals {for &b in &vals {for mode in 0..4 {
+                let data=[a,b];let mut c=cpu();for r in 0..32 {c.x[r]=0x1234567800000000+r as u64;c.v[r]=[0xfeedbeef00000000+r as u64,0xabcdef0100000000+r as u64];}
+                c.x[0]=data.as_ptr()as u64|0xab00000000000000;c.x[1]=unsafe {data.as_ptr().add(1)}as u64;c.x[4]=&padding as *const _ as u64;
+                c.x[10]=if counter64 {0}else {0x9876543200000000};c.v[d as usize][0]=if double {1.25f64.to_bits()}else {0xfeed000000000000|1.25f32.to_bits()as u64};c.fpcr=mode<<22;c.set_nzcv(15);
+                let mut r=cpu();r.x=c.x;r.v=c.v;r.fpcr=c.fpcr;r.set_nzcv(c.nzcv());
+                interp::sys_sync_host_fp_mode(r.fpcr);let mut steps=0;
+                loop {let p=r.pc();if p==exit {break;}interp::exec(&mut r,read(p).unwrap()).unwrap();if r.pc()==p {r.set_pc(p+4);}steps+=1;assert!(steps<256);}
+                interp::sys_sync_host_fp_mode(c.fpcr);unsafe {crate::jit::attesor_jit_enter(&mut *c,host);}
+                assert_eq!(c.x,r.x,"D={double} Xcounter={counter64} high={high} a={a:x} b={b:x} mode={mode}");assert_eq!(c.v,r.v);assert_eq!(c.nzcv(),r.nzcv());assert_eq!(c.fpcr,r.fpcr);assert_eq!(c.exit_reason,EXIT_SVC);checked+=1;
+            }}}
+            for bad in [1<<25,1<<26,1<<19] {let mut c=cpu();for r in 0..32 {c.x[r]=0x123450000+r as u64;c.v[r]=[0xdead0000+r as u64,0xbeef0000+r as u64];}c.fpcr=bad;c.set_nzcv(15);let (x,v)=(c.x,c.v);
+                unsafe {crate::jit::attesor_jit_enter(&mut *c,host);}
+                assert_eq!(c.exit_reason,EXIT_INTERP);assert_eq!(c.pc(),PC);assert_eq!(c.x,x);assert_eq!(c.v,v);assert_eq!(c.nzcv(),15);rejected+=1;
+            }
+        }}}}}
+        interp::sys_sync_host_fp_mode(0);eprintln!("fpflags differential cases={checked} public guard rejections={rejected}");
+    }
+
+    #[test]
+    fn fpflags_private_fpcr_rejection_repairs_actual_last_cmp() {
+        if !has_avx()||disabled_classes()!=0 {return;}
+        let mut checked=0;
+        for counter64 in [false,true] {for kind in [StubKind::Plain,StubKind::Patchable] {for high in [false,true].into_iter().filter(|&v|!v||has_avx512()) {
+            let shift=if high {24}else {0};let(d,n,m)=(shift,shift+1,shift+2);
+            let mut words=Vec::new();if high {for r in 0..8 {words.push(0xfd400080|r);}}
+            words.extend([0xfd400000|n,0xfd400020|m,0x1e600800|(m<<16)|(n<<5)|n,0x1e602800|(n<<16)|(d<<5)|d,
+                0xb9000043,if counter64 {0x9100054a}else {0x1100054a},if counter64 {0xf1000d5f}else {0x71000d5f}]);
+            let at=words.len();words.push(0x54000001|(((-(at as i32)as u32)&0x7ffff)<<5));
+            let read=|p:u64|p.checked_sub(PC).and_then(|o|words.get((o/4)as usize)).copied();
+            let mut u=Unit::new(kind,false);u.fpflags=true;u.vloop=true;u.vchain=true;u.vscalar=true;u.loopra=true;u.loopra2=false;u.leafinline=false;u.avx512=high;
+            let l=u.a.create_label();u.labels.insert(PC,l);emit_block(&mut u,PC,&read);assert_eq!(u.fpflags_sinks,1);let(host,_)=assemble(u,0);
+            let padding=1f64.to_bits();
+            for counter in [0,1,if counter64 {0x7fffffffffffffff}else {0x7fffffff},if counter64 {0x8000000000000000}else {0x80000000}] {for a in [0u64,1f64.to_bits(),0x7ff0000000000073] {
+                let data=[a,2f64.to_bits()];let mut c=cpu();for r in 0..32 {c.x[r]=0xfeed000000000000+r as u64;c.v[r]=[r as u64,0x12345678];}
+                c.x[0]=data.as_ptr()as u64;c.x[1]=unsafe {data.as_ptr().add(1)}as u64;c.x[3]=1<<25;c.x[4]=&padding as *const _ as u64;c.x[10]=counter;c.set_nzcv(15);
+                c.x[2]=&mut c.fpcr as *mut _ as u64;
+                let mut r=cpu();r.x=c.x;r.v=c.v;r.set_nzcv(c.nzcv());r.x[2]=&mut r.fpcr as *mut _ as u64;
+                interp::sys_sync_host_fp_mode(0);
+                for &w in &words {let p=r.pc();interp::exec(&mut r,w).unwrap();if r.pc()==p {r.set_pc(p+4);}}
+                assert_eq!(r.pc(),PC);assert_eq!(r.fpcr,1<<25);r.x[2]=c.x[2];
+                interp::sys_sync_host_fp_mode(0);unsafe {crate::jit::attesor_jit_enter(&mut *c,host);}
+                assert_eq!(c.exit_reason,EXIT_INTERP);assert_eq!(c.pc(),PC);assert_eq!(c.x,r.x,"Xcounter={counter64} high={high} initial={counter:x}");assert_eq!(c.v,r.v);assert_eq!(c.nzcv(),r.nzcv());assert_eq!(c.fpcr,r.fpcr);checked+=1;
+            }}
+        }}}
+        interp::sys_sync_host_fp_mode(0);eprintln!("fpflags private guard repair cases={checked}");
     }
 
     #[test]
