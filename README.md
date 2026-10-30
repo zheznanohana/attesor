@@ -1,98 +1,298 @@
 # Attesor
 
-**Run arm64 macOS apps on an Intel Mac.** Attesor is a "reverse Rosetta": it loads an arm64 Mach-O
-together with the real arm64 macOS userland (dyld and the arm64e dyld shared cache, taken from an Apple
-Silicon macOS image that *you* download) and executes the arm64 code with an interpreter plus an x86-64
-JIT. System calls and Mach traps go to the Intel host kernel where the semantics match and are emulated
-where they don't. Metal calls can be bridged to the Intel Mac's real GPU.
+**在 Intel Mac 上运行 arm64 的 macOS 应用。**
 
-The motivation: Apple dropped Intel Macs, and apps built for newer macOS versions will eventually be
-arm64-only. This project explores how far you can get anyway.
+Attesor 是一个"反向 Rosetta"。它加载 arm64 的 Mach-O 程序，连同真正的 arm64 macOS 用户态（dyld 和 arm64e 的 dyld shared cache，从 Apple Silicon 的系统镜像里取出），然后用解释器加 x86-64 JIT 执行 arm64 代码。系统调用和 Mach trap 在语义一致时直接交给 Intel 主机内核，不一致时由 Attesor 模拟。Metal 调用可以桥接到 Intel Mac 的真实显卡上。
 
-Attesor is a fork of [maclator](https://github.com/linuxkid473/maclator) by linuxkid473 (MIT). See
-[What Attesor adds](#what-attesor-adds) for the differences.
+苹果已经停止支持 Intel Mac，越来越多的新应用只发布 arm64 版本。Attesor 让这些应用继续在 Intel Mac 上运行。
 
-> **Status: experimental research project.** Things that run today are listed below; many apps will not.
-> Expect rough edges. See [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md) for what is missing.
+[English README](README.en.md)
 
-## What runs (verified upstream on an Intel Core i5-4440, macOS 26.7)
+![arm64 版 Chromium 157 在 Intel Mac 上通过 Attesor 运行，chrome://gpu 显示合成、光栅化、WebGL 和 WebGPU 都由 AMD Radeon RX 460 通过 ANGLE/Metal 硬件加速](docs/img/chromium-gpu.png)
 
-| Program | Status |
+*arm64 版 Chromium 157 在 Intel Mac 上运行（`chrome://gpu`）：合成、光栅化、WebGL、WebGPU 全部经 ANGLE/Metal 桥接走硬件加速。*
+
+## 能运行什么
+
+| 程序 | 状态 |
 |---|---|
-| `fastfetch`, `neatvi` (arm64 CLI tools) | works |
-| a small AppKit calculator (`tests/guest/calc`) | works |
-| VS Code 1.139 arm64 (Electron) | works; typing latency ~40 ms |
-| Chromium 157 arm64 snapshot | works, including **GPU acceleration** (ANGLE/Metal → host AMD GPU, 60 fps canvas) |
-| balenaEtcher 2.1.7 arm64 (Electron) | starts (device access untested) |
+| DeepSeek Harness（Electron） | 可用，日常使用的主力测试应用；v2 冷启动约 35 秒就绪 |
+| VS Code 1.139 arm64（Electron） | 可用，打字延迟约 40 ms，V8 JIT 开启 |
+| Chromium 157 arm64 | 可用，**GPU 硬件加速**（ANGLE/Metal），canvas 60 fps |
+| balenaEtcher 2.1.7 arm64 | 能启动 |
+| `fastfetch`、`neatvi` 等命令行工具 | 可用 |
+| AppKit / SwiftUI 程序 | 可用：Codable、actor、task group、Regex、SwiftUI 状态与 `.task` |
+| `CAMetalLayer` / `MTKView` | 可用，60/60 帧上屏 |
+| 音频 | 可用：AudioQueue、HAL IOProc、AVAudioEngine、AVAudioPlayer |
+| 沙盒应用 | 容器路径与原生一致（`~/Library/Containers/<id>/Data`） |
+| Metal | `supportsFamily:` 与设备限制与原生一致；光线追踪和 MetalFX 结果逐位一致 |
+| VideoToolbox | H.264 / HEVC 编解码往返正确（软件编码） |
+| IOKit | 平台信息、电源、HID 管理器等基础查询 |
 
-Upstream listed as not done: audio, most IOKit hardware, sandboxed apps, Swift-heavy Apple apps, `CAMetalLayer`-based
-apps. Attesor's status for each is below.
+不支持：FairPlay/DRM 加密的程序（App Store 和 iOS-on-Mac 应用），以及只有 arm64e 切片的程序。
 
-## What Attesor adds
+## 性能
 
-Verified on an Intel laptop (RTX 3060 with a third-party NVIDIA Metal driver, macOS 26.7) with the programs in
-[`tests/attesor/`](tests/attesor/), each compared against the same program built for x86-64:
+在 Intel 主机上，用同一份 C 源码分别编出 arm64 版（经 Attesor 翻译运行）和 x86-64 原生版对比，9 轮交替测量取中位数：
 
-| Area | Status |
+| 内核 | 达到原生速度 |
 |---|---|
-| `CAMetalLayer` / `MTKView` | **fixed**: drawables are presented by the guest's own Core Animation; `presentDrawable:` used to ship the drawable to the host bridge and crash. 60/60 frames on screen, MTKView inside SwiftUI renders. |
-| Audio | **works** (no change needed): AudioQueue, HAL IOProcs, AVAudioEngine and AVAudioPlayer run at the device rate, audible. |
-| Sandboxed apps | **container emulated**: guests signed with `com.apple.security.app-sandbox` get the same `~/Library/Containers/<id>/Data` home, Documents and container id as natively. Not enforced: the kernel sandbox profile is not applied, and `NSTemporaryDirectory()` stays the system temp dir. Opt out with `ATTESOR_NO_CONTAINER=1`. |
-| Swift / SwiftUI | **works** for the tested programs: Codable, actors, task groups, existentials, Regex, SwiftUI state and `.task`. Large Swift apps are not yet tested. |
-| IOKit | basic queries work: platform expert/serial, power sources, HID manager. |
-| Metal coverage | `supportsFamily:` and device limits match native; ray tracing (acceleration structure build + intersector in a compute kernel) and the MetalFX spatial scaler give bit-identical results (`rtprobe.m`). |
-| VideoToolbox | **works, in software**: H.264 and HEVC encode → decode round trips are correct (`vtcodec.m`). The host's hardware HEVC encoder is not reached from the guest (HEVC encode 2.1 s vs 0.15 s native for 60 720p frames; decode 76 vs 58 ms). |
-| Persistent translations | Checkpoints retain partial per-thread profiles and survive guest fork/failed exec. SIGKILL → restart tests prove actual cache loads; full-app startup benefit still needs measurement. |
-| Native libraries | Opt-in host zlib bridge (`ATTESOR_NATIVE_LIBS=1`): CRC32, Adler32, compress2/uncompress; error paths, tagged pointers, threads and child-process forwarding tested. See docs/NATIVE-LIBRARIES.md. |
-| Half conversion | FPCR rounding, FZ/DN/AHP conversion results verified against an independent integer reference; complete FPSR status is not claimed. |
-| App launching | Universal x86 stub plus retained ARM slices; atomic inject/restore and 25 isolated launcher checks, including real ARM execution. Finder/Dock appearance requires separate visual verification. |
-| Debugger | `attesor --gdb PORT` or `--gdb-fd FD`: lldb/gdb debugging of the first guest thread. RSP and real LLDB expression/call tests pass via an inherited socket; see docs/DEBUGGING.md. |
-| JIT | native x86 translations for TBL/TBX, all FRINT forms, SHA-256 (`sha256h/h2/su0/su1`, no SHA extension needed), vector UCVTF/SCVTF, FCVTZU — each checked with the differential self-test (`mismatch=0`). |
+| int-hash | 101% |
+| memcpy | 104% |
+| list | 115% |
+| crc32 | 81% |
+| memops | 76% |
+| sieve | 63% |
+| branchy | 63% |
+| qsort | 49% |
+| matmul | 31% |
+| fib(36) | 24% |
+| fp-nbody | 21% |
+| **几何平均** | **57%**（不开优化时 49%） |
 
+整数和内存密集的代码基本跑到原生速度；浮点和调用密集的代码还有很大差距。DeepSeek Harness 的启动时间从 77 秒降到 67 秒（同一台机器、同一负载下对比）。
 
-![chrome://gpu in the arm64 Chromium 157 snapshot running under Attesor on an Intel Mac Pro: canvas, compositing, rasterization, WebGL and WebGPU hardware accelerated on an AMD Radeon RX 460 via ANGLE/Metal](docs/img/chromium-gpu.png)
+测量脚本和 guest 源码在 [`bench/`](bench/)（`bench.c`、`native-ratio/kernels.c`），DSH 启动测量用 [`bench/app-startup.sh`](bench/app-startup.sh)。
 
-*The arm64 Chromium 157 snapshot running under Attesor on an Intel Mac (`chrome://gpu`): compositing, rasterization, WebGL and WebGPU are hardware accelerated on the machine's AMD Radeon RX 460, through the ANGLE/Metal bridge.*
+## 快速开始
 
-The latest eight-workstream integration, automated acceptance and serial performance results are
-recorded in [docs/TEAM-ACCEPTANCE.md](docs/TEAM-ACCEPTANCE.md).
+需要：
 
-## Quick start
-
-You need an Intel Mac on macOS 26 (Tahoe) with Xcode Command Line Tools and a Rust toolchain, about 10 GB of
-free disk, and an internet connection for the one-time download of the arm64 dyld shared cache.
+- Intel Mac，macOS 26（Tahoe）
+- Xcode Command Line Tools 和 Rust 工具链
+- 约 10 GB 磁盘空间，以及一次性下载 arm64 dyld shared cache 的网络
 
 ```bash
-cd attesor                    # this repository
-scripts/install.sh            # builds attesor + the GPU bridge, installs to ~/bin
-scripts/fetch-sysroot.sh      # downloads the arm64e dyld shared cache (≈5.5 GB) into ~/attesor-sysroot
-attesor ./some-arm64-binary  # that's it; the sysroot is found automatically
+git clone https://github.com/zheznanohana/attesor.git
+cd attesor
+scripts/install.sh          # 编译 attesor 和 GPU 桥接，安装到 ~/bin
+scripts/fetch-sysroot.sh    # 下载 arm64e dyld shared cache（约 5.5 GB）到 ~/attesor-sysroot
+attesor ./some-arm64-binary # 直接运行，sysroot 会自动找到
 ```
 
-Details, alternatives and requirements: **[docs/SETUP.md](docs/SETUP.md)**.
-Running Chromium, VS Code and other apps: **[docs/USAGE.md](docs/USAGE.md)**.
+`fetch-sysroot.sh` 用 [`ipsw`](https://github.com/blacktop/ipsw) 从苹果的更新服务器下载 Apple Silicon 系统镜像并取出 dyld shared cache。更多安装细节见 [docs/SETUP.md](docs/SETUP.md)。
 
-## Documentation
+## 像普通应用一样双击运行
 
-| | |
+`launcher/attesor-apps` 给只有 arm64 的 `.app` 加一个 x86-64 启动切片。加完之后，Finder、Dock、Spotlight 里双击就会自动用 Attesor 运行，原来的 arm64 代码保持不变。
+
+```bash
+attesor-apps scan            # 扫描 /Applications，给所有纯 arm64 应用加启动切片
+attesor-apps inject APP      # 只处理一个应用（别名 wrap）
+attesor-apps restore APP     # 还原成原始的 arm64 应用
+attesor-apps list            # 列出已处理的应用
+attesor-apps reinject        # 升级所有已处理应用的启动切片（别名 rewrap）
+attesor-apps fixdock         # 修复 Dock 图标
+```
+
+- 安装 `launcher/local.attesor-apps.plist` 为 LaunchAgent 后，每 30 秒自动扫描一次，新装或更新的 arm64 应用会被自动处理。
+- 应用更新后 arm64 部分会被保留，替换操作是原子的，失败时原应用不受影响。
+- 正在运行的应用不会被修改。
+- 扫描目录可以用 `ATTESOR_SCAN_DIRS`（冒号分隔）指定。
+- 运行日志写在 `~/Library/Logs/Attesor/<应用名>.log`。
+
+Electron/Chromium 应用会自动加上 `--no-sandbox` 和 GPU 桥接参数，其他应用直接带 GPU 桥接运行。设 `ATTESOR_APPS_GPU=0` 改用软件渲染。
+
+## 运行常见应用
+
+### Chromium（GPU 加速）
+
+下载 Mac_Arm 版 Chromium 快照，例如 [157.0.8079.0](https://commondatastorage.googleapis.com/chromium-browser-snapshots/Mac_Arm/1706829/chrome-mac.zip)，解压到 `~/Downloads/chromium-arm64`：
+
+```bash
+chromium-gpu [url]   # DevTools 在 127.0.0.1:9333
+CHROMIUM_DIR=/path/to/Chromium.app/Contents/MacOS chromium-gpu   # 放在别处时
+```
+
+只有 GPU 进程加载桥接（`--gpu-only --type=gpu-process`），其余进程走普通路径，这样渲染进程不会被拖慢。
+
+### VS Code
+
+下载 [darwin-arm64 版](https://update.code.visualstudio.com/latest/darwin-arm64/stable)，解压到 `~/vscode-arm64`：
+
+```bash
+vscode-gpu   # 也装成了 `code`；用 VSCODE_DIR / VSCODE_DATA 改位置
+```
+
+V8 JIT 默认开启，页内 3e6 次循环 51 ms（`--jitless` 时 545 ms）。
+
+### 任意 Electron / Chromium 应用
+
+```bash
+attesor --gpu --gpu-only --type=gpu-process ./App --no-sandbox --disable-gpu-sandbox --disable-gpu-watchdog \
+  --use-angle=metal --use-gl=angle --enable-gpu --ignore-gpu-blocklist --disable-angle-features=disableMetalOnNvidia
+```
+
+不用 GPU 时：`attesor ./App --no-sandbox --disable-gpu`。
+
+### 命令行工具和 Node
+
+```bash
+attesor ./fastfetch
+ELECTRON_RUN_AS_NODE=1 attesor ".../Code" -e "console.log(process.version)"
+```
+
+### 使用建议
+
+- 程序必须是 arm64 Mach-O（`file app` 显示 `arm64`）。
+- 二进制提示签名问题时，先重签一份：`codesign -f -s - file`。
+- 首次启动要翻译代码，会慢一些。`attesor --prewarm App.app` 可以不执行应用、提前把主程序、helper 和 dyld 翻译好；正常退出时也会保存翻译缓存，第二次启动更快。
+- 翻译器版本升级后旧缓存会自动作废。
+
+## 命令行参数
+
+```
+attesor [选项] ./arm64-程序 [参数...]
+```
+
+| 参数 | 作用 |
 |---|---|
-| [docs/SETUP.md](docs/SETUP.md) | requirements, building, getting the arm64 userland, installing the GPU bridge |
-| [docs/USAGE.md](docs/USAGE.md) | command-line flags, launching Chromium / VS Code / Etcher, tips |
-| [docs/TROUBLESHOOTING.md](docs/TROUBLESHOOTING.md) | symptoms and fixes |
-| [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) | loader, dyld/shared cache handling, syscall emulation, JIT, AOT cache |
-| [docs/GPU.md](docs/GPU.md) | the Metal → host GPU bridge: design, protocol, profiling, pitfalls |
-| [docs/PERFORMANCE.md](docs/PERFORMANCE.md) | measurements, JIT optimisations, Chromium configuration |
-| [docs/DEBUGGING.md](docs/DEBUGGING.md) | flags, signals, JIT differential self-tests |
-| [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md) | open problems, bug list, history |
-| [bench/](bench/README.md) | benchmark and test drivers |
+| `--prewarm` | 静态翻译可执行文件或 `.app` 以及 dyld，不运行程序（别名 `--aot`） |
+| `--gpu` | 把程序的 Metal API 转到主机显卡 |
+| `--gpu-only SUBSTR` | 只给参数里含 SUBSTR 的进程启用 GPU（如 `--type=gpu-process`） |
+| `--sysroot DIR` | 指定 arm64e dyld shared cache 所在目录（默认自动查找） |
+| `--dyld PATH` | 指定 arm64 dyld（默认 `/usr/lib/dyld`，或 `$ATTESOR_DYLD`） |
+| `--no-aot` | 不读写翻译缓存 |
+| `--interp` | 只用解释器，不用 JIT/AOT，用来排查 JIT 问题 |
+| `--trace` | 记录系统调用、Mach 消息和路径重定向 |
+| `--dump-on-fault` | 崩溃时把寄存器和反汇编写到 `/tmp/attesor-fault-<pid>.log` |
+| `--gdb PORT` / `--gdb-fd FD` | 用 lldb/gdb 调试第一个 guest 线程 |
+| `--selftest-jit CLASS N [SEED]` | JIT 差分自测（见下文） |
+| `--jit-dump HEX...` | 打印一段 arm64 指令翻译出的 x86 机器码 |
 
-## Legal
+## 环境变量
 
-Attesor contains **no Apple binaries**. The arm64 userland is downloaded by you from Apple's own update
-servers (via [`ipsw`](https://github.com/blacktop/ipsw)) and stays on your machine. You are responsible for
-complying with Apple's software license terms for whatever you download and run, and with the licenses of the
-apps you run. `ref/` holds excerpts of Apple open-source code (APSL 2.0 / Apache 2.0) used as reference, with
-their license headers intact. See [NOTICE](NOTICE). Attesor does not attempt to run, or to circumvent
-protection of, FairPlay/DRM-encrypted binaries.
+| 变量 | 作用 |
+|---|---|
+| `ATTESOR_JIT_ON` | 逗号分隔的优化开关列表，**设置后整体替换默认列表**（设为空字符串即全部关闭） |
+| `ATTESOR_JIT_OFF` | 逗号分隔，关闭指定开关，优先级最高 |
+| `ATTESOR_CACHE` | 翻译缓存目录 |
+| `ATTESOR_SYSROOT` | dyld shared cache 目录 |
+| `ATTESOR_STATS=1` | 退出时打印 JIT 统计：翻译块数、翻译耗时、解释执行次数 |
+| `ATTESOR_PROFILE=DIR` | 约 1 kHz 采样所有 guest 线程，用 `tools/profile-report.py DIR` 汇总 |
+| `ATTESOR_JIT_THRESHOLD` | 块执行多少次后编译（默认 24） |
+| `ATTESOR_NATIVE_LIBS=1` | 启用主机 zlib 桥接 |
+| `ATTESOR_NO_CONTAINER=1` | 沙盒应用不使用容器路径 |
+| `ATTESOR_NO_AOT_BUILD=1` | 不在退出时生成 AOT 缓存 |
+| `ATTESOR_STDERR_LOG=1` | 每个 guest 进程的 stderr 另存到 `~/Library/Logs/Attesor/stderr/` |
 
-MIT licensed, see [LICENSE](LICENSE).
+完整列表见 [docs/DEBUGGING.md](docs/DEBUGGING.md)。
+
+## 优化开关
+
+默认开启的 18 项，都在 DeepSeek Harness 启动测试中验证过不会拖慢：
+
+| 开关 | 作用 |
+|---|---|
+| `loopra` | 循环内整数寄存器常驻宿主寄存器，branchy 快 2 倍、int-hash 快 1.4 倍 |
+| `flagreg` | 循环回边上的 NZCV 标志保存在寄存器里，延迟物化 |
+| `isel2` | 用 BMI2 变量移位和 LZCNT 生成更短的指令 |
+| `notbi` | 能证明地址高字节为零时省掉 TBI 掩码 |
+| `fastenc` | MOV 和整数 ALU 指令直接编码，跳过通用汇编器 |
+| `slotreuse` | 复用链接槽的对齐重定位 |
+| `regioncache` | 自然循环的写穿寄存器缓存 |
+| `bgtrans` | 后台线程翻译 |
+| `nativefixups` | 用原生代码完成 dyld 重定位（Electron Framework 65 万条 rebase 约 9 ms） |
+| `pathcache` | dyld 路径映射缓存 |
+| `offline-constprop` | 离线 AOT 常量传播 |
+| `offline-dse` | 离线 AOT 死存储消除 |
+| `offline-layout-profile` | 按真实采样权重排列 AOT 代码 |
+| `preciseinvalidate` | 精确的代码失效，无关的内存映射不会清掉热 AOT 代码 |
+| `process-qos` | 后台翻译线程降低 QoS，前台线程不变 |
+| `avx512`、`avx512nan` | 主机支持 AVX-512 时用到高 16 个 xmm 寄存器 |
+| `hugepages` | 代码缓存申请 2 MiB 大页，失败时自动回退 |
+
+默认关闭、可以手动开启的：
+
+| 开关 | 默认关闭的原因 |
+|---|---|
+| `tiered` | 分层 JIT，DSH 启动时间明显变长 |
+| `rel32chain` | 不可变 rel32 直接链接，DSH 启动慢 21% |
+| `ibtc2` | 两路间接跳转缓存，DSH 启动慢 19% |
+| `sharedtrans` | 进程间共享翻译，DSH 启动慢 10% |
+| `bliccache` | BLR 站点缓存，DSH 启动慢 8% |
+| `loopra2` | 多块循环寄存器分配，与其他开关组合时启动变慢 |
+| `page16k` | 向 guest 报告 16 KiB 页，DSH 启动会中止 |
+| `callret` | 宿主 call/ret，JS 慢 12%、启动慢 16% |
+| `jitcost`、`loopcensus` | 诊断用的计数和统计 |
+
+例子：
+
+```bash
+ATTESOR_JIT_OFF=loopra attesor ./app           # 默认配置去掉 loopra
+ATTESOR_JIT_ON=loopra,isel2 attesor ./app      # 只开这两项
+ATTESOR_JIT_ON= attesor ./app                  # 全部关闭
+```
+
+## 工作原理
+
+1. **加载**：解析 arm64 Mach-O，映射 arm64 dyld，把 dyld shared cache 映射到 guest 地址空间；预滑动后的 shared cache 数据页会缓存在磁盘上，加快之后的启动。
+2. **执行**：代码先由解释器运行，执行次数达到阈值的基本块交给 JIT 翻译成 x86-64；热循环会整体翻译成带寄存器分配的循环区域。
+3. **缓存**：翻译结果按 AOT 格式写到磁盘，下次启动直接加载；`--prewarm` 可以提前生成。
+4. **系统接口**：BSD 系统调用、Mach trap 和 machdep 调用直接转给主机或模拟；commpage、16 KiB/4 KiB 页面差异、沙盒容器路径都在这一层处理。
+5. **GPU**：guest 的 Metal 调用经桥接库发给主机 Metal 设备；Chromium 的 ANGLE/Metal 就是这样拿到硬件加速的。
+6. **原生库**：zlib、vImage、压缩、加密等热点函数可以直接调用主机版本。
+
+详细设计见 [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) 和 [docs/GPU.md](docs/GPU.md)。
+
+## 测试与调试
+
+JIT 差分自测把同一段随机生成的 arm64 代码分别交给解释器和 JIT 执行，逐位比较寄存器、标志和内存：
+
+```bash
+attesor --selftest-jit dpimm 100000        # 数据处理（立即数）
+attesor --selftest-jit fpblocks 100000     # 浮点块
+attesor --selftest-jit loops 300000 0x1234 # 循环区域，带种子
+```
+
+常用类别：`dpimm dpreg ldst branch blocks fpblocks fuse fuse2 selchain tbiblocks fpnan calls jitcode offline addrforms loops`。所有类别都应输出 `mismatch=0`。
+
+```bash
+cargo test --release --workspace -- --test-threads=1   # 单元测试
+python3 tests/attesor/accept-all.py --output out.json  # 21 组自动验收
+bench/app-startup.sh --runs 3 'dsh web: http' "<应用可执行文件>" --no-sandbox --disable-gpu   # 应用启动计时
+```
+
+`tests/attesor/` 里还有 AOT 缓存、加密、调试器、原生库、启动器、FP16、FPCR 等专项检查脚本。
+
+调试器：`attesor --gdb 1234 ./app` 后用 `lldb` 执行 `gdb-remote 1234` 连接。
+
+## 目录结构
+
+| 路径 | 内容 |
+|---|---|
+| `crates/attesor/src/` | 主程序：加载器、系统调用、线程、信号、GPU、AOT |
+| `crates/attesor/src/jit/` | JIT：`emit.rs` 代码生成，`loops.rs` 循环区域，`offline.rs` 离线 AOT，以及各优化开关 |
+| `crates/core/` | guest CPU 状态、参考解释器、软件浮点、反汇编，JIT 与 AOT 共用 |
+| `gpu/` | Metal 桥接库和 Chromium 启动脚本 |
+| `native/` | 原生库桥接 |
+| `launcher/` | `attesor-apps` 应用包装器和 x86 启动切片 |
+| `scripts/` | 安装、下载 sysroot、VS Code / Etcher 启动脚本 |
+| `bench/` | 基准程序和测量脚本 |
+| `tests/attesor/` | 验收与专项检查 |
+| `tools/` | profiler 汇总、窗口列表、DevTools 客户端等工具 |
+| `docs/` | 设计、性能、调试和各项特性的文档 |
+| `ref/` | 参考用的苹果开源代码节选（xnu、dyld、libpthread、libdispatch），不参与编译 |
+
+## 文档
+
+| 文档 | 内容 |
+|---|---|
+| [docs/SETUP.md](docs/SETUP.md) | 环境要求、编译、获取 arm64 用户态、安装 GPU 桥接 |
+| [docs/USAGE.md](docs/USAGE.md) | 参数、各类应用的启动方式 |
+| [docs/TROUBLESHOOTING.md](docs/TROUBLESHOOTING.md) | 常见问题和处理方法 |
+| [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) | 加载器、dyld、系统调用模拟、JIT、AOT |
+| [docs/GPU.md](docs/GPU.md) | Metal 桥接的设计与协议 |
+| [docs/PERFORMANCE.md](docs/PERFORMANCE.md) | 性能测量与 JIT 优化 |
+| [docs/DEBUGGING.md](docs/DEBUGGING.md) | 调试参数、环境变量、差分自测 |
+| [docs/OPTIMIZATION.md](docs/OPTIMIZATION.md) | 优化方向与进展 |
+| [docs/LAUNCHER-INTEGRATION.md](docs/LAUNCHER-INTEGRATION.md) | 应用包装器的设计 |
+| [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md) | 开发历史与待办 |
+
+## 来源与许可
+
+Attesor 基于 linuxkid473 的 [maclator](https://github.com/linuxkid473/maclator)（MIT），在其基础上新增了循环寄存器分配、离线 AOT 优化、原生 dyld 重定位、应用包装器、调试器、采样 profiler、原生库桥接、音频/沙盒/SwiftUI/MetalFX 支持等，源码规模约为上游的 3 倍。
+
+仓库不包含任何苹果的二进制文件。arm64 用户态由你自己从苹果的更新服务器下载，保存在本机。`ref/` 中的苹果开源代码保留原有许可证头（APSL 2.0 / Apache 2.0）。详见 [NOTICE](NOTICE)。
+
+MIT 许可，见 [LICENSE](LICENSE)。
