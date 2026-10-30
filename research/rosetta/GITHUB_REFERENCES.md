@@ -554,3 +554,47 @@ NO repetition. All7 checksum lines match. No claim that57.19% historical88 and
 this54.83% snapshot are directly comparable. Keep fpguard OFF the selected
 configuration pending stronger evidence; no workspace/AOT/application matrix.
 Production unchanged. Full same-config60% goal remains incomplete.
+
+
+## Codegen90: bounded read-only base shadow (`addrhoist`, default OFF)
+
+Independent compiler transform, not a reversed opcode map: for an existing
+scalar V-resident fpflags self-loop, capture one scalar S/D register-offset
+load using a read-only base and its exact X counter. Admit only scalar FP ops,
+ordinary nonwriteback scalar FP memory, self ADD Xn,#imm GP updates and the final
+CMP/B.NE. Require exactly one positive power-of-two index step after the load,
+a divisible positive bound and a free fixed-map GP slot. Public guards prove
+initial index range/alignment and the entire masked EA+last-byte range below
+bit56. Keep all architectural tagged GPRs untouched; the free slot contains only
+the masked base shadow. Fold base+index into the exact-width scalar load and
+retain original upper-lane clearing. Failed guards canonically reject before
+any guest effect. Existing FPCR/epoch/return/revocation protections remain.
+
+Five focused tests pass, including2304 new full X/V/NZCV/FPCR differential cases,
+768 private FPCR changes via test-owned STR S27 into that Cpu's FPCR cell, and224
+pre-effect index/alignment/address-span rejections. Cover S/D, scaled/unscaled
+index, starting at each of three iterations, tagged bases, subnormal/negative
+zero/NaN, rounding modes, high V pressure, Plain/Patchable and both guard layouts.
+Related8192 differential+96 public+96 private fpflags cases also pass. Planner
+barriers cover read-only-base mutation, duplicate/zero/nonpower index updates,
+wrong width/extension/bound and non-NE conditions. Review caught that bounded
+trip reasoning needs explicit B.NE (not arbitrary B.cond); added the exact gate
+and BEQ/BGE rejection tests before publication. Tests/build rerun after this
+proof correction, NOT a repeated benchmark. Other conditions remain original
+code. Actual timed original matmul was B.NE already.
+
+One unchanged original bench fixture screen: native21.229ms, control(fpflags)
+37.587ms, addrhoist39.536ms (+5.19%,53.70% native). It did NOT improve performance;
+no repetition or combined-layout matrix. All7 original checksum lines match.
+The harness initially looked for the wrong `addrhoist-sink` telemetry prefix;
+actual stderr has `addrhoist-load 500000f48`. Raw failed postprocessing retained
+in attesor-addrhoist-screen.json; parsed record corrects metadata from the same
+executions without rerunning. Emission telemetry is not dynamic coverage.
+Measured-source hashes and measured binary hash are retained separately from
+the final post-review source/binary hashes; this timing is not misrepresented as
+a test of the later gate revision. No gain claim from either.
+
+Keep addrhoist and fpguard OFF the selected experimental configuration. The
+last confirmed substantive result remains88 fpflags matmul median49.696->37.321ms
+(-24.90%),57.19% native; not a stable floor or current all-category acceptance.
+Production unchanged. Full six-category same-config60% goal remains incomplete.

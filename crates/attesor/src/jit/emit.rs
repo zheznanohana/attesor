@@ -25,6 +25,8 @@ mod functions;
 mod fp_trace;
 #[path = "fp_flags.rs"]
 mod fp_flags;
+#[path = "addr_hoist.rs"]
+mod addr_hoist;
 #[path = "leaf.rs"]
 mod leaf;
 
@@ -120,6 +122,9 @@ pub struct Unit {
     vtrace: bool,
     fpflags: bool,
     fpguard: bool,
+    addrhoist: bool,
+    addr_shadow:Option<(addr_hoist::Plan,usize)>,
+    addr_hoists:u64,
     fpflags_sinks:u64,
     leafra: bool,
     leafinline: bool,
@@ -553,6 +558,9 @@ impl Unit {
             vtrace: vtrace_enabled(),
             fpflags: fpflags_enabled(),
             fpguard: fpguard_enabled(),
+            addrhoist:addrhoist_enabled(),
+            addr_shadow:None,
+            addr_hoists:0,
             fpflags_sinks:0,
             leafra: leafra_enabled(),
             leafinline: leafinline_enabled(),
@@ -2355,6 +2363,11 @@ fn vpair_enabled() -> bool {
     *ON.get_or_init(||!jit_off("vpair")&&std::env::var("ATTESOR_JIT_ON").unwrap_or_default().split(',').any(|t|t=="vpair"))
 }
 
+fn addrhoist_enabled()->bool {
+    static F:std::sync::OnceLock<bool>=std::sync::OnceLock::new();
+    *F.get_or_init(||!jit_off("addrhoist")&&std::env::var("ATTESOR_JIT_ON").unwrap_or_default().split(',').any(|g|g=="addrhoist"))
+}
+
 fn fpguard_enabled()->bool {
     static F:std::sync::OnceLock<bool>=std::sync::OnceLock::new();
     *F.get_or_init(||!jit_off("fpguard")&&std::env::var("ATTESOR_JIT_ON").unwrap_or_default().split(',').any(|g|g=="fpguard"))
@@ -2652,7 +2665,7 @@ pub(super) fn prepare_bgtrans() {
         loopra_enabled(), regioncache_enabled(), has_avx(), has_fma(),
         has_aes(), has_pclmul(), has_sha(), has_f16c(), loopra2_enabled(),
         has_avx512(), avx512_enabled(), avx512_nan_enabled(), super::fastenc_enabled(),
-        super::loops::census_enabled(), super::cost::probes(), vloop_enabled(), vloop2_enabled(), vchain_enabled(), vscalar_enabled(), funra_enabled(), funflags_enabled(), selectra_enabled(), regflags_enabled(), cfgflags_enabled(), xspill_enabled(), fmovra_enabled(), vpair_enabled(), vtrace_enabled(), fpflags_enabled(), fpguard_enabled(), leafra_enabled(), csetfast_enabled(), csetpair_enabled(), leafinline_enabled(), leafflags_enabled(), super::bliccache::enabled());
+        super::loops::census_enabled(), super::cost::probes(), vloop_enabled(), vloop2_enabled(), vchain_enabled(), vscalar_enabled(), funra_enabled(), funflags_enabled(), selectra_enabled(), regflags_enabled(), cfgflags_enabled(), xspill_enabled(), fmovra_enabled(), vpair_enabled(), vtrace_enabled(), fpflags_enabled(), fpguard_enabled(), addrhoist_enabled(), leafra_enabled(), csetfast_enabled(), csetpair_enabled(), leafinline_enabled(), leafflags_enabled(), super::bliccache::enabled());
 }
 
 /// Translate one basic block starting at `pc` into `u`. The caller must have
@@ -2849,6 +2862,7 @@ fn emit_block_inner(u: &mut Unit, pc: u64, read: &dyn Fn(u64) -> Option<u32>, mu
     let mut fp_sink:Option<fp_flags::Plan>=None;
     let mut fp_body=None;
     let mut fp_guard_outlined=false;
+    u.addr_shadow=None;
     if u.notbi_enabled { u.notbi.clear(); } // no facts cross public/private loop entries
     u.loop_exit_flags = None;
     u.loop_exit_compare = None;
@@ -2916,6 +2930,10 @@ fn emit_block_inner(u: &mut Unit, pc: u64, read: &dyn Fn(u64) -> Option<u32>, mu
                 &&!u.commpage_checks&&disabled_classes()==0 {
                 fp_flags::plan(pc,read,&|p|u.labels.contains_key(&p))
             }else {None};
+            if let Some((p,base,index,shadow))=plan.filter(|_|u.addrhoist).and_then(|p|addr_hoist::plan(pc,p,read)).and_then(|p|
+                Some((p,region.reg.iter().position(|&n|n==p.rn as u8)?,region.reg.iter().position(|&n|n==p.rm as u8)?,region.reg.iter().rposition(|&n|n==0xff)?))) {
+                addr_hoist::enter(u,p,region,base,index,shadow);u.addr_shadow=Some((p,shadow));
+            }
             if let Some(plan)=plan.filter(|_|u.fpguard) {
                 // A public entry cannot reconstruct a CMP that has not run.
                 // Both paths keep their FPCR check, but only private rejection
@@ -4700,6 +4718,17 @@ impl<'a> E<'a> {
     }
 
     fn ldst(&mut self, insn: u32) -> bool {
+        if let Some((p,shadow))=self.u.addr_shadow.filter(|(p,_)|p.at==self.pc&&p.word==insn) {
+            if let Some((index,dst))=self.region_slot(p.rm).zip(self.u.region.and_then(|r|r.vslot(insn&31))) {
+                let mem=qword_ptr(LOOPREGS[shadow]+LOOPREGS[index]*(1i32<<p.scale));let d=VREGS[dst];let double=insn>>30==3;
+                if high_xmm(d) {if double {evex!(self,vmovq(d,mem));}else {evex!(self,vmovd(d,dword_ptr(LOOPREGS[shadow]+LOOPREGS[index]*(1i32<<p.scale))));}}
+                else if double {a!(self,movq(d,mem));}else {a!(self,movd(d,dword_ptr(LOOPREGS[shadow]+LOOPREGS[index]*(1i32<<p.scale))));}
+                self.scalar_zero(insn&31,double);self.u.addr_hoists+=1;
+                if std::env::var_os("ATTESOR_ADDRHOIST_LOG").is_some() {eprintln!("addrhoist-load\t{:x}",self.pc);}
+                return true;
+            }
+        }
+
         let rt = bits(insn, 4, 0);
         let rn = bits(insn, 9, 5);
         let v = bit(insn, 26) != 0;
@@ -9387,6 +9416,43 @@ mod loopra_tests {
 
     fn cpu() -> Box<Cpu> {
         let mut c = Cpu::new(); crate::jit::setup_cpu(&mut c); c.set_pc(PC); c
+    }
+
+    #[test]
+    fn fpflags_addrhoist_guarded_scalar_loads_and_exits() {
+        if !has_avx()||disabled_classes()!=0 {return;}
+        let(mut checked,mut rejected,mut private)=(0,0,0);
+        for double in [false,true] {for shifted in [false,true] {for high in [false,true].into_iter().filter(|&v|!v||has_avx512()) {for kind in [StubKind::Plain,StubKind::Patchable] {for outlined in [false,true] {for mid in [false,true] {
+            let d=if high {24}else {0};let(n,m)=(d+1,d+2);let ty=(double as u32)<<22;let size=if double {3}else {2};let step=if shifted {1}else {1<<size};let bound=3*step;
+            let mut words=Vec::new();if high {for r in 0..8 {words.push(0xfd400080|r);}}
+            let load_at=words.len();words.extend([(if double {0xfc606800}else {0xbc606800})|(10<<16)|if shifted {1<<12}else {0}|n,
+                (if double {0xfd400020}else {0xbd400020})|m,0x1e200800|ty|(m<<16)|(n<<5)|n,0x1e202800|ty|(n<<16)|(d<<5)|d]);
+            if mid {words.push(0xbd0000bb);}// test-only STR S27,[X5] changes this own Cpu's FPCR after FP arithmetic
+            words.extend([0x9100014a|(step<<10),0xf100015f|(bound<<10)]);
+            let at=words.len();words.push(0x54000001|(((-(at as i32)as u32)&0x7ffff)<<5));let exit=PC+words.len()as u64*4;words.push(0xd4001001);
+            let read=|p:u64|p.checked_sub(PC).and_then(|o|words.get((o/4)as usize)).copied();
+            let mut u=Unit::new(kind,false);u.fpflags=true;u.fpguard=outlined;u.addrhoist=true;u.vloop=true;u.vchain=true;u.vscalar=true;u.loopra=true;u.loopra2=false;u.leafinline=false;u.avx512=high;
+            for p in [PC,exit] {let l=u.a.create_label();u.labels.insert(p,l);}
+            emit_block(&mut u,PC,&read);emit_block(&mut u,exit,&read);assert_eq!(u.addr_hoists,1,"D={double} shifted={shifted} high={high} mid={mid}");assert_eq!(u.fpflags_sinks,1);assert_eq!(u.insns_fallback,0);let(host,_)=assemble(u,0);
+            let vals:Vec<u64>=if double {vec![0x8000000000000000,1,0x7ff0000000000073]}else {vec![0x80000000,1,0x7f800073]};let pad=1f64.to_bits();
+            for a in vals {for b in [0u64,if double {2f64.to_bits()}else {2f32.to_bits()as u64}] {for tag in [0u64,0xab00000000000000] {for start in 0..if mid {1}else {3} {for mode in [0,3<<22] {
+                let a=if double {a}else {a|(a<<32)};let data=[a;3];let mut c=cpu();for r in 0..32 {c.x[r]=0xface000000000000+r as u64;c.v[r]=[0xabcdef+r as u64,0xfedcba0000000000+r as u64];}
+                c.x[0]=data.as_ptr()as u64|tag;c.x[1]=&b as *const _ as u64;c.x[4]=&pad as *const _ as u64;c.x[5]=&mut c.fpcr as *mut _ as u64;c.x[10]=start*step as u64;c.fpcr=mode;c.set_nzcv(15);c.v[27]=[1<<25,0xfaceface];
+                c.v[d as usize][0]=if double {0.125f64.to_bits()}else {0xface000000000000|0.125f32.to_bits()as u64};
+                let mut r=cpu();r.x=c.x;r.v=c.v;r.fpcr=mode;r.set_nzcv(15);if mid {r.x[5]=&mut r.fpcr as *mut _ as u64;}
+                interp::sys_sync_host_fp_mode(mode);let mut count=0;
+                loop {let p=r.pc();if p==exit||(mid&&count!=0&&p==PC) {break;}interp::exec(&mut r,read(p).unwrap()).unwrap();if r.pc()==p {r.set_pc(p+4);}count+=1;assert!(count<128);}
+                if mid {r.x[5]=c.x[5];assert_eq!(r.fpcr,1<<25);}
+                interp::sys_sync_host_fp_mode(mode);unsafe {crate::jit::attesor_jit_enter(&mut *c,host);}
+                assert_eq!(c.x,r.x,"D={double} scale={shifted} high={high} outlined={outlined} mid={mid} start={start} tag={tag:x}");assert_eq!(c.v,r.v);assert_eq!(c.nzcv(),r.nzcv());assert_eq!(c.fpcr,r.fpcr);assert_eq!(c.exit_reason,if mid {EXIT_INTERP}else {EXIT_SVC});if mid {assert_eq!(c.pc(),PC);private+=1;}else {checked+=1;}
+            }}}}}
+            let fp=fp_flags::plan(PC,&read,&|_|false).unwrap();let p=addr_hoist::plan(PC,fp,&read).unwrap();assert_eq!(p.at,PC+load_at as u64*4);
+            for (base,index) in [(0x1000,bound as u64),(0x1000,u64::MAX),(0x00ffffffffffffff-p.span+1,0)] .into_iter().chain((step!=1).then_some((0x1000,1))) {
+                let mut c=cpu();for r in 0..32 {c.x[r]=r as u64+0xfeed000000000000;c.v[r]=[r as u64,0xbeef];}c.x[0]=base|0xab00000000000000;c.x[10]=index;c.set_nzcv(15);let(x,v)=(c.x,c.v);
+                unsafe {crate::jit::attesor_jit_enter(&mut *c,host);}assert_eq!(c.exit_reason,EXIT_INTERP);assert_eq!(c.pc(),PC);assert_eq!(c.x,x);assert_eq!(c.v,v);assert_eq!(c.nzcv(),15);rejected+=1;
+            }
+        }}}}}}
+        interp::sys_sync_host_fp_mode(0);eprintln!("addrhoist full-state cases={checked} private FPCR repairs={private} pre-effect guard rejections={rejected}");
     }
 
     #[test]
