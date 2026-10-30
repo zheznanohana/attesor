@@ -15,19 +15,6 @@ Attesor is a fork of [maclator](https://github.com/linuxkid473/maclator) by linu
 > **Status: experimental research project.** Things that run today are listed below; many apps will not.
 > Expect rough edges. See [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md) for what is missing.
 
-## What runs (verified upstream on an Intel Core i5-4440, macOS 26.7)
-
-| Program | Status |
-|---|---|
-| `fastfetch`, `neatvi` (arm64 CLI tools) | works |
-| a small AppKit calculator (`tests/guest/calc`) | works |
-| VS Code 1.139 arm64 (Electron) | works; typing latency ~40 ms |
-| Chromium 157 arm64 snapshot | works, including **GPU acceleration** (ANGLE/Metal → host AMD GPU, 60 fps canvas) |
-| balenaEtcher 2.1.7 arm64 (Electron) | starts (device access untested) |
-
-Upstream listed as not done: audio, most IOKit hardware, sandboxed apps, Swift-heavy Apple apps, `CAMetalLayer`-based
-apps. Attesor's status for each is below.
-
 ## What Attesor adds
 
 Verified on an Intel laptop (RTX 3060 with a third-party NVIDIA Metal driver, macOS 26.7) with the programs in
@@ -50,9 +37,6 @@ Verified on an Intel laptop (RTX 3060 with a third-party NVIDIA Metal driver, ma
 | JIT | native x86 translations for TBL/TBX, all FRINT forms, SHA-256 (`sha256h/h2/su0/su1`, no SHA extension needed), vector UCVTF/SCVTF, FCVTZU — each checked with the differential self-test (`mismatch=0`). |
 
 
-![chrome://gpu in the arm64 Chromium 157 snapshot running under Attesor on an Intel Mac Pro: canvas, compositing, rasterization, WebGL and WebGPU hardware accelerated on an AMD Radeon RX 460 via ANGLE/Metal](docs/img/chromium-gpu.png)
-
-*The arm64 Chromium 157 snapshot running under Attesor on an Intel Mac (`chrome://gpu`): compositing, rasterization, WebGL and WebGPU are hardware accelerated on the machine's AMD Radeon RX 460, through the ANGLE/Metal bridge.*
 
 The latest eight-workstream integration, automated acceptance and serial performance results are
 recorded in [docs/TEAM-ACCEPTANCE.md](docs/TEAM-ACCEPTANCE.md).

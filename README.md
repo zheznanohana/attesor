@@ -8,19 +8,14 @@ Attesor 是一个"反向 Rosetta"。它加载 arm64 的 Mach-O 程序，连同�
 
 [English README](README.en.md)
 
-![arm64 版 Chromium 157 在 Intel Mac 上通过 Attesor 运行，chrome://gpu 显示合成、光栅化、WebGL 和 WebGPU 都由 AMD Radeon RX 460 通过 ANGLE/Metal 硬件加速](docs/img/chromium-gpu.png)
-
-*arm64 版 Chromium 157 在 Intel Mac 上运行（`chrome://gpu`）：合成、光栅化、WebGL、WebGPU 全部经 ANGLE/Metal 桥接走硬件加速。*
 
 ## 能运行什么
 
 | 程序 | 状态 |
 |---|---|
 | DeepSeek Harness（Electron） | 可用，日常使用的主力测试应用，冷启动约 35 秒就绪 |
-| VS Code 1.139 arm64（Electron） | 可用，打字延迟约 40 ms，V8 JIT 开启 |
-| Chromium 157 arm64 | 可用，**GPU 硬件加速**（ANGLE/Metal），canvas 60 fps |
-| balenaEtcher 2.1.7 arm64 | 能启动 |
-| `fastfetch`、`neatvi` 等命令行工具 | 可用 |
+| VS Code arm64（Electron） | 可用，GPU 经 ANGLE/Metal 走 RTX 3060 |
+| 命令行程序 | 可用：hello world、Node |
 | AppKit / SwiftUI 程序 | 可用：Codable、actor、task group、Regex、SwiftUI 状态与 `.task` |
 | `CAMetalLayer` / `MTKView` | 可用，60/60 帧上屏 |
 | 音频 | 可用：AudioQueue、HAL IOProc、AVAudioEngine、AVAudioPlayer |
@@ -77,8 +72,6 @@ Attesor 是一个"反向 Rosetta"。它加载 arm64 的 Mach-O 程序，连同�
 | 用 DSH 内置 Electron 运行 `dsh --version`（缓存已生成） | 约 3 秒 |
 | `node --version`（arm64 Node） | 约 5 秒 |
 | 命令行 hello world | 约 0.9 秒 |
-| VS Code 打字延迟 | 约 40 ms |
-| Chromium canvas 动画（GPU 加速） | 60 fps |
 
 首次运行一个应用时需要翻译代码，会明显慢一些；正常退出后翻译结果会保存到缓存，之后的启动直接加载。
 
@@ -125,17 +118,6 @@ Electron/Chromium 应用会自动加上 `--no-sandbox` 和 GPU 桥接参数，�
 
 ## 运行常见应用
 
-### Chromium（GPU 加速）
-
-下载 Mac_Arm 版 Chromium 快照，例如 [157.0.8079.0](https://commondatastorage.googleapis.com/chromium-browser-snapshots/Mac_Arm/1706829/chrome-mac.zip)，解压到 `~/Downloads/chromium-arm64`：
-
-```bash
-chromium-gpu [url]   # DevTools 在 127.0.0.1:9333
-CHROMIUM_DIR=/path/to/Chromium.app/Contents/MacOS chromium-gpu   # 放在别处时
-```
-
-只有 GPU 进程加载桥接（`--gpu-only --type=gpu-process`），其余进程走普通路径，这样渲染进程不会被拖慢。
-
 ### VS Code
 
 下载 [darwin-arm64 版](https://update.code.visualstudio.com/latest/darwin-arm64/stable)，解压到 `~/vscode-arm64`：
@@ -144,7 +126,6 @@ CHROMIUM_DIR=/path/to/Chromium.app/Contents/MacOS chromium-gpu   # 放在别处�
 vscode-gpu   # 也装成了 `code`；用 VSCODE_DIR / VSCODE_DATA 改位置
 ```
 
-V8 JIT 默认开启，页内 3e6 次循环 51 ms（`--jitless` 时 545 ms）。
 
 ### 任意 Electron / Chromium 应用
 
@@ -158,7 +139,7 @@ attesor --gpu --gpu-only --type=gpu-process ./App --no-sandbox --disable-gpu-san
 ### 命令行工具和 Node
 
 ```bash
-attesor ./fastfetch
+attesor ./hello
 ELECTRON_RUN_AS_NODE=1 attesor ".../Code" -e "console.log(process.version)"
 ```
 
@@ -260,7 +241,7 @@ ATTESOR_JIT_ON= attesor ./app                  # 全部关闭
 2. **执行**：代码先由解释器运行，执行次数达到阈值的基本块交给 JIT 翻译成 x86-64；热循环会整体翻译成带寄存器分配的循环区域。
 3. **缓存**：翻译结果按 AOT 格式写到磁盘，下次启动直接加载；`--prewarm` 可以提前生成。
 4. **系统接口**：BSD 系统调用、Mach trap 和 machdep 调用直接转给主机或模拟；commpage、16 KiB/4 KiB 页面差异、沙盒容器路径都在这一层处理。
-5. **GPU**：guest 的 Metal 调用经桥接库发给主机 Metal 设备；Chromium 的 ANGLE/Metal 就是这样拿到硬件加速的。
+5. **GPU**：guest 的 Metal 调用经桥接库发给主机 Metal 设备；Electron 应用的 ANGLE/Metal 就是这样拿到硬件加速的。
 6. **原生库**：zlib、vImage、压缩、加密等热点函数可以直接调用主机版本。
 
 详细设计见 [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) 和 [docs/GPU.md](docs/GPU.md)。
