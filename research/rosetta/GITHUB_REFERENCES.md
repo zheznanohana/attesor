@@ -710,3 +710,34 @@ raw-B extraction register; no high-register operations in the hot batch. Replay
 from packed captures only, preserving every raw bit, exact memory width, original
 NaN order and state. Additional unpack work could itself lose; no gain claimed.
 Production/profile unchanged; goal remains active/incomplete.
+
+
+## Codegen94: packed raw snapshots, and a real entry-shape issue
+
+Pack A/B raw inputs per iteration into4 low-bank captures; reserve3 cold work
+slots (product,sum,raw B). Hot path has no EVEX, asserted on actual output.
+Strict replay unpacks captured bits without data reread. S/D exact widths and
+NaN order preserved.8 tests pass:102400 new full-state cases,4096 guaranteed
+finite zero-batch-replay cases,448 pre-effect rejects; both SSE and AVX512 NaN
+repair implementations now explicitly selected, plus previous related cases.
+
+One original fixture screen: native21.300ms, control39.180ms, packed66.908ms
+(+70.77%,31.83% native), all7 checksums match. No repeat, not selected. Changes
+across92/93/94 batches do not isolate hardware frequency or prove an encoding
+cause. Stop blaming SIMD without direct evidence.
+
+Source inspection and a compiled dump identify a structural problem in this
+prototype: jit/mod.rs emits ordinary units with only their initial public label.
+The actual f3c predecessor initializes index0 but also executes the FIRST loop
+iteration before branching to the separately compiled f48 header. Its dumped
+code stores index8 and advanced pointer before its public jump. The old vbatch
+entry guard requires index aligned32, so this legitimate one-step entry is
+rejected. Repeated interpolation until alignment is a real extra fallback path,
+although dynamic counts and its complete share of timing have not been measured.
+This evidence changes the next action: native handling of remainder1..3 instead
+of rejection/interpreter peeling. Guard only original step alignment/range; at
+private body test whether4 original iterations remain, otherwise execute one
+exact old scalar pair and retry/exit. Keep bounds before every multi-load batch.
+Targeted tests must include all valid starts0..7, not just0/4. No performance
+gain from that fix claimed before implementing/measuring it.
+Production/selected profile unchanged, full goal incomplete.

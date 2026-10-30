@@ -9464,14 +9464,14 @@ mod loopra_tests {
     fn fpflags_vbatch_four_ordered_iterations_exact_all_state() {
         if !has_avx()||!has_avx512()||disabled_classes()!=0 {return;}
         let(mut checked,mut rejected)=(0,0);
-        for double in [false,true] {for shifted in [false,true] {for high_names in [false,true] {for kind in [StubKind::Plain,StubKind::Patchable] {for product_first in [false,true] {
+        for double in [false,true] {for shifted in [false,true] {for high_names in [false,true] {for kind in [StubKind::Plain,StubKind::Patchable] {for product_first in [false,true] {for nan512 in [false,true] {
             let d=if high_names {24}else {0};let(t,m)=(d+1,d+2);let size=if double {3}else {2};let step=if shifted {1}else {1<<size};let stride=5*(1<<size);let bound=8*step;let ty=(double as u32)<<22;
             let words=[(if double {0xfc606800}else {0xbc606800})|(10<<16)|if shifted {1<<12}else {0}|t,
                 (if double {0xfd400020}else {0xbd400020})|m,0x1e200800|ty|(m<<16)|(t<<5)|t,
                 0x1e202800|ty|((if product_first {d}else {t})<<16)|((if product_first {t}else {d})<<5)|d,
                 0x9100014a|(step<<10),0x91000021|(stride<<10),0xf100015f|(bound<<10),0x54ffff21,0xd4001001];
             let read=|p:u64|p.checked_sub(PC).and_then(|o|words.get((o/4)as usize)).copied();let exit=PC+32;
-            let mut u=Unit::new(kind,false);u.vbatch=true;u.fpflags=true;u.fpstable=false;u.fpguard=false;u.addrhoist=false;u.vloop=true;u.vchain=true;u.vscalar=true;u.loopra=true;u.loopra2=false;u.leafinline=false;u.avx512=true;
+            let mut u=Unit::new(kind,false);u.vbatch=true;u.fpflags=true;u.fpstable=false;u.fpguard=false;u.addrhoist=false;u.vloop=true;u.vchain=true;u.vscalar=true;u.loopra=true;u.loopra2=false;u.leafinline=false;u.avx512=true;u.avx512_nan=nan512;
             for p in [PC,exit] {let l=u.a.create_label();u.labels.insert(p,l);}
             emit_block(&mut u,PC,&read);emit_block(&mut u,exit,&read);assert_eq!(u.vbatch_emissions,1);assert_eq!(u.insns_fallback,0);let(host,_)=assemble(u,0);
             let vals:Vec<u64>=if double {vec![0,0x8000000000000000,1,0x7ff0000000000000,0xfff0000000000000,0x7ff8000000000042,0x7ff0000000000073,1.25f64.to_bits()]}
@@ -9497,7 +9497,7 @@ mod loopra_tests {
                 let mut c=cpu();for r in 0..32 {c.x[r]=0xab00000000001000+r as u64;c.v[r]=[r as u64,0xdeadface];}c.x[10]=start;c.fpcr=mode;c.set_nzcv(15);let(x,v)=(c.x,c.v);
                 unsafe {crate::jit::attesor_jit_enter(&mut *c,host);}assert_eq!(c.exit_reason,EXIT_INTERP);assert_eq!(c.pc(),PC);assert_eq!(c.x,x);assert_eq!(c.v,v);assert_eq!(c.nzcv(),15);assert_eq!(c.fpcr,mode);rejected+=1;
             }
-        }}}}}
+        }}}}}}
         interp::sys_sync_host_fp_mode(0);eprintln!("vbatch full-state cases={checked} pre-effect rejections={rejected}");
     }
 
