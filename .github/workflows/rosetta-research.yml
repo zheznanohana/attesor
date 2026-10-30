@@ -27,6 +27,17 @@ jobs:
           curl --fail --location --retry 2 -o ghidra.zip 'https://github.com/NationalSecurityAgency/ghidra/releases/download/Ghidra_12.2_build/ghidra_12.2_PUBLIC_20261016.zip'
           echo '2c2cd776db3c1f6a097ba418922378ac3649cadd5e844a6f5f088ae628a7be67  ghidra.zip' | shasum -a 256 -c -
           unzip -q ghidra.zip
+          # Official distributions omit Mac ARM native binaries. Build only the
+          # matching decompiler from pinned official sources (no system install).
+          git clone --depth 1 --filter=blob:none --sparse --branch Ghidra_12.2_build https://github.com/NationalSecurityAgency/ghidra.git ghidra-native-source
+          git -C ghidra-native-source sparse-checkout set Ghidra/Features/Decompiler/src/decompile/cpp
+          test "$(git -C ghidra-native-source rev-parse HEAD)" = 8ca9077040cc43cd790babcfccf19475622a3e9a
+          make -C ghidra-native-source/Ghidra/Features/Decompiler/src/decompile/cpp -j2 ghidra_opt \
+            ARCH_TYPE='-arch arm64' ADDITIONAL_FLAGS='-mmacosx-version-min=13.0 -w' CXX='clang++ -std=c++17' \
+            > "$RUNNER_TEMP/native-build.log" 2>&1
+          mkdir -p "$RUNNER_TEMP/ghidra_12.2_PUBLIC/Ghidra/Features/Decompiler/os/mac_arm_64"
+          cp ghidra-native-source/Ghidra/Features/Decompiler/src/decompile/cpp/ghidra_opt \
+            "$RUNNER_TEMP/ghidra_12.2_PUBLIC/Ghidra/Features/Decompiler/os/mac_arm_64/decompile"
           export JAVA_HOME=$(/usr/libexec/java_home -v 21)
           mkdir -p "$RUNNER_TEMP/ghidra-projects"
           target=/usr/libexec/rosetta/runtime
@@ -36,6 +47,7 @@ jobs:
             -postScript Survey.java "$GITHUB_WORKSPACE/research-results/runtime-survey.txt" \
             > "$RUNNER_TEMP/ghidra-headless.log" 2>&1
           test -s "$GITHUB_WORKSPACE/research-results/runtime-survey.txt"
+          grep -q 'decompiled=true' "$GITHUB_WORKSPACE/research-results/runtime-survey.txt"
           grep -E 'ERROR|WARN|REPORT:|Survey.java' "$RUNNER_TEMP/ghidra-headless.log" | tail -30 > "$GITHUB_WORKSPACE/research-results/ghidra-status.txt" || true
       - name: Upload small text evidence only (one day retention)
         if: always()
