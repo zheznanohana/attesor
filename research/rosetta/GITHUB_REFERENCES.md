@@ -297,3 +297,60 @@ fixture, not a full AOT/configuration/application acceptance or proof that every
 SSA trace shape was selected in AOT. Generated caches remain local/private; no
 Apple binary/cache is published. No production binary/default was replaced.
 All six original targets, including both qsort scales, remain the full goal.
+
+
+## Codegen79-81: exact leaf live-ins and conditional-Boolean experiments
+
+Own bounded analysis, not recovered Apple code. `leafra` (default OFF) uses an
+independent exact whitelist for <=32-word read-only GPR straight-line RET30
+blocks, not the profitability access census. Loads (ordinary unsigned W/X),
+CMP, conditional selects, raw register moves and valid move-wide forms have
+explicit SP/XZR/full-X definition semantics. Public labels, unknowns, calls,
+stores, branches, FP/system/atomic/writeback forms are barriers. Capacity and
+profitability bounds are separate from correctness. No recursive activation
+marker is used. Public entry loads only live-ins; every RET/native-parent hit
+canonicalizes dirty outputs before existing LR/depth/epoch/indirect logic.
+Inherited fatal-guest-fault contract remains unchanged. Loop instrumentation
+excludes these non-loop blocks; all emitted proof words are source dependencies.
+
+`csetfast` (default OFF) directly lowers fused CSINC Wd/Xd,ZR,ZR to MOV32-zero
+and register SETcc. MOV, not XOR, preserves producer flags; full X bits are zero
+on both Boolean results. Subsequent fused conditions still see the original
+host flags. Unsupported conditions keep the old path.
+
+`csetpair` (default OFF) handles only a proven two-instruction Boolean dataflow:
+CSINC t,ZR,ZR,c1 -> CSINV d,t,ZR,c2. Equal widths, ordinary non-ZR outputs, no
+public label crossing; both condition mappings must be available. Exhaustively
+prove c1 OR c2 for all16 NZCV values, so b1=NOT c1 and b2=NOT c2 cannot both be
+one. The second result is exactly b1-b2; preserve live t unless overwritten by d.
+SUB is host bookkeeping, never guest NZCV: invalidate host fusion and preserve
+canonical/packed guest flags for later observers. Source/skip/instruction-count
+boundaries and r11 TBI preservation follow the audited two-word fusion contract.
+This is generic instruction translation, not comparator/algorithm substitution.
+
+Related directed checks passed: leaf planner/native-parent2 tests (37,632
+differential cases), direct CSET1 test (49,152 cases), Boolean pair1 test
+(15,360 main cases plus16 packed-flag and4 label/max boundary cases).
+Compare full X/V/NZCV states, aliases, both widths/stub kinds, tagged bases, SP
+versus XZR, original-flag observers, unchanged/modified LR and true native-parent
+fast returns. Exhaustive condition truth agrees with the interpreter. No full
+workspace/configuration/AOT/application matrix was rerun for these prototypes.
+
+One screen per real implementation change, both unchanged qsort fixtures:
+
+| experiment |1.5M control -> candidate(ms)|4M control -> candidate(ms)|action|
+|---|---|---|---|
+|leafra|342.498 ->363.654 (+6.18%)|1040.7 ->1051.5 (+1.04%)|OFF; no repeat|
+|csetfast|348.632 ->345.472 (-0.91%)|1015.9 ->982.3 (-3.31%)|weak; OFF; no repeat|
+|csetpair|334.742 ->359.674 (+7.45%)|974.2 ->986.7 (+1.28%)|OFF; no repeat|
+
+All fixture checksum lines matched same-screen native references. These are
+single screens, not established causal regressions/gains. Different build/batch
+numbers must not be added. Code inspection of the exact6 guest instructions
+shows leaf entry/EA copies and canonical exit bookkeeping replacing some old
+memory operations; a non-loop callback does not automatically benefit from
+residency. Shorter Boolean code likewise did not prove faster. Next significant
+work is call-interval synchronization/guarded inlining, not more confidence
+rounds of these weak/negative candidates. No defaults or installed binary were
+changed; the full six-category/common-configuration60% goal, including both
+qsort scales, is still incomplete.
