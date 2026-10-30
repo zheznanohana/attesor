@@ -66,6 +66,13 @@ fn relative(pc: u64, imm: u32, bits: u32) -> u64 {
     pc.wrapping_add((((imm as i64) << (64 - bits)) >> (62 - bits)) as u64)
 }
 
+/// Exactly the indirect link forms already implemented by both interpreters:
+/// BLR, BLRAAZ/BLRABZ. Sign/auth are identity in this project's current ISA
+/// model; this optimizer does not introduce or remove a PAC implementation.
+pub(super) fn indirect_call_reg(w:u32)->Option<u32> {
+    (w&0xfffffc1f==0xd63f0000||w&0xfffff81f==0xd63f081f).then_some((w>>5)&31)
+}
+
 pub fn successors(pc: u64, w: u32) -> Vec<u64> {
     if w & 0xfc00_0000 == 0x1400_0000 {
         vec![relative(pc, w & 0x03ff_ffff, 26)]
@@ -73,24 +80,28 @@ pub fn successors(pc: u64, w: u32) -> Vec<u64> {
         vec![relative(pc, (w >> 5) & 0x7ffff, 19), pc + 4]
     } else if w & 0x7e00_0000 == 0x3600_0000 {
         vec![relative(pc, (w >> 5) & 0x3fff, 14), pc + 4]
-    } else if w & 0xfc00_0000 == 0x9400_0000 || w & 0xffff_fc1f == 0xd63f_0000 {
+    } else if w & 0xfc00_0000 == 0x9400_0000 || indirect_call_reg(w).is_some() {
         // Census includes guest calls; allocation can reject them separately.
         vec![pc + 4]
     } else if is_terminator(w) { vec![] } else { vec![pc + 4] }
 }
 
 pub fn discover(header: u64, read: &dyn Fn(u64) -> Option<u32>) -> Option<Loop> {
-    discover_impl(header, read, true)
+    discover_impl(header, read, true, None)
 }
 
 /// Guest calls are canonical exits, not mandatory members of a write-back
 /// region. In particular, a cold V8 runtime call must not pull its continuation
 /// and a large reachable function tail into every hot-loop discovery.
 pub fn allocation(header: u64, read: &dyn Fn(u64) -> Option<u32>) -> Option<Loop> {
-    discover_impl(header, read, false)
+    discover_impl(header, read, false, None)
 }
 
-fn discover_impl(header: u64, read: &dyn Fn(u64) -> Option<u32>, census: bool) -> Option<Loop> {
+pub(super) fn allocation_with_calls(header:u64,read:&dyn Fn(u64)->Option<u32>,call:&dyn Fn(u64,u32)->bool)->Option<Loop> {
+    discover_impl(header,read,false,Some(call))
+}
+
+fn discover_impl(header: u64, read: &dyn Fn(u64) -> Option<u32>, census: bool, call_allowed:Option<&dyn Fn(u64,u32)->bool>) -> Option<Loop> {
     let mut graph = BTreeMap::new();
     let mut queue = std::collections::VecDeque::from([header]);
     let mut seen = BTreeSet::from([header]);
@@ -98,8 +109,8 @@ fn discover_impl(header: u64, read: &dyn Fn(u64) -> Option<u32>, census: bool) -
     while let Some(pc) = queue.pop_front() {
         if graph.len() == if census { MAX_INSNS } else { 256 } { break; }
         let Some(w) = read(pc) else { continue };
-        let call = w & 0xfc00_0000 == 0x9400_0000 || w & 0xffff_fc1f == 0xd63f_0000;
-        if !census && call { continue; }
+        let call = w & 0xfc00_0000 == 0x9400_0000 || indirect_call_reg(w).is_some();
+        if !census && call && !call_allowed.is_some_and(|f|f(pc,w)) { continue; }
         for next in successors(pc, w) {
             pred.entry(next).or_default().push(pc);
             if next >= header && next - header < MAX_BYTES && seen.insert(next) { queue.push_back(next); }

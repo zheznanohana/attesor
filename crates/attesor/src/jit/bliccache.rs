@@ -85,3 +85,55 @@ pub(super) fn publish(site: u64, target: u64, host: u64) {
         }
     });
 }
+
+/// Untrusted profile hint only: never call the old host or trust its epoch.
+/// The emitter re-reads/tracks the source, guards the full target and checks
+/// the current entry epoch. A promotion itself can advance EPOCH.
+pub(super) fn target_hint(site:u64)->Option<u64> {
+    TABLE.with(|table| {
+        let t=table.borrow();let e=t.as_ref()?.get(offset(site)/size_of::<Entry>())?;
+        (e.site==site&&e.host!=0&&e.target&3==0).then_some(e.target)
+    })
+}
+
+thread_local! {static PROMOTED:RefCell<std::collections::BTreeSet<u64>>=const {RefCell::new(std::collections::BTreeSet::new())};}
+/// Bounded one-shot per observed site, after publish released its locks.
+/// Invalidation withdraws the old caller; no executable instruction is patched.
+pub(super) fn promote_leaf(site:u64,target:u64) {
+    if !super::emit::leafinline_enabled()||!super::precise_invalidation_enabled()||!enabled() {return;}
+    let reader=super::guest_reader();
+    if target_hint(site)!=Some(target)||inline_blocked(site)||!super::emit::inline_leaf_candidate(target,&reader) {return;}
+    let once=PROMOTED.with(|p| {let mut p=p.borrow_mut();p.len()<SITES&&p.insert(site)});
+    if once {
+        if std::env::var_os("ATTESOR_LEAFINLINE_LOG").is_some() {eprintln!("leafinline-observed\t{site:x}\t{target:x}\t{:08x}\tcommpage={}",reader(site).unwrap_or(0),super::commpage_checks());}
+        super::invalidate_range(site,4);
+    }
+}
+
+#[cfg(test)]
+pub(super) fn set_hint_for_test(site:u64,target:u64) {
+    TABLE.with(|t| {
+        let mut t=t.borrow_mut();let entries=t.get_or_insert_with(||vec![EMPTY;SITES].into_boxed_slice());
+        entries[offset(site)/size_of::<Entry>()]=Entry{site,target,host:1,epoch:u64::MAX};
+    });
+}
+
+// Lock-free, full-tag, bounded negative feedback. No new mutex can be
+// inherited locked across guest fork. Never evict a blocked site on collision.
+static INLINE_BLOCKED:[std::sync::atomic::AtomicU64;SITES]=[const {std::sync::atomic::AtomicU64::new(1)};SITES];
+static INLINE_STOP:std::sync::atomic::AtomicBool=std::sync::atomic::AtomicBool::new(false);
+pub(super) fn inline_blocked(site:u64)->bool {
+    if INLINE_STOP.load(Ordering::Acquire) {return true;}
+    let start=offset(site)/size_of::<Entry>();
+    for n in 0..SITES {let v=INLINE_BLOCKED[(start+n)&(SITES-1)].load(Ordering::Acquire);
+        if v==site {return true;}if v==1 {return false;}}
+    true
+}
+pub(super) fn block_inline(site:u64) {
+    let start=offset(site)/size_of::<Entry>();
+    for n in 0..SITES {let e=&INLINE_BLOCKED[(start+n)&(SITES-1)];
+        let v=e.load(Ordering::Acquire);if v==site {return;}
+        if v==1 {match e.compare_exchange(1,site,Ordering::AcqRel,Ordering::Acquire) {Ok(_)=>return,Err(x)if x==site=>return,_=>{}}}
+    }
+    INLINE_STOP.store(true,Ordering::Release);
+}

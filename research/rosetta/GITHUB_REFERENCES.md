@@ -354,3 +354,67 @@ work is call-interval synchronization/guarded inlining, not more confidence
 rounds of these weak/negative candidates. No defaults or installed binary were
 changed; the full six-category/common-configuration60% goal, including both
 qsort scales, is still incomplete.
+
+
+## Codegen82-85: guarded leaf-call intervals on the actual call forms
+
+Own implementation, no recovered allocator or Apple code copied. `leafinline`
+is exact opt-in/default OFF. Dynamic target hints come only from existing
+thread-private registered-target BLR feedback; they never authorize calling an
+old host pointer. Re-read/track an exact bounded read-only leaf, reject LR writes,
+and compare the complete dynamic target before call/LR effects. Capture the call
+word once from the owning source snapshot. Closed reducible pure-GPR caller loops
+may share one fixed assignment through callee original IR; callee register uses
+are included in ranking, but missing slots still use canonical Cpu. No ABI trust,
+function-name/opcode-pattern comparator replacement or changed sort algorithm.
+
+A once-per-site promotion retires the old caller through existing invalidation,
+outside publish locks. Mismatched targets canonicalize and return before the
+original call, with a separate deopt reason. A bounded full-tag atomic negative
+set prevents recompiling the same failing specialization; no new mutex can be
+inherited locked at guest fork. Current/entry epochs are checked at the call;
+when `callret` is enabled,85 also preserves its post-callee continuation epoch
+rejection. Outer native-frame depth/LR matching is not removed. Callee source
+reads join discontiguous precise dependencies, not a huge dyld/application gap.
+Invalidating the remote callee retires its inline caller; an unrelated hole does
+not. Profile inlining is foreground/Patchable-only; AOT Plain keeps its old path.
+
+Initial82 timings had zero inline emissions: do not interpret them as inline
+speedup/regression. A small512-element real library sort established the missing
+coverage: restricted worker blocks did not produce observations, and actual call
+opcodes were BLRAAZ/BLRABZ rather than plain BLR. Worker blocks can now use the
+existing checked site-cache observation path when this feature is opted in, but
+never inspect live Cpu/guest memory to inline. Only the bounded profiled caller
+page is kept on foreground emission; bgtrans is not globally disabled. Decoder
+accepts BLR and exactly the zero-modifier A/B link forms, matching current core
+interpreter/JIT behavior. The project treats sign/auth as identity; this change
+neither adds nor claims PAC authentication. Full authentication remains outside
+this experiment. Guest RET30 is still required; no auth-return check is stripped.
+
+Five targeted final85 tests passed:840 main differential cases (widths, stub
+modes, direct/plain/auth-zero links, BLR x30, tags, aliases, full X/V/NZCV,
+matching/mismatched targets), stale epoch before LR effects, a real outer native
+parent with pre/post guards, restricted worker observation, and actual registered
+source invalidation plus non-spinning polymorphic deopt. A small real sort also
+matched native. No full workspace/configuration/concurrency/application/AOT
+matrix was rerun; resumable guest-fault support was not added.
+
+One original-fixture screen on84, retained bundle +`bliccache,leafinline`,
+`callret` OFF:
+
+|qsort scale|native(ms)|control(ms)|candidate(ms)|candidate change|native ratio|
+|---|---|---|---|---|---|
+|1.5M|178.425|349.268|326.262|-6.59%|54.69%|
+|4M|479.2|973.2|980.9|+0.79%|48.85%|
+
+Every fixture checksum matched same-screen native. This is an unconfirmed
+combined-configuration result, not an isolated inline-only gain. Both scales did
+not improve, so no confirmation rounds or promotion. Other raw fixture metrics
+are retained; do not sum cross-build/batch improvements. Compiler telemetry is
+19 real observations/3 regions/61 call emissions for bench and19/4/60 for kernels;
+these are not dynamic execution counts or distinct-site counts. Final85 adds
+callret-ON post-return protection and was only correctness-checked, not timed
+again; the84 screen binary is archived locally. A derived85->84 reproduction
+patch accompanies local evidence. Production/defaults remain unchanged. The
+complete six-category/same-configuration60% goal, including both qsort scales,
+is still not achieved.

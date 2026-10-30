@@ -838,6 +838,14 @@ fn lookup_or_translate(pc: u64) -> u64 {
 /// nor a busy translation lock makes the dispatcher wait for speculative work.
 fn adopt_background(pc: u64) -> Option<u64> {
     let staged = bgtrans::take(pc)?;
+    // A restricted worker cannot consume process-local call profiles. Keep
+    // only the bounded, now-profiled caller page on the foreground emitter;
+    // all unrelated speculative adoption remains enabled.
+    if emit::leafinline_enabled() && staged.source.chunks_exact(4).enumerate().any(|(i,b)| {
+        let site=staged.page+i as u64*4;let w=u32::from_le_bytes(b.try_into().unwrap());
+        site>=pc&&site-pc<loops::MAX_BYTES&&loops::indirect_call_reg(w).is_some()
+            &&!bliccache::inline_blocked(site)&&bliccache::target_hint(site).is_some()
+    }) {return None;}
     let _translate = TRANSLATE.try_lock().ok()?;
     if let Some(host) = lookup(pc) { return Some(host); }
     if staged.generation != bgtrans::generation()
@@ -1403,6 +1411,7 @@ pub fn run(cpu: &mut Cpu) {
         }
         if let Some(site) = cache_site {
             bliccache::publish(site, pc, host);
+            bliccache::promote_leaf(site,pc);
         }
         STATS_JIT_ENTRIES.fetch_add(1, Ordering::Relaxed);
         crate::profile::set(crate::profile::State::Jit);
@@ -1420,6 +1429,12 @@ pub fn run(cpu: &mut Cpu) {
         }
         crate::profile::set(crate::profile::State::Dispatch);
         match cpu.exit_reason {
+            emit::EXIT_LEAFINLINE_MISS => {
+                // The guest call has not executed and LR is unchanged. Retire
+                // the specialized caller and compile the original BLR path;
+                // never repeatedly deopt to the same guarded unit.
+                let site=cpu.pc();bliccache::block_inline(site);invalidate_range(site,4);
+            }
             emit::EXIT_BLICCACHE => {
                 pending_bliccache = Some((cpu.exit_data, cpu.pc()));
             }
@@ -1459,6 +1474,43 @@ pub fn run(cpu: &mut Cpu) {
 #[cfg(test)]
 mod precise_invalidation_tests {
     use super::*;
+
+    #[test]
+    fn leafinline_real_source_invalidation_and_polymorphic_deopt() {
+        if !emit::leafinline_enabled()||!bliccache::enabled()||!precise_invalidation_enabled() {return;}
+        crate::aot::set_enabled(false);
+        let p=unsafe {libc::mmap(std::ptr::null_mut(),0x10000,libc::PROT_READ|libc::PROT_WRITE,libc::MAP_ANON|libc::MAP_PRIVATE,-1,0)};
+        assert_ne!(p,libc::MAP_FAILED);let pc=p as u64;let target=pc+0x8000;let site=pc+8;
+        let write=|at:u64,words:&[u32]|unsafe {std::ptr::copy_nonoverlapping(words.as_ptr(),at as *mut u32,words.len());};
+        // One ordinary callback; no sort/comparator identity is used by JIT.
+        write(pc,&[0xaa1403e0,0xaa1503e1,0xd63f02c0,0xd4001001]);
+        write(target,&[0xb9400008,0xb9400029,0x6b09011f,0x1a9fd7e8,0x5a9fa100,0xd65f03c0]);
+        bliccache::set_hint_for_test(site,target);let old=translate(pc);
+        {
+            let ix=INDEX.lock().unwrap();let ix=ix.as_ref().unwrap();let unit=ix.units.iter().find(|u|u.entry==pc&&u.host==old&&u.alive).unwrap();
+            let ranges=unit.source_ranges.as_ref().unwrap();
+            assert!(ranges.iter().any(|&(a,b)|a<=target&&b>=target+24));
+            assert!(!ranges.iter().any(|&(a,b)|a<=pc+0x4000&&b>pc+0x4000));
+        }
+        // Data change outside all proof ranges must not retire the caller.
+        invalidate_range(pc+0x4000,4);assert_eq!(lookup(pc),Some(old));
+        // Guest instruction change at the distant callee must retire caller too.
+        unsafe {(target as *mut u32).write_volatile(0xb9400008);}
+        invalidate_range(target,4);assert_eq!(lookup(pc),None);let new=translate(pc);assert_ne!(new,old);
+        let data=[1u64,2];let mut c=Cpu::new();setup_cpu(&mut c);c.set_pc(pc);
+        c.x[20]=data.as_ptr()as u64;c.x[21]=unsafe {data.as_ptr().add(1)}as u64;c.x[22]=target+4;c.x[30]=pc+0x900;
+        unsafe {attesor_jit_enter(&mut *c,new);}
+        assert_eq!(c.exit_reason,emit::EXIT_LEAFINLINE_MISS);assert_eq!(c.pc(),site);assert_eq!(c.x[30],pc+0x900);
+        // Exactly the dispatcher's negative-feedback protocol. After retirement
+        // the next compilation must execute the original guest BLR, not spin
+        // back into the failed specialization or jump to an old host hint.
+        bliccache::block_inline(site);invalidate_range(site,4);assert_eq!(lookup(pc),None);let plain=translate(pc);
+        assert!(bliccache::inline_blocked(site));c.set_pc(pc);c.exit_reason=0;
+        unsafe {attesor_jit_enter(&mut *c,plain);}
+        assert_eq!(c.x[30],site+4);assert_eq!(c.pc(),target+4);
+        assert!(matches!(c.exit_reason,emit::EXIT_BLICCACHE|emit::EXIT_CONTINUE));
+        invalidate_range(pc,0x10000);unsafe {libc::munmap(p,0x10000);}
+    }
 
     #[test]
     fn external_tombstones_are_bounded_and_fail_closed() {

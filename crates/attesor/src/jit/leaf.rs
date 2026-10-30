@@ -2,10 +2,12 @@
 //! No function/algorithm identity, guessed access census or recursive marker.
 use std::collections::BTreeMap;
 
+#[derive(Clone)]
 pub(super) struct Plan {
     pub words:BTreeMap<u64,u32>,
     pub livein:u32,
     pub used:u32,
+    pub written:u32,
 }
 fn gpr(n:u32,sp:bool)->u32 {if n==31&&!sp {0}else {1u32<<n}}
 fn access(w:u32)->Option<(u32,u32)> {
@@ -43,7 +45,7 @@ pub(super) fn plan(pc:u64,read:&dyn Fn(u64)->Option<u32>,cut:&dyn Fn(u64)->bool)
         if w==0xd65f03c0 {
             // A profitability bound, not a correctness decoder for unknowns.
             return (accesses>=6 && defined.count_ones()>=2 && used.count_ones()<=super::NLOOPREGS as u32)
-                .then_some(Plan{words,livein,used});
+                .then_some(Plan{words,livein,used,written:defined});
         }
         p=p.checked_add(4)?;
     }
