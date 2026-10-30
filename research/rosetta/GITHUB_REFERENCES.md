@@ -741,3 +741,27 @@ exact old scalar pair and retry/exit. Keep bounds before every multi-load batch.
 Targeted tests must include all valid starts0..7, not just0/4. No performance
 gain from that fix claimed before implementing/measuring it.
 Production/selected profile unchanged, full goal incomplete.
+
+
+## Codegen95: native scalar remainder for peeled entries
+
+Remove the needless4-step entry-alignment requirement: range/alignment guards
+now require only the original single step. Before every4-load batch, compare
+against bound-4*step; fewer than4 remaining iterations take the existing strict
+scalar load/vchain emitter natively and retry/exit. No extra memory read past
+the original exit. Both paths commit exact pointer/counter/V/NZCV state. All
+FPCR/native backend/cold source contracts remain; no new host pointers.
+
+8 focused tests pass with all valid starts0..7,409600 complete state comparisons
+(including16384 guaranteed finite zero-batch-replay cases) and448 pre-effect
+rejects; all earlier observer cases still checked. One original bench screen
+now flat: native21.330ms, control37.958ms, vbatch37.468ms (-1.29%),56.93% native.
+All7 checksums match, no repeat, no selected-profile change. Source evidence
+proves removal of an unnecessary interpreter-alignment path; do not portray
+94->95 timing across separate batches as an isolated net production speedup.
+
+Earlier raw8-capture92/93 variants were tested WITH the same bad alignment
+guard, so they did not fairly isolate raw vs packed snapshots. Next bounded
+variant: raw8 captures again but WITH native remainder handling, avoiding the
+packing/unpacking overhead. One new screen only, no encoding/frequency claims.
+Full same-config60% goal remains incomplete; installed production unchanged.

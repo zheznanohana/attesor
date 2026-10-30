@@ -4,7 +4,7 @@ use super::*;
 #[derive(Clone,Copy)]
 pub(super) struct Plan {
     base:u32,index:u32,ptr:u32,step:u32,stride:u32,bound:u32,scale:u32,offset:u32,
-    t:u32,m:u32,d:u32,double:bool,product_first:bool,temps:[AsmRegisterXmm;7],
+    t:u32,m:u32,d:u32,double:bool,product_first:bool,words:[u32;4],temps:[AsmRegisterXmm;7],
 }
 fn add_self(w:u32,n:u32)->Option<u32> {
     (w&0xff800000==0x91000000&&w&31==n&&bits(w,9,5)==n).then(||bits(w,21,10)<<if bit(w,22)!=0 {12}else {0})
@@ -27,11 +27,11 @@ pub(super) fn plan(u:&Unit,pc:u64,fp:fp_flags::Plan,r:LoopRa,read:&dyn Fn(u64)->
     let free:Vec<_>=r.vreg.iter().enumerate().filter(|(_,n)|**n==0xff).map(|(i,_)|VREGS[i]).take(7).collect();
     if free.len()!=7||free[..4].iter().any(|&v|high_xmm(v)) {return None;}
     let temps=free.try_into().ok()?;
-    Some(Plan{base,index,ptr,step,stride,bound,scale:if bit(w[0],12)!=0 {w[0]>>30}else {0},offset:bits(w[1],21,10)<<(w[1]>>30),t,m,d,double,product_first:an==t,temps})
+    Some(Plan{base,index,ptr,step,stride,bound,scale:if bit(w[0],12)!=0 {w[0]>>30}else {0},offset:bits(w[1],21,10)<<(w[1]>>30),t,m,d,double,product_first:an==t,words:[w[0],w[1],w[2],w[3]],temps})
 }
 pub(super) fn enter(u:&mut Unit,p:Plan,r:LoopRa) {
-    let mut bad=u.a.create_label();let index=LOOPREGS[r.slot(p.index).unwrap()];let chunk=4*p.step;
-    u.a.cmp(index,(p.bound-chunk)as i32).unwrap();u.a.ja(bad).unwrap();u.a.test(index,(chunk-1)as i32).unwrap();u.a.jnz(bad).unwrap();
+    let mut bad=u.a.create_label();let index=LOOPREGS[r.slot(p.index).unwrap()];
+    u.a.cmp(index,(p.bound-p.step)as i32).unwrap();u.a.ja(bad).unwrap();u.a.test(index,(p.step-1)as i32).unwrap();u.a.jnz(bad).unwrap();
     u.cold_paths.push(Box::new(move|u|{u.a.set_label(&mut bad).unwrap();fp_flags::reject(u,r.pc,r,None);}));
 }
 fn source(r:AsmRegisterXmm)->FpSource {FpSource{cached:Some(r),offset:0}}
@@ -63,6 +63,10 @@ pub(super) fn emit(u:&mut Unit,pc:u64,p:Plan) {
     let hot_start=u.a.instructions().len();
     let r=u.region.unwrap();let index=LOOPREGS[r.slot(p.index).unwrap()];let base=LOOPREGS[r.slot(p.base).unwrap()];let ptr=LOOPREGS[r.slot(p.ptr).unwrap()];
     let old=source(VREGS[r.vslot(p.d).unwrap()]);let mut e=E{u,pc,fuse_in:None,scalar_inputs:None};
+    let mut scalar=e.u.a.create_label();
+    // Ordinary predecessors may already execute the first original iteration.
+    // Accept every valid step-aligned entry, never interpret merely to align4.
+    e.u.a.cmp(index,(p.bound-4*p.step)as i32).unwrap();e.u.a.ja(scalar).unwrap();
     // Every public/private entry to this batch establishes the original mask.
     if !e.u.tbi_mask_live {e.u.a.mov(r11,0x00ff_ffff_ffff_ffffu64).unwrap();e.u.tbi_mask_live=true;}
     for i in 0..4usize {
@@ -100,6 +104,17 @@ pub(super) fn emit(u:&mut Unit,pc:u64,p:Plan) {
     e.u.a.cmp(index,p.bound as i32).unwrap();e.u.loop_exit_flags=Some(FuseKind::Sub);e.u.loop_exit_compare=None;e.u.dead_flags=false;
     e.flags_branch(pc,pc+32,Cc::E);
     assert!(e.u.a.instructions()[hot_start..].iter().all(|i|i.code().encoding()!=iced_x86::EncodingKind::EVEX),"vbatch hot high-bank instruction");
+    e.u.a.set_label(&mut scalar).unwrap();
+    // Last1..3 iterations use the existing strict two-op emitter. No speculative
+    // extra load is executed when fewer than4 original iterations remain.
+    e.u.vc=VCache::new();e.u.vzero=[0;2];
+    e.pc=pc;assert!(e.ldst(p.words[0]));e.pc=pc+4;assert!(e.ldst(p.words[1]));
+    let saved_look=std::mem::replace(&mut e.u.look,vec![p.words[3]]);
+    let translated=e.u.insns_translated;e.pc=pc+8;assert!(e.vchain_pair(p.words[2]));
+    e.u.look=saved_look;e.u.skip_next=false;e.u.skip_more=0;e.u.insns_translated=translated;
+    e.u.a.add(index,p.step as i32).unwrap();e.stx(p.index,index,false);e.u.a.add(ptr,p.stride as i32).unwrap();e.stx(p.ptr,ptr,false);
+    e.u.a.cmp(index,p.bound as i32).unwrap();e.u.dead_flags=false;e.u.loop_exit_flags=Some(FuseKind::Sub);e.u.loop_exit_compare=None;
+    e.flags_branch(pc,pc+32,Cc::E);
     e.u.insns_translated+=8;e.u.vbatch_emissions+=1;
     if std::env::var_os("ATTESOR_VBATCH_LOG").is_some() {eprintln!("vbatch-loop\t{pc:x}");}
 }

@@ -9476,7 +9476,7 @@ mod loopra_tests {
             emit_block(&mut u,PC,&read);emit_block(&mut u,exit,&read);assert_eq!(u.vbatch_emissions,1);assert_eq!(u.insns_fallback,0);let(host,_)=assemble(u,0);
             let vals:Vec<u64>=if double {vec![0,0x8000000000000000,1,0x7ff0000000000000,0xfff0000000000000,0x7ff8000000000042,0x7ff0000000000073,1.25f64.to_bits()]}
                 else {vec![0,0x80000000,1,0x7f800000,0xff800000,0x7fc00042,0x7f800073,1.25f32.to_bits()as u64]};
-            for a in 0..10 {for b in 0..10 {for start in [0,4*step as u64] {for mode in 0..4 {for fz in [false,true] {
+            for a in 0..10 {for b in 0..10 {for iter_start in 0..8 {let start=iter_start*step as u64;for mode in 0..4 {for fz in [false,true] {
                 let mut left=[0u64;8];let mut right=[0u64;40];
                 for i in 0..8 {let x=if a<8 {vals[(a+i)%8]}else {let v=if a==8 {0.0}else {(i+1)as f64*0.1};if double {v.to_bits()}else {(v as f32).to_bits()as u64}};
                     let y=if b<8 {vals[(b+3*i)%8]}else {let v=if b==8 {0.0}else {1.0+(i+1)as f64*0.125};if double {v.to_bits()}else {(v as f32).to_bits()as u64}};if double {left[i]=x;right[i*5]=y;}else {let ptr=left.as_mut_ptr()as *mut u32;unsafe {*ptr.add(i)=x as u32;*(right.as_mut_ptr()as *mut u32).add(i*5)=y as u32;}}}
@@ -9493,7 +9493,7 @@ mod loopra_tests {
                 if a>=8&&b>=8 {assert_eq!(c.aot_loop_regions,if kind==StubKind::Plain&&super::super::stats_enabled(){1}else{0},"finite hot path unexpectedly replayed");}
                 checked+=1;
             }}}}}
-            for (start,mode) in [(1,0),(bound as u64,0),(bound as u64-step as u64,0),(u64::MAX,0),(0,1<<25),(0,1<<26),(0,1<<19)] {
+            for (start,mode) in [(bound as u64+1,0),(bound as u64,0),(if step>1 {1}else {bound as u64+2},0),(u64::MAX,0),(0,1<<25),(0,1<<26),(0,1<<19)] {
                 let mut c=cpu();for r in 0..32 {c.x[r]=0xab00000000001000+r as u64;c.v[r]=[r as u64,0xdeadface];}c.x[10]=start;c.fpcr=mode;c.set_nzcv(15);let(x,v)=(c.x,c.v);
                 unsafe {crate::jit::attesor_jit_enter(&mut *c,host);}assert_eq!(c.exit_reason,EXIT_INTERP);assert_eq!(c.pc(),PC);assert_eq!(c.x,x);assert_eq!(c.v,v);assert_eq!(c.nzcv(),15);assert_eq!(c.fpcr,mode);rejected+=1;
             }
