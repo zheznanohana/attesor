@@ -94,6 +94,10 @@ pub struct Unit {
     loopra: bool,
     loopra2: bool,
     vloop: bool,
+    vchain: bool,
+    // Straight-line scalar-write proofs, S and D respectively. Never seeded
+    // from a previous block/backedge: the first public entry must be correct.
+    vzero: [u32; 2],
     // Private clones only: never published in the JIT registry or AOT index.
     region_labels: HashMap<u64, CodeLabel>,
     pub extra_guest_range: Option<(u64, u64)>,
@@ -451,6 +455,8 @@ impl Unit {
             loopra: loopra_enabled(),
             loopra2: loopra2_enabled(),
             vloop: vloop_enabled(),
+            vchain: vchain_enabled(),
+            vzero: [0; 2],
             region_labels: HashMap::new(),
             extra_guest_range: None,
             region: None,
@@ -1083,6 +1089,74 @@ impl<'a> E<'a> {
             None if double => a!(self, movsd_2(x, qword_ptr(r15 + src.offset))),
             None => a!(self, movss(x, dword_ptr(r15 + src.offset))),
         }
+    }
+    fn scalar_zero(&mut self, d: u32, double: bool) {
+        if !self.u.vchain {return;}
+        let bit = 1 << d;
+        self.u.vzero[1] |= bit;
+        if double { self.u.vzero[0] &= !bit; } else { self.u.vzero[0] |= bit; }
+    }
+    fn fp_register(&mut self, opcode: u32, double: bool, dst: AsmRegisterXmm,
+                   n: AsmRegisterXmm, m: AsmRegisterXmm) {
+        macro_rules! op { ($name:ident) => {
+            if high_xmm(dst) || high_xmm(n) || high_xmm(m) { evex!(self, $name(dst,n,m)); }
+            else { a!(self, $name(dst,n,m)); }
+        }; }
+        match (double,opcode) {
+            (true,0) => op!(vmulsd), (false,0) => op!(vmulss),
+            (true,2) => op!(vaddsd), (false,2) => op!(vaddss),
+            _ => unreachable!(),
+        }
+    }
+    /// Keep two separately rounded operations, not an FMA. A NaN anywhere in
+    /// MUL -> ADD propagates to the final result, so one hot guard suffices.
+    /// The cold path replays both ARM NaN selections from unmodified originals.
+    fn vchain_pair(&mut self, insn: u32) -> bool {
+        if !self.u.vchain || !has_avx() || disabled_classes()!=0 {return false;}
+        let Some(next) = self.u.look.first().copied() else {return false;};
+        let ty = bits(insn,23,22);
+        if insn & 0xff20_fc00 != 0x1e20_0800 || ty>1
+            || next & 0xff20_fc00 != 0x1e20_2800 || bits(next,23,22)!=ty
+            || self.u.labels.contains_key(&(self.pc+4)) {return false;}
+        let t=insn&31;let d=next&31;let an=bits(next,9,5);let am=bits(next,20,16);
+        if t==d || (an==t)==(am==t) {return false;}
+        let n=bits(insn,9,5);let m=bits(insn,20,16);let other=if an==t {am}else {an};
+        let Some(region)=self.u.region else {return false;};
+        if [t,d,n,m,other].iter().any(|&r|region.vslot(r).is_none()) {return false;}
+        let double=ty==1;
+        let ns=self.scalar_source(n);let ms=self.scalar_source(m);let os=self.scalar_source(other);
+        let nr=ns.cached.unwrap();let mr=ms.cached.unwrap();let or=os.cached.unwrap();
+        let known=self.u.vzero[double as usize];
+        if known & (1<<n)!=0 {self.fp_register(0,double,xmm0,nr,mr);}
+        else if known & (1<<m)!=0 {self.fp_register(0,double,xmm0,mr,nr);}
+        else {self.fld_source(xmm0,ns,double);self.fp_register(0,double,xmm0,xmm0,mr);}
+        // Source 1 is the zero-extended product; source order only differs for
+        // NaNs, whose original architectural order is restored below.
+        self.fp_register(2,double,xmm1,xmm0,or);
+        let cold=self.u.a.create_label();
+        if double {a!(self,ucomisd(xmm1,xmm1));} else {a!(self,ucomiss(xmm1,xmm1));}
+        a!(self,jp(cold));
+        self.cold_path(cold,move |e| {
+            let mut finite=e.new_label();
+            if double {a!(e,ucomisd(xmm0,xmm0));} else {a!(e,ucomiss(xmm0,xmm0));}
+            a!(e,jnp(finite));
+            e.scalar_nan(double,ns,Some(ms));
+            e.u.a.set_label(&mut finite).unwrap();
+            // Cold-only scratch materialization: mapped originals are still
+            // untouched, including destructive MUL aliases and ADD's old d.
+            a!(e,movdqu(xmmword_ptr(r15+voff(t)),xmm0));
+            e.fp_register(2,double,xmm1,xmm0,or);
+            a!(e,movdqa(xmm0,xmm1));
+            let product=FpSource{cached:None,offset:voff(t)};
+            let (a,b)=if an==t {(product,os)}else {(os,product)};
+            e.scalar_nan(double,a,Some(b));
+            a!(e,movdqa(xmm1,xmm0));
+            e.fld_source(xmm0,product,double);
+        });
+        self.store_v(t,xmm0);self.store_v(d,xmm1);
+        self.scalar_zero(t,double);self.scalar_zero(d,double);
+        self.u.skip_next=true;self.u.insns_translated+=1;
+        true
     }
     /// Register contracts are the same as the hot FP helper: only xmm0-xmm7
     /// and rax/rcx/rdx/r11 plus dead opmask k1 may be scratched, with no cache
@@ -1870,6 +1944,11 @@ fn vloop_enabled() -> bool {
     *ON.get_or_init(|| !jit_off("vloop") && std::env::var("ATTESOR_JIT_ON").unwrap_or_default().split(',').any(|t| t=="vloop"))
 }
 
+fn vchain_enabled() -> bool {
+    static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *ON.get_or_init(|| !jit_off("vchain") && std::env::var("ATTESOR_JIT_ON").unwrap_or_default().split(',').any(|t|t=="vchain"))
+}
+
 /// Experimental write-through natural-loop region; public entries remain canonical.
 fn regioncache_enabled() -> bool {
     static F: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
@@ -2047,7 +2126,7 @@ pub(super) fn prepare_bgtrans() {
         loopra_enabled(), regioncache_enabled(), has_avx(), has_fma(),
         has_aes(), has_pclmul(), has_sha(), has_f16c(), loopra2_enabled(),
         has_avx512(), avx512_enabled(), avx512_nan_enabled(), super::fastenc_enabled(),
-        super::loops::census_enabled(), super::cost::probes(), vloop_enabled());
+        super::loops::census_enabled(), super::cost::probes(), vloop_enabled(), vchain_enabled());
 }
 
 /// Translate one basic block starting at `pc` into `u`. The caller must have
@@ -2148,6 +2227,7 @@ fn emit_block_inner(u: &mut Unit, pc: u64, read: &dyn Fn(u64) -> Option<u32>, mu
     u.tbi_mask_live = multi.is_some() && !u.commpage_checks && !jit_off("tbimask");
     u.rc = RegCache::new();
     u.vc = VCache::new();
+    u.vzero = [0; 2];
     u.rc_frozen = false;
     u.look.clear();
     if !u.quick {
@@ -2352,13 +2432,17 @@ fn emit_block_inner(u: &mut Unit, pc: u64, read: &dyn Fn(u64) -> Option<u32>, mu
         let mut e = E { u, pc: cur, fuse_in, scalar_inputs };
         let term = is_terminator(insn);
         e.u.insns_translated += 1;
-        let translated = e.translate(insn);
+        let vchain = count+1<MAX_BLOCK_INSNS && e.vchain_pair(insn);
+        let translated = vchain || e.translate(insn);
         e.u.dead_flags = false;
         e.u.dead_v = 0;
         e.u.vc_dest = [0xff; 2];
-        if e.u.skip_next || e.u.a.instructions()[code_start..].iter().any(|i| i.mnemonic() == iced_x86::Mnemonic::Call) {
+        let called = e.u.a.instructions()[code_start..].iter().any(|i| i.mnemonic() == iced_x86::Mnemonic::Call);
+        if e.u.skip_next || called {
             e.u.vc = VCache::new(); // fused pair (writes the next one's Vd too) or helper call (clobbers caller-saved V cache)
-            e.u.tbi_mask_live = false; // host calls may overwrite caller-saved r11
+            // The audited scalar pair never writes r11, even on its cold path.
+            // Other fusions retain their old conservative contract.
+            if called || !vchain {e.u.tbi_mask_live = false;}
         }
         if !translated {
             if term {
@@ -2366,6 +2450,9 @@ fn emit_block_inner(u: &mut Unit, pc: u64, read: &dyn Fn(u64) -> Option<u32>, mu
             } else {
                 e.fallback(insn);
             }
+        }
+        if e.u.vchain && e.u.a.instructions()[code_start..].iter().any(|i| i.mnemonic() == iced_x86::Mnemonic::Call) {
+            e.u.vzero=[0;2];
         }
         // The proof domain is not the profitability/cache decoder. Only its
         // small audited native subset can extend facts; everything else kills.
@@ -4012,6 +4099,7 @@ impl<'a> E<'a> {
                             else { evex!(self, vmovq(dst, qword_ptr(rax))); }
                         } else if kind == 2 { a!(self, movd(dst, dword_ptr(rax))); }
                         else { a!(self, movq(dst, qword_ptr(rax))); }
+                        self.scalar_zero(rt,kind==3);
                         return true;
                     }
                     // through xmm0 (upper part zero) with one 16-byte store, so the value can stay cached
@@ -5213,6 +5301,7 @@ impl<'a> E<'a> {
             }
             self.fix_default_nan(double, rn, Some(rm));
             self.store_v(rd, xmm0);
+            self.scalar_zero(rd,double);
             return true;
         }
         // FSQRT
@@ -5226,6 +5315,7 @@ impl<'a> E<'a> {
             }
             self.fix_default_nan(double, rn, None);
             self.store_v(rd, xmm0);
+            self.scalar_zero(rd,double);
             return true;
         }
         // SCVTF / UCVTF (scalar, integer source)
@@ -8464,6 +8554,101 @@ mod loopra_tests {
     }
 
     #[test]
+    fn vchain_observation_barriers_and_scalar_zero_width() {
+        if !has_avx() || disabled_classes()!=0 {return;}
+        for reject in 0..7 {
+            let mut u=Unit::new(StubKind::Plain,false);u.vchain=reject!=1;
+            let mut vreg=[0xff;NVREGS];vreg[..4].copy_from_slice(&[0,1,2,3]);
+            if reject==6 {vreg[0]=0xff;}
+            u.region=Some(LoopRa{pc:PC,fast:u.a.create_label(),exit:u.a.create_label(),
+                reg:[0xff;NLOOPREGS],dirty:0,vreg});
+            u.look=vec![0x1e622863]; // FADD D3,D3,D2
+            if reject==2 {let l=u.a.create_label();u.labels.insert(PC+4,l);}
+            if reject==3 {u.look[0]^=1<<22;} // mixed S/D
+            if reject==4 {u.look[0]=0x1e622862;} // both writes target D2
+            if reject==5 {u.region=None;}
+            let mut e=E{u:&mut u,pc:PC,fuse_in:None,scalar_inputs:None};
+            assert_eq!(e.vchain_pair(0x1e610802),reject==0);
+        }
+        let mut u=Unit::new(StubKind::Plain,false);u.vchain=true;
+        let mut e=E{u:&mut u,pc:PC,fuse_in:None,scalar_inputs:None};
+        e.scalar_zero(2,false);assert_eq!(e.u.vzero,[4,4]);
+        e.scalar_zero(2,true);assert_eq!(e.u.vzero,[0,4]);
+        // A D write does not prove that bits 63:32 are zero for a later S op.
+        e.scalar_zero(3,true);assert_eq!(e.u.vzero,[0,12]);
+    }
+
+    #[test]
+    fn vchain_separate_rounding_nan_alias_width_and_high_bank() {
+        if !has_avx() || disabled_classes()!=0 {return;}
+        use iced_x86::{Mnemonic,Register};
+        let mut checked=0u64;
+        for double in [false,true] {
+        let patterns:Vec<u64>=if double {vec![0,0x8000000000000000,1,0x0010000000000000,
+            0x3ff0000000000000,0xbff0000000000000,0x3ff0000000000001,0x3feffffffffffffe,
+            0x7fefffffffffffff,0xffefffffffffffff,0x7ff0000000000000,0xfff0000000000000,
+            0x7ff8000000000042,0x7ff0000000000073,0xfff0000000000084]}
+        else {vec![0,0x80000000,1,0x00800000,0x3f800000,0xbf800000,0x3f800001,0x3f7ffffe,
+            0x7f7fffff,0xff7fffff,0x7f800000,0xff800000,0x7fc00042,0x7f800073,0xff800084]};
+        for high in [false,true].into_iter().filter(|&h|!h||has_avx512()) {
+        for known in [false,true] {
+        for kind in [StubKind::Plain,StubKind::Patchable] {
+        for (t,d,n,m,o) in [(2,3,0,1,3),(0,3,0,1,3),(1,0,0,1,0),(2,0,0,0,1),(2,1,0,1,0)] {
+        for tmp_first in [false,true] {
+            let shift=if high {24}else {0};let(t,d,n,m,o)=(t+shift,d+shift,n+shift,m+shift,o+shift);
+            let ty=(double as u32)<<22;
+            let ldr=|reg:u32,base:u32|(if double {0xfd400000u32}else {0xbd400000u32})|(base<<5)|reg;
+            let mut words=Vec::new();
+            if high {for r in 0..8 {words.push(ldr(r,2));}}
+            if known {words.push(ldr(n,0));words.push(ldr(m,1));}
+            words.push(0x1e200800|ty|(m<<16)|(n<<5)|t);
+            let(an,am)=if tmp_first {(t,o)}else {(o,t)};
+            words.push(0x1e202800|ty|(am<<16)|(an<<5)|d);
+            words.push(0xf100054a); // SUBS X10,X10,#1
+            words.push(0x54000001|((((-(words.len()as i32))as u32)&0x7ffff)<<5));
+            let exit=PC+words.len()as u64*4;words.push(0xd4001001);
+            let read=|p:u64|p.checked_sub(PC).and_then(|v|words.get((v/4)as usize)).copied();
+            let mut u=Unit::new(kind,false);u.loopra=true;u.loopra2=false;u.vloop=true;u.vchain=true;u.avx512=high;
+            for pc in [PC,exit] {let l=u.a.create_label();u.labels.insert(pc,l);}
+            emit_block(&mut u,PC,&read);emit_block(&mut u,exit,&read);
+            let add=if double {Mnemonic::Vaddsd}else {Mnemonic::Vaddss};
+            assert!(u.a.instructions().iter().any(|i|i.mnemonic()==add && i.op0_register()==Register::XMM1));
+            if !jit_off("tbimask") {
+                assert_eq!(u.a.instructions().iter().filter(|i|i.mnemonic()==Mnemonic::Mov && i.op0_register()==Register::R11).count(),1,
+                    "the scalar pair must not reload its unchanged TBI mask per backedge");
+            }
+            let(host,_)=assemble(u,0);
+            for (ia,&a) in patterns.iter().enumerate() {
+            for (ib,&b) in patterns.iter().enumerate() {
+            for (ic,&c0) in patterns.iter().enumerate() {
+                let mut c=cpu();
+                for i in 0..32 {c.v[i]=[0xfeedbeef00000000+i as u64,0x123456789abcdef0+i as u64];}
+                for (reg,value) in [(n,a),(m,b),(o,c0)] {
+                    c.v[reg as usize][0]=if double {value}else {0xfeedbeef00000000|value};
+                }
+                let padding=if double {1f64.to_bits()}else {1f32.to_bits()as u64};
+                c.x[0]=&a as *const _ as u64;c.x[1]=&b as *const _ as u64;c.x[2]=&padding as *const _ as u64;
+                if ic%2!=0 {for reg in 0..3 {c.x[reg]|=0xab00000000000000;}}
+                c.x[10]=1+((ia+ib+ic)%2)as u64;
+                let mut reference=cpu();reference.x=c.x;reference.v=c.v;
+                interp::sys_sync_host_fp_mode(0);
+                for _ in 0..128 {
+                    let index=((reference.pc()-PC)/4)as usize;
+                    if matches!(interp::exec(&mut reference,words[index]),Err(interp::Exit::Svc(_))) {break;}
+                    if reference.pc()==PC+index as u64*4 {reference.set_pc(reference.pc()+4);}
+                }
+                interp::sys_sync_host_fp_mode(0);
+                unsafe {crate::jit::attesor_jit_enter(&mut *c,host);}
+                assert_eq!(c.v,reference.v,"double={double} high={high} known={known} regs={t},{d},{n},{m},{o} tmp_first={tmp_first} inputs={a:x},{b:x},{c0:x}");
+                assert_eq!(c.x,reference.x);assert_eq!(c.nzcv(),reference.nzcv());
+                checked+=1;
+            }}}
+        }}}}}}
+        eprintln!("vchain directed differential cases={checked}");
+        interp::sys_sync_host_fp_mode(0);
+    }
+
+    #[test]
     fn vloop_mapping_capacity_and_observer_barriers() {
         if disabled_classes()!=0 {return;}
         let mut words=vec![0xfd400009]; // high-bank scalar load after allocation
@@ -9552,6 +9737,24 @@ mod avx512_tests {
 #[cfg(test)]
 mod acceptance_switch_tests {
     use super::*;
+
+    #[test]
+    fn vchain_switches_in_fresh_processes() {
+        const CHILD:&str="ATTESOR_VCHAIN_SWITCH_CHILD";
+        if let Ok(expected)=std::env::var(CHILD) {
+            let u=Unit::new(StubKind::Plain,false);
+            assert_eq!(format!("{}{}",u.vloop as u8,u.vchain as u8),expected);return;
+        }
+        for(on,off,expected)in[("","","00"),("vchain","","01"),("vloop,vchain","","11"),
+            ("vloop,vchain","vchain","10"),("vloop,vchain","vloop,vchain","00"),
+            ("xvloop,xvchain","","00"),("vloop,vchain","xvchain","11")] {
+            let p=std::process::Command::new(std::env::current_exe().unwrap())
+                .args(["--exact","jit::emit::acceptance_switch_tests::vchain_switches_in_fresh_processes"])
+                .env(CHILD,expected).env("ATTESOR_JIT_ON",on).env("ATTESOR_JIT_OFF",off)
+                .env_remove("ATTESOR_JIT_DISABLE").output().unwrap();
+            assert!(p.status.success(),"ON={on} OFF={off}: {}{}",String::from_utf8_lossy(&p.stdout),String::from_utf8_lossy(&p.stderr));
+        }
+    }
 
     #[test]
     fn on_off_precedence_in_fresh_processes() {

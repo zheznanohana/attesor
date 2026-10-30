@@ -47,6 +47,11 @@ int main(void) {
     "fadd " REG "0," REG "0," REG "6\n"
     "fadd " REG "0," REG "0," REG "7\n"
     "fadd " REG "0," REG "0," REG "8\n"
+#ifdef VCHAIN
+    // Separately rounded MUL -> ADD, with a destructive high-bank source.
+    // V10 is exactly 1, so the independent x86 reference remains unchanged.
+    "fmul " REG "9," REG "9," REG "10\n"
+#endif
     "fadd " REG "0," REG "0," REG "9\n"
     "fadd " REG "0," REG "0," REG "10\n"
     "fadd " REG "0," REG "0," REG "11\n"
