@@ -251,3 +251,49 @@ release emitter preceded only a small test-only barrier addition; final related
 checks ran against the same emitter implementation. New-contract disk AOT,
 concurrency/invalidation and full-application regression remain pending before
 promotion. The six-target milestone and both qsort scales are still incomplete.
+
+
+## Codegen78: bounded scalar SSA traces
+
+`vtrace` (exact token, default OFF) admits3-5 same-width scalar arithmetic nodes
+in an existing fixed-V region. A tiny SSA planner distinguishes original inputs,
+producer versions and the last written version of each V. A single final NaN
+guard is allowed only if its ancestry covers every observable written version.
+No memory/call/label/mixed-width/unsupported-operation crossing; maximum block
+room is respected. Every arithmetic instruction is still executed with separate
+rounding. No FMA, reciprocal approximation or NaN-policy relaxation.
+
+Original mapped operands survive until the common commit tail. On a NaN, cold
+replay repairs each stage's architectural selection in order, using private CPU
+scratch for prior producer values, then restores only the live SSA temporaries.
+Commit only the latest versions. The strict scratch/TBI clobber contract remains
+unchanged. Multi-word skip count, guest PC/translated-instruction accounting and
+lookahead refill were explicitly extended; ordinary one/two-word emission keeps
+its original read horizon. Existing source tracking covers the lookahead words.
+
+Two targeted tests passed: planner boundary/observer/live-output rejection and
+170,368 interpreter differential cases. They cover3/4/5-node shapes, overwritten
+versions, aliasing, independent branches joining into a root, repeated traces
+with intervening GPR instructions, known/dirty upper bits, S/D, all four rounding
+modes, low/high XMM and SSE/AVX512 NaN repair, tagged pointers, backedges,
+public-state/skip accounting and non-native-FPCR rejection. The old two-operation
+pair's two related tests also passed; no full workspace matrix was rerun.
+
+The first N-body screen62.6 ->54.6ms (-12.78%) justified only two more target
+rounds. All three candidate rounds were faster than their same-round controls:
+control[62.6,55.1,61.8]ms; candidate[54.6,50.8,49.1]ms;
+native[20.7,20.5,20.6]ms. Median times61.8 ->50.8ms imply a -17.80% ratio of
+medians; the median paired time change is -12.78% (range -20.55% to -7.80%).
+Do not conflate those two summaries. Median candidate throughput is40.55% of
+native, still well below60%. Do not add historical gains across different builds
+or batches. Incidental fixture metrics and every sample are retained.
+
+A single existing double/24-V pressure fixture was independently compiled for
+ARM and native x86, then checked under JIT and a genuine warm main-image AOT
+load. Static prewarm generated main/dyld caches without guest execution; the
+warm run matched the native exact-bit output, proved a main-image cache load in
+stderr, and left the main artifact hash unchanged. This is one correctness
+fixture, not a full AOT/configuration/application acceptance or proof that every
+SSA trace shape was selected in AOT. Generated caches remain local/private; no
+Apple binary/cache is published. No production binary/default was replaced.
+All six original targets, including both qsort scales, remain the full goal.

@@ -21,6 +21,8 @@ use std::collections::HashMap;
 mod notbi;
 #[path = "functions.rs"]
 mod functions;
+#[path = "fp_trace.rs"]
+mod fp_trace;
 
 pub const HELPER_INTERP: usize = 0;
 pub const HELPER_COMMPAGE: usize = 1;
@@ -109,6 +111,7 @@ pub struct Unit {
     xspill: bool,
     fmovra: bool,
     vpair: bool,
+    vtrace: bool,
     selectra: bool,
     function_entry: Option<u64>,
     // Private clones only: never published in the JIT registry or AOT index.
@@ -133,6 +136,7 @@ pub struct Unit {
     pub dead_flags: bool,
     /// The instruction just translated also covered the next one (a fused pair such as AESE+AESMC).
     pub skip_next: bool,
+    skip_more: u8,
     /// The unit may take extra blocks (the JIT's own units; AOT units are laid out up front).
     pub inline_ok: bool,
     pub(super) callret: bool,
@@ -523,6 +527,7 @@ impl Unit {
             xspill: xspill_enabled(),
             fmovra: fmovra_enabled(),
             vpair: vpair_enabled(),
+            vtrace: vtrace_enabled(),
             selectra: selectra_enabled(),
             function_entry: None,
             region_labels: HashMap::new(),
@@ -536,6 +541,7 @@ impl Unit {
             cache_uses: [[u8::MAX; 32]; 2],
             dead_flags: false,
             skip_next: false,
+            skip_more: 0,
             inline_ok: false,
             callret: callret_enabled(),
             inline_queue: Vec::new(),
@@ -2261,6 +2267,11 @@ fn vpair_enabled() -> bool {
     *ON.get_or_init(||!jit_off("vpair")&&std::env::var("ATTESOR_JIT_ON").unwrap_or_default().split(',').any(|t|t=="vpair"))
 }
 
+fn vtrace_enabled() -> bool {
+    static ON:std::sync::OnceLock<bool>=std::sync::OnceLock::new();
+    *ON.get_or_init(||!jit_off("vtrace")&&std::env::var("ATTESOR_JIT_ON").unwrap_or_default().split(',').any(|t|t=="vtrace"))
+}
+
 fn xspill_layout(u:&Unit,l:&super::loops::Loop,reg:&[u8;NLOOPREGS])->[u8;NVREGS] {
     let mut layout=[0xff;NVREGS];
     if !u.xspill||u.function_entry.is_some()||u.quick||u.no_internal_jumps||u.commpage_checks||disabled_classes()!=0 {return layout;}
@@ -2495,7 +2506,7 @@ pub(super) fn prepare_bgtrans() {
         loopra_enabled(), regioncache_enabled(), has_avx(), has_fma(),
         has_aes(), has_pclmul(), has_sha(), has_f16c(), loopra2_enabled(),
         has_avx512(), avx512_enabled(), avx512_nan_enabled(), super::fastenc_enabled(),
-        super::loops::census_enabled(), super::cost::probes(), vloop_enabled(), vloop2_enabled(), vchain_enabled(), vscalar_enabled(), funra_enabled(), funflags_enabled(), selectra_enabled(), regflags_enabled(), cfgflags_enabled(), xspill_enabled(), fmovra_enabled(), vpair_enabled());
+        super::loops::census_enabled(), super::cost::probes(), vloop_enabled(), vloop2_enabled(), vchain_enabled(), vscalar_enabled(), funra_enabled(), funflags_enabled(), selectra_enabled(), regflags_enabled(), cfgflags_enabled(), xspill_enabled(), fmovra_enabled(), vpair_enabled(), vtrace_enabled());
 }
 
 /// Translate one basic block starting at `pc` into `u`. The caller must have
@@ -2854,10 +2865,11 @@ fn emit_block_inner(u: &mut Unit, pc: u64, read: &dyn Fn(u64) -> Option<u32>, mu
         let mut e = E { u, pc: cur, fuse_in, scalar_inputs };
         let term = is_terminator(insn);
         e.u.insns_translated += 1;
-        let vpair=count+1<MAX_BLOCK_INSNS&&e.scalar_pair(insn);
-        let vchain = !vpair && count+1<MAX_BLOCK_INSNS && e.vchain_pair(insn);
-        let selectpair = !vpair && !vchain && count+1<MAX_BLOCK_INSNS && e.selectra_pair(insn);
-        let translated = vpair || vchain || selectpair || e.translate(insn);
+        let vtrace=e.scalar_trace(insn,MAX_BLOCK_INSNS-count);
+        let vpair=!vtrace&&count+1<MAX_BLOCK_INSNS&&e.scalar_pair(insn);
+        let vchain = !vtrace && !vpair && count+1<MAX_BLOCK_INSNS && e.vchain_pair(insn);
+        let selectpair = !vtrace && !vpair && !vchain && count+1<MAX_BLOCK_INSNS && e.selectra_pair(insn);
+        let translated = vtrace || vpair || vchain || selectpair || e.translate(insn);
         e.u.dead_flags = false;
         e.u.dead_v = 0;
         e.u.vc_dest = [0xff; 2];
@@ -2866,7 +2878,7 @@ fn emit_block_inner(u: &mut Unit, pc: u64, read: &dyn Fn(u64) -> Option<u32>, mu
             e.u.vc = VCache::new(); // fused pair (writes the next one's Vd too) or helper call (clobbers caller-saved V cache)
             // The audited scalar pair never writes r11, even on its cold path.
             // Other fusions retain their old conservative contract.
-            if called || !(vpair||vchain||selectpair) {e.u.tbi_mask_live = false;}
+            if called || !(vtrace||vpair||vchain||selectpair) {e.u.tbi_mask_live = false;}
         }
         if !translated {
             if term {
@@ -2896,20 +2908,24 @@ fn emit_block_inner(u: &mut Unit, pc: u64, read: &dyn Fn(u64) -> Option<u32>, mu
             u.emit_cold_paths();
             return cur;
         }
-        // a fused pair consumed the next instruction too: step over it (its pc is not a label)
-        let skips = if std::mem::take(&mut u.skip_next) { 2 } else { 1 };
-        if skips == 2 {
-            cur += 4;
-            count += 1;
-            u.look.remove(0);
+        // All skipped words are proven native members, never labelled entries.
+        let more=std::mem::take(&mut u.skip_more)as usize;
+        let skips = if std::mem::take(&mut u.skip_next) { 2+more } else { 1 };
+        if skips > 1 {
+            cur += (skips-1)as u64*4;
+            count += skips-1;
+            u.look.drain(..skips-1);
         }
         // slide the lookahead window to start at the next instruction
         if !u.look.is_empty() {
             let last_was_term = is_terminator(*u.look.last().unwrap());
             u.look.remove(0);
             if !last_was_term && u.look.len() < LOOKAHEAD {
-                if let Some(w) = read(cur + 4 * u.look.len() as u64 + 4) {
-                    u.look.push(w);
+                loop {
+                    let Some(w)=read(cur+4*u.look.len()as u64+4) else {break;};u.look.push(w);
+                    // Existing one/two-instruction emission keeps its original
+                    // read horizon; a longer trace replenishes the lost words.
+                    if more==0||u.look.len()==LOOKAHEAD||is_terminator(w) {break;}
                 }
             }
         }
@@ -9018,6 +9034,62 @@ mod loopra_tests {
 
     fn cpu() -> Box<Cpu> {
         let mut c = Cpu::new(); crate::jit::setup_cpu(&mut c); c.set_pc(PC); c
+    }
+
+    #[test]
+    fn vtrace_ssa_live_versions_rounding_nan_aliases_and_skip_accounting() {
+        if !has_avx()||disabled_classes()!=0 {return;}
+        let mut checked=0;
+        for wide in [false,true] {
+        let values:Vec<u64>=if wide {vec![0,0x8000000000000000,1,1f64.to_bits(),(-1f64).to_bits(),0x7fefffffffffffff,
+            0x7ff0000000000000,0xfff0000000000000,0x7ff8000000000042,0x7ff0000000000073,0xfff0000000000084]}
+            else {vec![0,0x80000000,1,1f32.to_bits()as u64,(-1f32).to_bits()as u64,0x7f7fffff,0x7f800000,0xff800000,0x7fc00042,0x7f800073,0xff800084]};
+        for high in [false,true].into_iter().filter(|&h|!h||has_avx512()) {
+        for nan512 in [false,true].into_iter().filter(|&h|!h||has_avx512()) {
+        for known in [false,true] {for kind in [StubKind::Plain,StubKind::Patchable] {for shape in 0..4 {
+            let shift=if high {22}else {0};let ty=(wide as u32)<<22;
+            let op=|code:u32,d:u32,n:u32,m:u32|if code==4 {0x1e21c000|ty|((n+shift)<<5)|(d+shift)}
+                else {0x1e200800|ty|(code<<12)|((m+shift)<<16)|((n+shift)<<5)|(d+shift)};
+            let load=|r:u32,base:u32|(if wide {0xfd400000}else {0xbd400000})|(base<<5)|r;
+            let three=vec![op(0,2,0,0),op(0,3,1,1),op(2,2,2,3)];
+            let five=vec![op(2,3,0,1),op(4,4,3,3),op(0,3,3,4),op(1,3,2,3),op(0,0,0,3)];
+            let mut words=Vec::new();if high {for r in 0..8 {words.push(load(r,2));}}
+            if known {for r in 0..3 {words.push(load(r+shift,r+3));}}
+            match shape {
+                0=>words.extend(three.clone()),
+                1=>words.extend([op(3,1,1,2),op(0,3,0,0),op(0,4,1,1),op(2,3,3,4)]),
+                _=>{words.extend(five);if shape==3 {words.push(0x910004c6);words.extend(three);words.push(0x910004e7);}}
+            }
+            words.push(0xf100054a);words.push(0x54000001|((((-(words.len()as i32))as u32)&0x7ffff)<<5));
+            let exit=PC+words.len()as u64*4;words.push(0xd4001001);
+            let read=|p:u64|p.checked_sub(PC).and_then(|v|words.get((v/4)as usize)).copied();
+            let mut u=Unit::new(kind,false);u.loopra=true;u.loopra2=false;u.vloop=true;u.vchain=true;u.vscalar=true;u.vpair=true;u.vtrace=true;u.avx512=high;u.avx512_nan=nan512;
+            for p in [PC,exit] {let l=u.a.create_label();u.labels.insert(p,l);}
+            emit_block(&mut u,PC,&read);emit_block(&mut u,exit,&read);
+            assert_eq!(u.insns_translated,words.len()as u64);assert_eq!(u.cold_ranges.len(),if shape==3 {2}else {1});
+            for(range,live)in &u.cold_ranges {check_cold_registers(&u.a.instructions()[range.clone()],*live).unwrap();}
+            let(host,_)=assemble(u,0);
+            for(ia,&a)in values.iter().enumerate() {for(ib,&b)in values.iter().enumerate() {for(ic,&v)in values.iter().enumerate() {
+                let pad=if wide {1.25f64.to_bits()}else {1.25f32.to_bits()as u64};let mut c=cpu();
+                for r in 0..32 {c.v[r]=[0xdeadbeef00000000+r as u64,0xfeedbeef00000000+r as u64];}
+                for(r,value)in [(shift,a),(shift+1,b),(shift+2,v)] {c.v[r as usize][0]=if wide {value}else {0x1234000000000000|value};}
+                c.x[2]=&pad as *const _ as u64;c.x[3]=&a as *const _ as u64;c.x[4]=&b as *const _ as u64;c.x[5]=&v as *const _ as u64;
+                if ia&1!=0 {for n in 2..6 {c.x[n]|=0xab00000000000000;}}
+                c.x[10]=1+((ia+ib+ic)%2)as u64;c.fpcr=(((ia+ib+ic)%4)as u64)<<22;
+                let mut reference=cpu();reference.x=c.x;reference.v=c.v;reference.fpcr=c.fpcr;
+                interp::sys_sync_host_fp_mode(c.fpcr);
+                for _ in 0..128 {let p=reference.pc();let w=read(p).unwrap();
+                    if matches!(interp::exec(&mut reference,w),Err(interp::Exit::Svc(_))) {break;}
+                    if reference.pc()==p {reference.set_pc(p+4);}}
+                interp::sys_sync_host_fp_mode(c.fpcr);unsafe {crate::jit::attesor_jit_enter(&mut *c,host);}
+                assert_eq!(c.v,reference.v,"wide={wide} high={high} known={known} shape={shape} fpcr={:x} inputs={a:x},{b:x},{v:x}",c.fpcr);
+                assert_eq!(c.x,reference.x);assert_eq!(c.nzcv(),reference.nzcv());checked+=1;
+            }}}
+            let mut guarded=cpu();guarded.fpcr=1<<25;guarded.x[10]=1;guarded.v[0]=[0x1234,0x5678];let before=guarded.v;
+            unsafe {crate::jit::attesor_jit_enter(&mut *guarded,host);}
+            assert_eq!(guarded.exit_reason,EXIT_INTERP);assert_eq!(guarded.pc(),PC);assert_eq!(guarded.v,before);
+        }}}}}}
+        interp::sys_sync_host_fp_mode(0);eprintln!("FP SSA trace directed cases={checked}");
     }
 
     #[test]
