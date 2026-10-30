@@ -1476,6 +1476,25 @@ mod precise_invalidation_tests {
     use super::*;
 
     #[test]
+    fn leafflags_cloned_continuation_writer_is_registered_source() {
+        if !emit::leafflags_enabled()||!emit::leafinline_enabled()||emit::ibtc2_enabled()||!bliccache::enabled()||!precise_invalidation_enabled() {return;}
+        crate::aot::set_enabled(false);let p=unsafe {libc::mmap(std::ptr::null_mut(),0x10000,libc::PROT_READ|libc::PROT_WRITE,libc::MAP_ANON|libc::MAP_PRIVATE,-1,0)};
+        assert_ne!(p,libc::MAP_FAILED);let pc=p as u64;let target=pc+0x8000;let site=pc+8;
+        let write=|at:u64,w:&[u32]|unsafe {std::ptr::copy_nonoverlapping(w.as_ptr(),at as *mut u32,w.len());};
+        write(pc,&[0xaa1403e0,0xaa1503e1,0xd63f02c0,0x7100001f,0xd4001001]);
+        write(target,&[0xb9400008,0xb9400029,0x6b09011f,0x1a9fd7e8,0x5a9fa100,0xd65f03c0]);
+        bliccache::set_hint_for_test(site,target);let old=translate(pc);let data=[1u64,1];let mut c=Cpu::new();setup_cpu(&mut c);
+        c.x[20]=data.as_ptr()as u64;c.x[21]=unsafe {data.as_ptr().add(1)}as u64;c.x[22]=target;c.set_pc(pc);
+        unsafe {attesor_jit_enter(&mut *c,old);}
+        assert_eq!(c.pc(),pc+16,"private clone consumed the first continuation writer");assert_eq!(c.nzcv(),6);assert_eq!(c.exit_reason,EXIT_CONTINUE);
+        unsafe {((pc+12)as *mut u32).write_volatile(0x7100041f);}
+        invalidate_range(pc+12,4);assert_eq!(lookup(pc),None);let new=translate(pc);assert_ne!(new,old);
+        c.set_pc(pc);unsafe {attesor_jit_enter(&mut *c,new);}
+        assert_eq!(c.pc(),pc+16);assert_eq!(c.nzcv(),8);assert_eq!(c.exit_reason,EXIT_CONTINUE);
+        invalidate_range(pc,0x10000);unsafe {libc::munmap(p,0x10000);}
+    }
+
+    #[test]
     fn leafinline_real_source_invalidation_and_polymorphic_deopt() {
         if !emit::leafinline_enabled()||!bliccache::enabled()||!precise_invalidation_enabled() {return;}
         crate::aot::set_enabled(false);

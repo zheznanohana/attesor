@@ -9,6 +9,17 @@ pub(super) struct Plan {
     pub used:u32,
     pub written:u32,
 }
+impl Plan {
+    /// Only a final CMP followed solely by native flag-preserving selects can
+    /// defer its Cpu NZCV stores. Never infer this from guest ABI volatility.
+    pub(super) fn final_fused_cmp(&self)->Option<u64> {
+        let ret=*self.words.last_key_value()?.0;
+        let (&pc,_)=self.words.iter().rev().find(|(_,w)|matches!(super::fusable_setter(**w),Some(super::FuseKind::Sub)))?;
+        self.words.range((std::ops::Bound::Excluded(pc),std::ops::Bound::Excluded(ret)))
+            .all(|(_,w)|super::fused_select(super::FuseKind::Sub,*w)).then_some(pc)
+    }
+}
+
 fn gpr(n:u32,sp:bool)->u32 {if n==31&&!sp {0}else {1u32<<n}}
 fn access(w:u32)->Option<(u32,u32)> {
     let (d,n,m)=(w&31,(w>>5)&31,(w>>16)&31);
@@ -54,6 +65,13 @@ pub(super) fn plan(pc:u64,read:&dyn Fn(u64)->Option<u32>,cut:&dyn Fn(u64)->bool)
 
 #[cfg(test)] mod tests {
     use super::*;
+    #[test] fn leafflags_final_cmp_needs_honest_fused_suffix() {
+        let words=[0xb9400008,0xb9400029,0x6b09011f,0x1a9fd7e8,0x5a9fa100,0xd65f03c0];
+        let p=plan(0,&|p|words.get((p/4)as usize).copied(),&|_|false).unwrap();assert_eq!(p.final_fused_cmp(),Some(8));
+        for extra in [0xd503201f,0xd2800011,0xb940004f] {let mut w=words.to_vec();w.insert(3,extra);
+            assert_eq!(plan(0,&|p|w.get((p/4)as usize).copied(),&|_|false).unwrap().final_fused_cmp(),None);}
+        let mut w=words;w[3]=0x1a9fe7e8;assert_eq!(plan(0,&|p|w.get((p/4)as usize).copied(),&|_|false).unwrap().final_fused_cmp(),None);
+    }
     #[test] fn leafra_livein_exact_access_and_boundaries() {
         let words=[0xb9400008,0xb9400029,0x6b09011f,0x1a9fd7e8,0x5a9fa100,0xd65f03c0];
         let read=|p|words.get((p/4)as usize).copied();let p=plan(0,&read,&|_|false).unwrap();

@@ -118,6 +118,11 @@ pub struct Unit {
     vtrace: bool,
     leafra: bool,
     leafinline: bool,
+    leafflags: bool,
+    inline_flag_continuations: HashMap<u64,Option<u32>>,
+    inline_flag_elisions: u64,
+    inline_follow_branches: HashMap<u64,u32>,
+    inline_branch_clones: u64,
     inline_leaf_calls: HashMap<u64,(u64,leaf::Plan)>,
     inline_call_words: HashMap<u64,u32>,
     csetfast: bool,
@@ -543,6 +548,11 @@ impl Unit {
             vtrace: vtrace_enabled(),
             leafra: leafra_enabled(),
             leafinline: leafinline_enabled(),
+            leafflags: leafflags_enabled(),
+            inline_flag_continuations: HashMap::new(),
+            inline_flag_elisions: 0,
+            inline_follow_branches: HashMap::new(),
+            inline_branch_clones: 0,
             inline_leaf_calls: HashMap::new(),
             inline_call_words: HashMap::new(),
             csetfast: csetfast_enabled(),
@@ -2074,6 +2084,25 @@ fn private_flags_dead_at(pc:u64,read:&dyn Fn(u64)->Option<u32>)->bool {
     true
 }
 
+/// A callee's flags may die through a *private pure-GPR* continuation CFG.
+/// Public/missing successors, flag readers and helpers are barriers. Strengthen
+/// the old passthrough census for memory forms the native emitter rejects.
+fn leaf_private_flags_killed(pc:u64,words:&std::collections::BTreeMap<u64,u32>)->bool {
+    private_flags_dead_at(pc,&|p| {
+        let w=*words.get(&p)?;
+        if (w>>25)&5==4 {
+            if w&(1<<26)!=0 {return None;}
+            if w&0x3a000000==0x28000000 {
+                let load=w&(1<<22)!=0;let size=w>>30;
+                if size==3||(size==1&&!load)||(load&&(w&31)==((w>>10)&31)) {return None;}
+            }else if w&0x3b000000==0x39000000||w&0x3b200000==0x38000000||w&0x3b200c00==0x38200800 {
+                if (w>>22)&3==3&&w>>30>=2 {return None;}
+            }else {return None;}
+        }
+        Some(w)
+    })
+}
+
 /// Forward proof stays within this exact public block, including AOT boundaries
 /// and the max-length cut. Unknown encodings, partial writes, helpers and exits
 /// stop it. Only audited scalar templates can consume register-only values:
@@ -2321,6 +2350,13 @@ fn vpair_enabled() -> bool {
 fn vtrace_enabled() -> bool {
     static ON:std::sync::OnceLock<bool>=std::sync::OnceLock::new();
     *ON.get_or_init(||!jit_off("vtrace")&&std::env::var("ATTESOR_JIT_ON").unwrap_or_default().split(',').any(|t|t=="vtrace"))
+}
+
+fn inline_epoch_check(u:&Unit)->bool {u.callret||ibtc2_enabled()}
+
+pub(super) fn leafflags_enabled()->bool {
+    static F:std::sync::OnceLock<bool>=std::sync::OnceLock::new();
+    *F.get_or_init(||!jit_off("leafflags")&&std::env::var("ATTESOR_JIT_ON").unwrap_or_default().split(',').any(|g|g=="leafflags"))
 }
 
 pub(super) fn leafinline_enabled() -> bool {
@@ -2598,7 +2634,7 @@ pub(super) fn prepare_bgtrans() {
         loopra_enabled(), regioncache_enabled(), has_avx(), has_fma(),
         has_aes(), has_pclmul(), has_sha(), has_f16c(), loopra2_enabled(),
         has_avx512(), avx512_enabled(), avx512_nan_enabled(), super::fastenc_enabled(),
-        super::loops::census_enabled(), super::cost::probes(), vloop_enabled(), vloop2_enabled(), vchain_enabled(), vscalar_enabled(), funra_enabled(), funflags_enabled(), selectra_enabled(), regflags_enabled(), cfgflags_enabled(), xspill_enabled(), fmovra_enabled(), vpair_enabled(), vtrace_enabled(), leafra_enabled(), csetfast_enabled(), csetpair_enabled(), leafinline_enabled(), super::bliccache::enabled());
+        super::loops::census_enabled(), super::cost::probes(), vloop_enabled(), vloop2_enabled(), vchain_enabled(), vscalar_enabled(), funra_enabled(), funflags_enabled(), selectra_enabled(), regflags_enabled(), cfgflags_enabled(), xspill_enabled(), fmovra_enabled(), vpair_enabled(), vtrace_enabled(), leafra_enabled(), csetfast_enabled(), csetpair_enabled(), leafinline_enabled(), leafflags_enabled(), super::bliccache::enabled());
 }
 
 /// Translate one basic block starting at `pc` into `u`. The caller must have
@@ -2629,17 +2665,27 @@ pub fn emit_block(u: &mut Unit, pc: u64, read: &dyn Fn(u64) -> Option<u32>) -> u
             let mut n=0;for &p in l.words.keys() {if l.starts.contains(&p)||n==MAX_BLOCK_INSNS {l.starts.insert(p);n=0;}n+=1;}
             if safe&&l.starts.len()<=32&&l.words.len()<=256&&l.reducible() {
                 if std::env::var_os("ATTESOR_LEAFINLINE_LOG").is_some() {eprintln!("leafinline-region\t{pc:x}\t{}\t{}",l.words.len(),plans.len());}
-                u.inline_call_words=plans.keys().map(|&p|(p,l.words[&p])).collect();u.inline_leaf_calls=plans;let end=emit_multi_region(u,&l,read);u.inline_leaf_calls.clear();u.inline_call_words.clear();return end;
+                u.inline_call_words=plans.keys().map(|&p|(p,l.words[&p])).collect();
+                if u.leafflags&&!inline_epoch_check(u) {
+                    u.inline_flag_continuations=plans.keys().filter(|&&p|l.starts.contains(&(p+4))&&leaf_private_flags_killed(p+4,&l.words)).map(|&p|(p,None)).collect();
+                }
+                u.inline_leaf_calls=plans;let end=emit_multi_region(u,&l,read);u.inline_leaf_calls.clear();u.inline_call_words.clear();u.inline_flag_continuations.clear();u.inline_follow_branches.clear();return end;
             }
         }
         // A call whose enclosing loop cannot be proven can still bypass the
         // two dispatch boundaries. All ordinary public Cpu rules remain.
         let mut at=pc;for _ in 0..MAX_BLOCK_INSNS {
             let Some(w)=read(at)else {break;};
-            if let Some(p)=leaf_calls(u,at,w,read) {u.inline_leaf_calls.insert(at,p);u.inline_call_words.insert(at,w);break;}
+            if let Some(p)=leaf_calls(u,at,w,read) {
+                if u.leafflags&&!inline_epoch_check(u) {if let Some(w)=read(at+4).filter(|&w|flags_safe_writer(w)) {
+                    u.inline_flag_continuations.insert(at,Some(w));
+                    if let Some(b)=read(at+8).filter(|b|*b&0xff000010==0x54000000) {u.inline_follow_branches.insert(at,b);}
+                }}
+                u.inline_leaf_calls.insert(at,p);u.inline_call_words.insert(at,w);break;
+            }
             if is_terminator(w) {break;}at+=4;
         }
-        if !u.inline_leaf_calls.is_empty() {let end=emit_block_inner(u,pc,read,None);u.inline_leaf_calls.clear();u.inline_call_words.clear();return end;}
+        if !u.inline_leaf_calls.is_empty() {let end=emit_block_inner(u,pc,read,None);u.inline_leaf_calls.clear();u.inline_call_words.clear();u.inline_flag_continuations.clear();u.inline_follow_branches.clear();return end;}
     }
     if u.leafra && u.loopra && !u.quick && !u.no_internal_jumps && !u.commpage_checks
         && disabled_classes()==0 && u.function_entry.is_none() && u.region_labels.is_empty() {
@@ -4233,16 +4279,22 @@ impl<'a> E<'a> {
         self.st_imm(30,next);self.u.fuse=None;self.rc_clear();self.u.notbi.clear();
         let look=std::mem::take(&mut self.u.look);
         let words:Vec<_>=p.words.iter().map(|(&pc,&w)|(pc,w)).collect();
+        // Callret/IBTC2 post-return epoch bailouts observe callee state. Keep
+        // canonical flags there; the OFF path has no observer before the
+        // proven first writer (private next block, or its captured clone).
+        let deferred=if self.u.leafflags&&!inline_epoch_check(self.u)&&self.u.inline_flag_continuations.contains_key(&call_pc) {
+            p.final_fused_cmp()
+        }else {None};
         for (i,&(at,w)) in words.iter().enumerate().take(words.len()-1) {
             self.u.look=words[i+1..].iter().map(|&(_,w)|w).collect();
-            self.u.cache_uses=cache_next_uses(&self.u.look);self.u.dead_flags=false;self.u.dead_v=0;
+            self.u.cache_uses=cache_next_uses(&self.u.look);self.u.dead_flags=deferred==Some(at);self.u.dead_v=0;
             let fuse_in=self.u.fuse.take();let mut e=E{u:self.u,pc:at,fuse_in,scalar_inputs:None};
             assert!(e.translate(w),"exact inline leaf whitelist must be native");
         }
-        self.u.insns_translated+=p.words.len()as u64;self.u.look=look;self.u.fuse=None;
+        self.u.insns_translated+=p.words.len()as u64;self.u.look=look;self.u.fuse=None;self.u.dead_flags=false;
         self.rc_clear();self.u.notbi.clear();
-        if self.u.callret {
-            // Inlining replaces the leaf's host CALL/RET, not its continuation
+        if inline_epoch_check(self.u) {
+            // Inlining replaces a host CALL/RET or IBTC2 return, not its continuation
             // revocation check. Match host_call: reject the caller continuation
             // after callee effects, before executing the next guest instruction.
             let mut live=self.new_label();
@@ -4250,8 +4302,36 @@ impl<'a> E<'a> {
             a!(self,cmp(rcx,qword_ptr(r15+off::ENTRY_EPOCH)));a!(self,je(live));
             self.st_pc_and_exit(next);self.u.a.set_label(&mut live).unwrap();
         }
+        let mut continuation=next;
+        if let Some(cmp)=deferred {
+            self.u.inline_flag_elisions+=1;
+            if !self.u.region_labels.contains_key(&next) {
+                // A private clone of exactly one total native NZCV writer.
+                // Source is captured by the foreground dependency reader.
+                // Execute it before any public boundary, then publish PC+4.
+                let w=self.u.inline_flag_continuations[&call_pc].expect("only captured total writer may cross a public boundary");
+                self.u.cache_uses=[[u8::MAX;32];2];self.u.dead_flags=false;
+                let mut e=E{u:self.u,pc:next,fuse_in:None,scalar_inputs:None};
+                assert!(e.translate(w),"proven continuation writer must be native");
+                self.u.insns_translated+=1;
+                if let Some(branch)=self.u.inline_follow_branches.get(&call_pc).copied() {
+                    // Keep the writer's live x86 flags through its immediately
+                    // following private branch clone. A public jump between
+                    // them would destroy the existing compare/branch fusion.
+                    let fuse_in=self.u.fuse.take();
+                    let mut e=E{u:self.u,pc:next+4,fuse_in,scalar_inputs:None};
+                    assert!(e.translate(branch),"captured conditional branch must be native");
+                    self.u.insns_translated+=1;self.u.inline_branch_clones+=1;
+                    self.u.fuse=None;self.rc_clear();
+                    if std::env::var_os("ATTESOR_LEAFINLINE_LOG").is_some() {eprintln!("leafinline-flagsbranch\t{call_pc:x}\t{cmp:x}");}
+                    return true; // both original guest successors were emitted
+                }
+                self.u.fuse=None;self.rc_clear();continuation=next+4;
+            }
+            if std::env::var_os("ATTESOR_LEAFINLINE_LOG").is_some() {eprintln!("leafinline-flags\t{call_pc:x}\t{cmp:x}\t{}",if continuation==next {"private"}else {"cloned"});}
+        }
         if std::env::var_os("ATTESOR_LEAFINLINE_LOG").is_some() {eprintln!("leafinline-call\t{call_pc:x}\t{target:x}\t{}",p.words.len());}
-        self.goto(next);true
+        self.goto(continuation);true
     }
 
     /// Two-word, 16-byte-aligned frames: push guest PC, then CALL pushes host
@@ -9242,6 +9322,101 @@ mod loopra_tests {
 
     fn cpu() -> Box<Cpu> {
         let mut c = Cpu::new(); crate::jit::setup_cpu(&mut c); c.set_pc(PC); c
+    }
+
+    #[test]
+    fn leafflags_cloned_compare_branch_preserves_both_successors() {
+        if disabled_classes()!=0||!super::super::precise_invalidation_enabled() {return;}
+        let mut checked=0;
+        for enabled in [false,true] {for cond in 0..16 {for wide in [false,true] {
+            let target=PC+0x4000;let site=PC+8;let sf=(wide as u32)<<31;
+            let leaf=[if wide {0xf9400008}else {0xb9400008},if wide {0xf9400029}else {0xb9400029},sf|0x6b09011f,sf|0x1a9fd7e8,sf|0x5a9fa100,0xd65f03c0];
+            let words=[0xaa1403e0,0xaa1503e1,0xd63f0adf,0x7100001f,0x54000060|cond,0x52800170,0x14000003,0x528002d0,0x14000001,0xd4001001];
+            let read=|p:u64|if p>=target {leaf.get(((p-target)/4)as usize).copied()}else {p.checked_sub(PC).and_then(|o|words.get((o/4)as usize)).copied()};
+            super::super::bliccache::set_hint_for_test(site,target);
+            let mut u=Unit::new(StubKind::Patchable,false);u.leafinline=true;u.leafflags=enabled;u.callret=false;u.loopra=true;u.loopra2=false;u.inline_ok=true;
+            for i in [0,3,5,7,9] {let l=u.a.create_label();u.labels.insert(PC+i*4,l);}
+            for i in [0,3,5,7,9] {emit_block(&mut u,PC+i*4,&read);}
+            assert_eq!(u.inline_branch_clones,if enabled&&!ibtc2_enabled() {1}else {0});assert_eq!(u.insns_fallback,0);let(host,_)=assemble(u,0);
+            for (a,b) in [(0u64,0u64),(1,2),(2,1),(0x80000000,1)] {for initial in [0,15] {
+                let data=[a,b];let mut c=cpu();for n in 0..32 {c.x[n]=0xfedc123400000000+n as u64;c.v[n]=[n as u64,0x4567];}c.x[20]=data.as_ptr()as u64;c.x[21]=unsafe {data.as_ptr().add(1)}as u64;c.x[22]=target;c.set_nzcv(initial);
+                let mut r=cpu();r.x=c.x;r.v=c.v;r.set_nzcv(initial);let mut steps=0;
+                loop {let p=r.pc();if p==PC+36 {break;}interp::exec(&mut r,read(p).unwrap()).unwrap();if r.pc()==p {r.set_pc(p+4);}steps+=1;assert!(steps<64);}
+                unsafe {crate::jit::attesor_jit_enter(&mut *c,host);}
+                assert_eq!(c.x,r.x,"enabled={enabled} sf={wide} cond={cond} a={a:x} b={b:x}");assert_eq!(c.v,r.v);assert_eq!(c.nzcv(),r.nzcv());assert_eq!(c.pc(),PC+40);assert_eq!(c.exit_reason,EXIT_SVC);checked+=1;
+            }}
+        }}}
+        eprintln!("leafflags compare/branch cases={checked}");
+    }
+
+    #[test]
+    fn leafflags_private_diamond_kills_before_observer_or_public_exit() {
+        if disabled_classes()!=0||!super::super::precise_invalidation_enabled() {return;}
+        let mut checked=0;
+        for unsafe_path in 0..3 {for callret in [false,true] {for enabled in [false,true] {
+            let target=PC+0x4000;let site=PC+8;
+            let leaf=[0xb9400008,0xb9400029,0x6b09011f,0x1a9fd7e8,0x5a9fa100,0xd65f03c0];
+            let words=[0xaa1403e0,0xaa1503e1,0xd63f0adf,
+                if unsafe_path==1 {0x34000100}else {0x34000060}, // CBZ to public exit or private arm
+                if unsafe_path==2 {0x9a8ea1ab}else {0x9100056b},
+                0x14000002,0xd100056b,0x7100001f,0x9a8ea1ac,0x710006f7,0x54fffec1,0xd4001001];
+            let read=|p:u64|if p>=target {leaf.get(((p-target)/4)as usize).copied()}else {p.checked_sub(PC).and_then(|o|words.get((o/4)as usize)).copied()};
+            super::super::bliccache::set_hint_for_test(site,target);
+            let mut u=Unit::new(StubKind::Patchable,false);u.leafinline=true;u.leafflags=enabled;u.callret=callret;u.loopra=true;u.loopra2=false;u.inline_ok=true;
+            for p in [PC,PC+44] {let l=u.a.create_label();u.labels.insert(p,l);}
+            emit_block(&mut u,PC,&read);emit_block(&mut u,PC+44,&read);
+            assert_eq!(u.inline_flag_elisions,if enabled&&!callret&&!ibtc2_enabled()&&unsafe_path==0 {1}else {0});
+            let(host,_)=assemble(u,0);
+            for (a,b) in [(0u64,0u64),(1,2),(2,1),(0x80000000,1)] {for initial in [0,5,10,15] {
+                let data=[a,b];let mut c=cpu();for n in 0..32 {c.x[n]=0xfedc123400000000+n as u64;c.v[n]=[n as u64,0xabcd];}
+                c.x[20]=data.as_ptr()as u64;c.x[21]=unsafe {data.as_ptr().add(1)}as u64;c.x[22]=target;c.x[23]=2;c.set_nzcv(initial);
+                let mut r=cpu();r.x=c.x;r.v=c.v;r.set_nzcv(initial);let mut steps=0;
+                loop {let p=r.pc();if p==PC+44 {break;}interp::exec(&mut r,read(p).unwrap()).unwrap();if r.pc()==p {r.set_pc(p+4);}steps+=1;assert!(steps<256);}
+                unsafe {crate::jit::attesor_jit_enter(&mut *c,host);}
+                assert_eq!(c.x,r.x,"path={unsafe_path} ret={callret} enabled={enabled} a={a:x} b={b:x} initial={initial}");assert_eq!(c.v,r.v);assert_eq!(c.nzcv(),r.nzcv());assert_eq!(c.exit_reason,EXIT_SVC);checked+=1;
+            }}
+        }}}
+        for w in [0x69000000,0x29400000,0xb9c00000,0xbd400008,0xd4001001,0x1e602800] {
+            let m=std::collections::BTreeMap::from([(PC,w),(PC+4,0x7100001f)]);
+            assert!(!leaf_private_flags_killed(PC,&m),"helper/reserved/FP {w:08x}");
+        }
+        let m=std::collections::BTreeMap::from([(PC,0xb9400008),(PC+4,0x7100001f)]);assert!(leaf_private_flags_killed(PC,&m));
+        eprintln!("leafflags private CFG cases={checked}");
+    }
+
+    #[test]
+    fn leafflags_callee_readers_private_and_cloned_killers() {
+        if disabled_classes()!=0||!super::super::precise_invalidation_enabled() {return;}
+        let mut checked=0;
+        for private in [false,true] {for callret in [false,true] {for enabled in [false,true] {for wide in [false,true] {for suffix in 0..3 {for killer in 0..3 {
+            let sf=(wide as u32)<<31;let target=PC+0x2000;let site=PC+8;
+            let mut leaf=vec![if wide {0xf9400008}else {0xb9400008},if wide {0xf9400029}else {0xb9400029},sf|0x6b09011f];
+            if suffix==1 {leaf.push(0xd2800011);} // MOV X17,#0 destroys host fusion
+            if suffix==2 {leaf.push(0xd503201f);} // unsupported transparent suffix still declines
+            leaf.extend([sf|0x1a9fd7e8,sf|0x5a9fa100,0xd65f03c0]);
+            let first=match killer {0=>0x7100001f,1=>0x31001c0f,_=>0x11001c0f}; // CMP; ADDS; ADD(!S)
+            let mut words=vec![0xaa1403e0,0xaa1503e1,0xd63f0adf,first,0x9a8ea1ac]; // BLRAAZ x22, then CSEL x12
+            if private {words.extend([0x710006f7,0x54ffff41]);} // branch at24 to header
+            let exit=PC+words.len()as u64*4;words.push(0xd4001001);
+            let read=|p:u64|if p>=target {leaf.get(((p-target)/4)as usize).copied()}else {p.checked_sub(PC).and_then(|o|words.get((o/4)as usize)).copied()};
+            super::super::bliccache::set_hint_for_test(site,target);
+            let mut u=Unit::new(StubKind::Patchable,false);u.leafinline=true;u.leafflags=enabled;u.callret=callret;u.loopra=true;u.loopra2=false;u.inline_ok=true;u.funra=false;u.leafra=false;
+            let entries=if private {vec![0,7]}else {vec![0,3,4]};
+            for &i in &entries {let l=u.a.create_label();u.labels.insert(PC+i*4,l);}
+            for &i in &entries {emit_block(&mut u,PC+i*4,&read);}
+            assert_eq!(u.inline_flag_elisions,if enabled&&!callret&&!ibtc2_enabled()&&suffix==0&&killer!=2 {1}else {0},"private={private} callret={callret} enabled={enabled} suffix={suffix} killer={killer}");
+            assert_eq!(u.insns_fallback,0);let(host,_)=assemble(u,0);
+            for a in [0u64,1,0x80000000,u64::MAX] {for b in [0u64,2,u64::MAX] {for initial in [0,5,10,15] {
+                let data=[a,b];let mut c=cpu();for n in 0..32 {c.x[n]=0xfeed123400000000+n as u64;c.v[n]=[n as u64,0x12345678];}
+                c.x[20]=data.as_ptr()as u64|0xab00000000000000;c.x[21]=unsafe {data.as_ptr().add(1)}as u64;c.x[22]=target;c.x[23]=2;c.set_nzcv(initial);
+                let mut r=cpu();r.x=c.x;r.v=c.v;r.set_nzcv(initial);let mut steps=0;
+                loop {let p=r.pc();if p==exit {break;}interp::exec(&mut r,read(p).unwrap()).unwrap();if r.pc()==p {r.set_pc(p+4);}steps+=1;assert!(steps<256);}
+                unsafe {crate::jit::attesor_jit_enter(&mut *c,host);}
+                assert_eq!(c.x,r.x,"private={private} callret={callret} enabled={enabled} sf={wide} suffix={suffix} killer={killer} a={a:x} b={b:x} flags={initial}");
+                assert_eq!(c.v,r.v);assert_eq!(c.nzcv(),r.nzcv());assert_eq!(c.pc(),exit+4);assert_eq!(c.exit_reason,EXIT_SVC);checked+=1;
+            }}}
+        }}}}}}
+        eprintln!("leafflags directed cases={checked}");
     }
 
     #[test]

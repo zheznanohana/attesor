@@ -418,3 +418,63 @@ again; the84 screen binary is archived locally. A derived85->84 reproduction
 patch accompanies local evidence. Production/defaults remain unchanged. The
 complete six-category/same-configuration60% goal, including both qsort scales,
 is still not achieved.
+
+
+## Codegen86-87: preserve observation boundaries while deferring callee NZCV
+
+Own implementation, exact `leafflags` opt-in/default OFF, on top of guarded
+`leafinline`. A leaf's final CMP may omit Cpu NZCV stores only when every remaining
+internal reader is a native flag-preserving fused select. No ABI-volatility
+assumption. Caller continuation must overwrite full NZCV before observing it:
+a bounded closed private pure-GPR CFG can prove this across CB/TB diamonds, or
+exactly one captured native full writer is cloned privately before a public
+boundary. Missing/public edges, flag readers, helpers, FP and invalid/reserved
+memory forms reject the private proof. Source words and instruction/PC accounting
+cover the clone. Existing ordinary full-X/SP/XZR semantics are unchanged.
+
+An adjacent conditional branch is also captured/lowered with the cloned writer's
+live flags, avoiding an artificial public cut that loses compare/branch fusion.
+Both successors and the complete outgoing Cpu state remain original guest
+semantics; original public entries still exist independently. This does not
+remove caller flag materialization by an ABI guess. Callret and IBTC2 returns
+both have epoch observation points: keep callee flags, suppress this optimization
+and retain post-callee continuation rejection.87 corrects the inliner's previous
+callret-only guard condition to include IBTC2. No return/auth/epoch protection is
+removed. Profile inlining remains JIT/foreground-only; AOT Plain is unchanged.
+
+Five targeted tests passed in default-return and IBTC2-suppression modes:
+6,912 main full-state differential cases,192 private diamond/public-edge/observer
+cases and512 compare/branch cases per mode, plus final-CMP suffix proof barriers
+and real cloned-writer source invalidation. The source-clone case is explicitly
+inapplicable under IBTC2 suppression. The default mode actually executes that
+invalidation check. Five related inline checks also passed with IBTC2: remote
+callee dependency withdrawal/hole isolation, non-spinning polymorphic deopt,
+worker observation and a true outer native parent with continuation guards.
+A small real512-element sort matched native. No full workspace, concurrent
+invalidation, broad application or real AOT matrix was rerun for this prototype.
+
+86's first one-writer-clone screen was negative:1.5M331.269->337.316ms(+1.83%),
+4M955.7->989.2ms(+3.51%). No repetition. The compare/branch split was a real
+source-level cost issue, not proof of the entire timing regression's cause.
+87's first original-fixture screen:1.5M328.913->326.887ms(-0.62%),49.77% native,
+flat and not repeated.4M957.9->903.8ms(-5.65%),52.51% native justified only two
+additional4M target rounds using the unchanged full kernels fixture.
+
+|round|native(ms)|control(ms)|candidate(ms)|paired time change|
+|---|---|---|---|---|
+|1|474.6|957.9|903.8|-5.65%|
+|2|472.0|968.5|939.4|-3.00%|
+|3|493.9|941.7|897.8|-4.66%|
+
+Round2 reverses candidate/control order. All original checksum lines match native.
+Median times957.9->903.8ms imply -5.65% by ratio of medians; median paired
+change is -4.66%, a different statistic. Median native ratio52.51%, not60% and
+not a guaranteed floor. Control already includes `bliccache,leafinline`; this
+is an incremental configuration contrast, not a measured net gain over installed
+production. Do not add historical gains across builds/batches. Other raw fixture
+metrics remain available but are not new threshold acceptance. Compiler elision
+and branch-clone logs are emission counts, not dynamic execution coverage.
+
+Production/defaults remain unchanged. Full six-category/same-configuration60%
+acceptance, with both qsort scales retained, is still incomplete. This evidence
+supports a small confirmed4M improvement, not the overall requested leap.
