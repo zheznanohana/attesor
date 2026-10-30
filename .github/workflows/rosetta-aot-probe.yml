@@ -3,7 +3,7 @@ on:
   workflow_dispatch:
   push:
     branches: [research/rosetta-stage1]
-    paths: ['research/rosetta/aot_probe.cpp', 'research/rosetta/aot_collect.py', '.github/workflows/rosetta-aot-probe.yml']
+    paths: ['research/rosetta/aot_probe.cpp', 'research/rosetta/aot_routine_names.inc', 'research/rosetta/aot_collect.py', '.github/workflows/rosetta-aot-probe.yml']
 permissions:
   contents: read
 jobs:
