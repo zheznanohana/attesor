@@ -598,3 +598,56 @@ Keep addrhoist and fpguard OFF the selected experimental configuration. The
 last confirmed substantive result remains88 fpflags matmul median49.696->37.321ms
 (-24.90%),57.19% native; not a stable floor or current all-category acceptance.
 Production unchanged. Full six-category same-config60% goal remains incomplete.
+
+
+## Codegen91: proved read-only FPCR invariance (`fpstable`, default OFF)
+
+Source audit: threads.rs moves each Box<Cpu> to one owning engine thread;
+engine.rs takes &mut Cpu during execution. Cross-thread profiling reads only
+atomics; GDB runs in the interpreter and CLI disables JIT/AOT. Workq owns each
+Cpu separately. signals.rs has no asynchronous guest-handler delivery. Guest
+MSR FPCR is a system/interpreter operation. Under these existing contracts a
+closed store-/system-/helper-free loop cannot modify FPCR between iterations.
+
+Add a separate strict proof, not the ordinary store-admitting flags liveness:
+scalar S/D MUL/DIV/ADD/SUB/SQRT, validated nonwriteback scalar FP LOADS, native
+nonflag ADD/SUB immediate GP operations and the already-proven tail CMP/Bcond.
+Reject all stores (including implicit/writeback memory), GP memory, system ops,
+helpers, unknown encodings, public interior cuts, disabled native classes and
+commpage helpers. Only qualifying single V-resident regions can put their
+unsupported-mode check before the private label. Public entry still rejects
+before any guest effect and preserves full incoming state. Other loops retain
+public/private checks and exact previous-CMP repair. No thread/state/epoch/return
+or invalidation mechanism changed. GUEST_FAULTS_FATAL remains asserted.
+
+Check the actual full hot+cold output before registration too: disallow CALL or
+MXCSR reload and all unknown/non-Cpu memory stores or writes overlapping any of
+the8 FPCR bytes. Fail closed with a translation contract error if the backend
+breaks the audited subset, rather than executing wrong code. This is not a
+general concurrent-Cpu mutation permission or support for guest signal delivery.
+
+Six focused tests pass:8192 scalar full-state cases+96 unsupported public entries;
+2304 related guarded-load full-state cases+768 store-driven private FPCR changes
+(the store makes invariance inapplicable)+224 pre-effect guards;96 additional
+GP-store-driven private repairs. Assert exactly one mode check for qualifying
+loops and two for observer-capable loops. New strict proof barriers and actual
+CALL/guest-store/direct+partial FPCR-write rejection checks pass. Plain/Patchable
+are covered; no real warm-AOT/application/concurrency or workspace matrix rerun.
+
+One unchanged original bench screen: native21.229ms, control(fpflags)37.232ms,
+fpstable36.981ms (-0.67%),57.41% native. All7 checksum lines match. Emission log
+identifies header500000f48, not dynamic coverage. Too small to adopt/repeat;
+keep fpstable OFF selected profile, production unchanged. Full common-config
+six-category60% (both qsort sizes) remains incomplete. Earlier88 confirmed57.19%
+matmul is separate evidence, not cumulative/new threshold acceptance.
+
+New direct source evidence changes the next action: own original native x86
+matmul100001070..1000010cd unrolls FOUR scalar MUL/ADD iterations before one
+counter/pointer update and branch; input ARM100000f48..f64 does one. No FMA or
+reassociation in that native sequence. Prior guard/address micro-optimizations
+did not close this gap. Next unimplemented hypothesis: typed bounded4-iteration
+trace preserving exact accumulation order, retaining8 original scalar input
+captures (never reread mutable guest data during NaN replay), one final NaN guard
+and strict cold replay of all4 steps; runtime trip/alignment guard and full final
+X/V/NZCV state. This is a general source-shape optimization, not algorithm or
+benchmark substitution. No batch implementation or performance gain claimed yet.

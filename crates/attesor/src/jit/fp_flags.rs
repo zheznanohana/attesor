@@ -73,3 +73,61 @@ pub(super) fn reject(u:&mut Unit,pc:u64,region:LoopRa,cmp:Option<Plan>) {
         }
     }
 }
+
+/// A Cpu is owned by one engine thread (threads.rs/engine.rs); GDB runs that
+/// thread in the interpreter, not concurrently. Async guest-handler delivery is
+/// absent. For this closed read-only native subset, neither guest stores/system
+/// operations nor helpers can change its FPCR between private iterations.
+/// Keep this proof separate from ordinary flags-deadness, which admits stores.
+pub(super) fn read_only_mode(pc:u64,p:Plan,read:&dyn Fn(u64)->Option<u32>)->bool {
+    if !GUEST_FAULTS_FATAL {return false;}
+    let mut at=pc;
+    while at<p.cmp_pc {
+        let Some(w)=read(at) else {return false;};
+        let scalar=(w&0xff200c00==0x1e200800&&(w>>12)&15<=3||w&0xff3ffc00==0x1e21c000)&&bits(w,23,22)<=1;
+        let load=w&(1<<26)!=0&&w>>30>=2&&bits(w,23,22)==1&&flags_safe_passthrough(w)
+            &&(w&0x3b000000==0x39000000||w&0x3b200c00==0x38200800||w&0x3b200c00==0x38000000);
+        let gp=w&0x3f800000==0x11000000; // ADD/SUB immediate !S, valid W/X
+        if !scalar&&!load&&!gp {return false;}
+        let Some(next)=at.checked_add(4) else {return false;};at=next;
+    }
+    true
+}
+
+/// Check the actual complete hot+cold output too. An emitter regression must
+/// fail closed before any code is registered/executed, not silently invalidate
+/// the static read-only/mode-stability contract. Only disjoint, known r15 Cpu
+/// writes are permitted: no CALL, guest-memory store or FPCR-byte overlap.
+pub(super) fn check_mode_emission(u:&Unit,start:usize)->Result<(),&'static str> {
+    use iced_x86::{InstructionInfoFactory,OpAccess,Register,Mnemonic};
+    let mut info=InstructionInfoFactory::new();
+    for insn in &u.a.instructions()[start..] {
+        if matches!(insn.mnemonic(),Mnemonic::Call|Mnemonic::Ldmxcsr|Mnemonic::Vldmxcsr) {return Err("native helper/control observer");}
+        for m in info.info(insn).used_memory() {
+            if !matches!(m.access(),OpAccess::Write|OpAccess::CondWrite|OpAccess::ReadWrite|OpAccess::ReadCondWrite) {continue;}
+            let len=m.memory_size().size() as u64;let begin=m.displacement();
+            if !(m.base()==Register::R15&&m.index()==Register::None&&len!=0
+                &&begin.checked_add(len).is_some_and(|end|end<=off::FPCR as u64||begin>=off::FPCR as u64+8)) {return Err("unexpected memory/FPCR write");}
+        }
+    }
+    Ok(())
+}
+
+#[cfg(test)]mod mode_tests {
+    use super::*;
+    #[test]fn fpflags_mode_proof_and_emitted_observer_barriers() {
+        let good=[0xfd400001,0x1e610821,0x1e612800,0x9100054a,0xf1000d5f,0x54ffff61];
+        let check=|w:&[u32]| {let read=|p|w.get((p/4)as usize).copied();plan(0,&read,&|_|false).is_some_and(|p|read_only_mode(0,p,&read))};
+        assert!(check(&good));let mut unscaled=good;unscaled[0]=0xfc400001;assert!(check(&unscaled));
+        for w in [0xfd000001,0xb9000043,0xfc008401,0xfc408401,0xf940000a,0xd53b4400,0xd51b4400,0x94000000,0xd4001001,0x1e602000,0x1e624000,0x1ac00c01] {
+            let mut bad=good;bad[0]=w;assert!(!check(&bad),"{w:x}");
+        }
+        for bad in 0..4 {
+            let mut u=Unit::new(StubKind::Plain,false);
+            match bad {0=>u.a.call(rax).unwrap(),1=>u.a.mov(qword_ptr(r15+off::FPCR),0i32).unwrap(),
+                2=>u.a.mov(byte_ptr(rax),1i32).unwrap(),_=>u.a.mov(qword_ptr(r15+off::FPCR-4),0i32).unwrap()}
+            assert!(check_mode_emission(&u,0).is_err());
+        }
+        let mut u=Unit::new(StubKind::Plain,false);u.a.mov(qword_ptr(r15+off::FPCR-8),0i32).unwrap();assert!(check_mode_emission(&u,0).is_ok());
+    }
+}

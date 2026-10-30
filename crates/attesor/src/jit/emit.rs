@@ -122,6 +122,8 @@ pub struct Unit {
     vtrace: bool,
     fpflags: bool,
     fpguard: bool,
+    fpstable:bool,
+    fp_mode_hoists:u64,
     addrhoist: bool,
     addr_shadow:Option<(addr_hoist::Plan,usize)>,
     addr_hoists:u64,
@@ -558,6 +560,8 @@ impl Unit {
             vtrace: vtrace_enabled(),
             fpflags: fpflags_enabled(),
             fpguard: fpguard_enabled(),
+            fpstable:fpstable_enabled(),
+            fp_mode_hoists:0,
             addrhoist:addrhoist_enabled(),
             addr_shadow:None,
             addr_hoists:0,
@@ -2368,6 +2372,11 @@ fn addrhoist_enabled()->bool {
     *F.get_or_init(||!jit_off("addrhoist")&&std::env::var("ATTESOR_JIT_ON").unwrap_or_default().split(',').any(|g|g=="addrhoist"))
 }
 
+fn fpstable_enabled()->bool {
+    static F:std::sync::OnceLock<bool>=std::sync::OnceLock::new();
+    *F.get_or_init(||!jit_off("fpstable")&&std::env::var("ATTESOR_JIT_ON").unwrap_or_default().split(',').any(|g|g=="fpstable"))
+}
+
 fn fpguard_enabled()->bool {
     static F:std::sync::OnceLock<bool>=std::sync::OnceLock::new();
     *F.get_or_init(||!jit_off("fpguard")&&std::env::var("ATTESOR_JIT_ON").unwrap_or_default().split(',').any(|g|g=="fpguard"))
@@ -2665,7 +2674,7 @@ pub(super) fn prepare_bgtrans() {
         loopra_enabled(), regioncache_enabled(), has_avx(), has_fma(),
         has_aes(), has_pclmul(), has_sha(), has_f16c(), loopra2_enabled(),
         has_avx512(), avx512_enabled(), avx512_nan_enabled(), super::fastenc_enabled(),
-        super::loops::census_enabled(), super::cost::probes(), vloop_enabled(), vloop2_enabled(), vchain_enabled(), vscalar_enabled(), funra_enabled(), funflags_enabled(), selectra_enabled(), regflags_enabled(), cfgflags_enabled(), xspill_enabled(), fmovra_enabled(), vpair_enabled(), vtrace_enabled(), fpflags_enabled(), fpguard_enabled(), addrhoist_enabled(), leafra_enabled(), csetfast_enabled(), csetpair_enabled(), leafinline_enabled(), leafflags_enabled(), super::bliccache::enabled());
+        super::loops::census_enabled(), super::cost::probes(), vloop_enabled(), vloop2_enabled(), vchain_enabled(), vscalar_enabled(), funra_enabled(), funflags_enabled(), selectra_enabled(), regflags_enabled(), cfgflags_enabled(), xspill_enabled(), fmovra_enabled(), vpair_enabled(), vtrace_enabled(), fpflags_enabled(), fpguard_enabled(), fpstable_enabled(), addrhoist_enabled(), leafra_enabled(), csetfast_enabled(), csetpair_enabled(), leafinline_enabled(), leafflags_enabled(), super::bliccache::enabled());
 }
 
 /// Translate one basic block starting at `pc` into `u`. The caller must have
@@ -2862,6 +2871,7 @@ fn emit_block_inner(u: &mut Unit, pc: u64, read: &dyn Fn(u64) -> Option<u32>, mu
     let mut fp_sink:Option<fp_flags::Plan>=None;
     let mut fp_body=None;
     let mut fp_guard_outlined=false;
+    let mut fp_mode_hoisted=false;
     u.addr_shadow=None;
     if u.notbi_enabled { u.notbi.clear(); } // no facts cross public/private loop entries
     u.loop_exit_flags = None;
@@ -2934,7 +2944,17 @@ fn emit_block_inner(u: &mut Unit, pc: u64, read: &dyn Fn(u64) -> Option<u32>, mu
                 Some((p,region.reg.iter().position(|&n|n==p.rn as u8)?,region.reg.iter().position(|&n|n==p.rm as u8)?,region.reg.iter().rposition(|&n|n==0xff)?))) {
                 addr_hoist::enter(u,p,region,base,index,shadow);u.addr_shadow=Some((p,shadow));
             }
-            if let Some(plan)=plan.filter(|_|u.fpguard) {
+            if let Some(plan)=plan.filter(|p|u.fpstable&&fp_flags::read_only_mode(pc,*p,read)) {
+                assert!(GUEST_FAULTS_FATAL);
+                let mut bad=u.a.create_label();
+                u.a.test(dword_ptr(r15+off::FPCR),FPCR_NONDEFAULT as i32).unwrap();u.a.jnz(bad).unwrap();
+                // The public guard precedes every guest effect. Only this
+                // audited, store-/helper-/system-free loop bypasses it privately.
+                let mut fast_label=fast;u.a.set_label(&mut fast_label).unwrap();u.region=Some(region);
+                fp_guard_outlined=true;fp_mode_hoisted=true;fp_sink=Some(plan);u.fp_mode_hoists+=1;
+                u.cold_paths.push(Box::new(move|u| {u.a.set_label(&mut bad).unwrap();fp_flags::reject(u,pc,region,None);}));
+                if std::env::var_os("ATTESOR_FPSTABLE_LOG").is_some() {eprintln!("fpstable-loop\t{pc:x}");}
+            }else if let Some(plan)=plan.filter(|_|u.fpguard) {
                 // A public entry cannot reconstruct a CMP that has not run.
                 // Both paths keep their FPCR check, but only private rejection
                 // repairs the previous iteration's known comparison.
@@ -3026,6 +3046,7 @@ fn emit_block_inner(u: &mut Unit, pc: u64, read: &dyn Fn(u64) -> Option<u32>, mu
             let mut e = E { u, pc: cur, fuse_in: None, scalar_inputs: None };
             e.st_pc_and_exit(cur);
             u.emit_cold_paths();
+            if fp_mode_hoisted {fp_flags::check_mode_emission(u,loop_body_start).expect("fpstable backend contract");}
             return cur;
         };
         let previous_fuse = u.fuse.take();
@@ -3176,6 +3197,7 @@ fn emit_block_inner(u: &mut Unit, pc: u64, read: &dyn Fn(u64) -> Option<u32>, mu
         count += 1;
         if term {
             u.emit_cold_paths();
+            if fp_mode_hoisted {fp_flags::check_mode_emission(u,loop_body_start).expect("fpstable backend contract");}
             return cur;
         }
         // All skipped words are proven native members, never labelled entries.
@@ -3203,6 +3225,7 @@ fn emit_block_inner(u: &mut Unit, pc: u64, read: &dyn Fn(u64) -> Option<u32>, mu
             let mut e = E { u, pc: cur, fuse_in: None, scalar_inputs: None };
             e.goto(cur);
             u.emit_cold_paths();
+            if fp_mode_hoisted {fp_flags::check_mode_emission(u,loop_body_start).expect("fpstable backend contract");}
             return cur;
         }
         // Stop before running into another block of this unit: jump to it.
@@ -3210,6 +3233,7 @@ fn emit_block_inner(u: &mut Unit, pc: u64, read: &dyn Fn(u64) -> Option<u32>, mu
             let mut e = E { u, pc: cur, fuse_in: None, scalar_inputs: None };
             e.goto(cur);
             u.emit_cold_paths();
+            if fp_mode_hoisted {fp_flags::check_mode_emission(u,loop_body_start).expect("fpstable backend contract");}
             return cur;
         }
     }
@@ -9433,7 +9457,7 @@ mod loopra_tests {
             let read=|p:u64|p.checked_sub(PC).and_then(|o|words.get((o/4)as usize)).copied();
             let mut u=Unit::new(kind,false);u.fpflags=true;u.fpguard=outlined;u.addrhoist=true;u.vloop=true;u.vchain=true;u.vscalar=true;u.loopra=true;u.loopra2=false;u.leafinline=false;u.avx512=high;
             for p in [PC,exit] {let l=u.a.create_label();u.labels.insert(p,l);}
-            emit_block(&mut u,PC,&read);emit_block(&mut u,exit,&read);assert_eq!(u.addr_hoists,1,"D={double} shifted={shifted} high={high} mid={mid}");assert_eq!(u.fpflags_sinks,1);assert_eq!(u.insns_fallback,0);let(host,_)=assemble(u,0);
+            emit_block(&mut u,PC,&read);emit_block(&mut u,exit,&read);assert_eq!(u.addr_hoists,1,"D={double} shifted={shifted} high={high} mid={mid}");assert_eq!(u.fp_mode_hoists,(u.fpstable&&!mid)as u64);assert_eq!(u.fpflags_sinks,1);assert_eq!(u.insns_fallback,0);let(host,_)=assemble(u,0);
             let vals:Vec<u64>=if double {vec![0x8000000000000000,1,0x7ff0000000000073]}else {vec![0x80000000,1,0x7f800073]};let pad=1f64.to_bits();
             for a in vals {for b in [0u64,if double {2f64.to_bits()}else {2f32.to_bits()as u64}] {for tag in [0u64,0xab00000000000000] {for start in 0..if mid {1}else {3} {for mode in [0,3<<22] {
                 let a=if double {a}else {a|(a<<32)};let data=[a;3];let mut c=cpu();for r in 0..32 {c.x[r]=0xface000000000000+r as u64;c.v[r]=[0xabcdef+r as u64,0xfedcba0000000000+r as u64];}
@@ -9470,10 +9494,10 @@ mod loopra_tests {
             let read=|p:u64|p.checked_sub(PC).and_then(|o|words.get((o/4)as usize)).copied();
             let mut u=Unit::new(kind,false);u.fpflags=true;u.fpguard=true;u.vloop=true;u.vchain=true;u.vscalar=true;u.vpair=true;u.loopra=true;u.loopra2=false;u.leafinline=false;u.avx512=high;u.avx512_nan=nan512;
             for p in [PC,exit] {let l=u.a.create_label();u.labels.insert(p,l);}
-            emit_block(&mut u,PC,&read);emit_block(&mut u,exit,&read);assert_eq!(u.fpflags_sinks,1);assert_eq!(u.insns_fallback,0);
+            emit_block(&mut u,PC,&read);emit_block(&mut u,exit,&read);assert_eq!(u.fpflags_sinks,1);assert_eq!(u.fp_mode_hoists,u.fpstable as u64);assert_eq!(u.insns_fallback,0);
             let guards:Vec<_>=u.a.instructions().windows(2).filter(|p|p[0].mnemonic()==iced_x86::Mnemonic::Test
                 &&p[0].memory_base()==iced_x86::Register::R15&&p[0].memory_displacement64()==off::FPCR as u64).collect();
-            assert_eq!(guards.len(),2);assert!(guards.iter().all(|p|p[1].mnemonic()==iced_x86::Mnemonic::Jne));
+            assert_eq!(guards.len(),if u.fp_mode_hoists==1 {1}else {2});assert!(guards.iter().all(|p|p[1].mnemonic()==iced_x86::Mnemonic::Jne));
             let(host,_)=assemble(u,0);
             let vals:Vec<u64>=if double {vec![0,0x8000000000000000,1,1f64.to_bits(),0x7ff0000000000000,0xfff0000000000000,0x7ff8000000000042,0x7ff0000000000073]}
                 else {vec![0,0x80000000,1,1f32.to_bits()as u64,0x7f800000,0xff800000,0x7fc00042,0x7f800073]};
@@ -9508,7 +9532,7 @@ mod loopra_tests {
             let at=words.len();words.push(0x54000001|(((-(at as i32)as u32)&0x7ffff)<<5));
             let read=|p:u64|p.checked_sub(PC).and_then(|o|words.get((o/4)as usize)).copied();
             let mut u=Unit::new(kind,false);u.fpflags=true;u.fpguard=true;u.vloop=true;u.vchain=true;u.vscalar=true;u.loopra=true;u.loopra2=false;u.leafinline=false;u.avx512=high;
-            let l=u.a.create_label();u.labels.insert(PC,l);emit_block(&mut u,PC,&read);assert_eq!(u.fpflags_sinks,1);let(host,_)=assemble(u,0);
+            let l=u.a.create_label();u.labels.insert(PC,l);emit_block(&mut u,PC,&read);assert_eq!(u.fpflags_sinks,1);assert_eq!(u.fp_mode_hoists,0);let(host,_)=assemble(u,0);
             let padding=1f64.to_bits();
             for counter in [0,1,if counter64 {0x7fffffffffffffff}else {0x7fffffff},if counter64 {0x8000000000000000}else {0x80000000}] {for a in [0u64,1f64.to_bits(),0x7ff0000000000073] {
                 let data=[a,2f64.to_bits()];let mut c=cpu();for r in 0..32 {c.x[r]=0xfeed000000000000+r as u64;c.v[r]=[r as u64,0x12345678];}
