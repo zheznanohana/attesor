@@ -11,6 +11,8 @@
 #include <string>
 #include <vector>
 #include <sys/mman.h>
+#include <mach-o/loader.h>
+#include <mach/vm_prot.h>
 
 template<class T> struct Interval {T low,high;};
 struct DataEntry {uint32_t offset;uint16_t length,kind;};
@@ -19,6 +21,61 @@ struct Translation;
 template<class F> F symbol(void* h,const char* name) {
     auto p=dlsym(h,name);if(!p)throw std::runtime_error(std::string("missing export: ")+name);
     return reinterpret_cast<F>(p);
+}
+// Observe this library's own resolved, read-only ABI name table instead of
+// guessing a version-specific count or copying a stale third-party list.
+// Only string pointers within its __cstring section may be dereferenced.
+std::vector<const char*> routine_names(void* exported_function) {
+    Dl_info info={};
+    if(!dladdr(exported_function,&info)||!info.dli_fbase)throw std::runtime_error("dladdr failed");
+    auto h=static_cast<const mach_header_64*>(info.dli_fbase);
+    if(h->magic!=MH_MAGIC_64||h->ncmds>1024)throw std::runtime_error("unexpected library header");
+    uintptr_t slide=0,strings_low=0,strings_high=0;
+    std::vector<const segment_command_64*> segments;
+    auto cmd=reinterpret_cast<const load_command*>(h+1);
+    for(unsigned i=0;i<h->ncmds;i++) {
+        if(cmd->cmd==LC_SEGMENT_64) {
+            auto s=reinterpret_cast<const segment_command_64*>(cmd);segments.push_back(s);
+            if(!strcmp(s->segname,"__TEXT"))slide=reinterpret_cast<uintptr_t>(h)-s->vmaddr;
+        }
+        cmd=reinterpret_cast<const load_command*>(reinterpret_cast<const char*>(cmd)+cmd->cmdsize);
+    }
+    for(auto s:segments) {
+        auto sections=reinterpret_cast<const section_64*>(s+1);
+        for(unsigned j=0;j<s->nsects;j++)if(!strcmp(sections[j].sectname,"__cstring")) {
+            strings_low=slide+sections[j].addr;strings_high=strings_low+sections[j].size;
+        }
+    }
+    if(!strings_low)throw std::runtime_error("no string section");
+    auto valid=[&](uintptr_t p) {
+        if(p<strings_low||p>=strings_high)return false;
+        unsigned n=0;
+        for(;n<80&&p+n<strings_high;n++) {
+            auto c=*reinterpret_cast<const unsigned char*>(p+n);
+            if(c==0)return n>0;
+            if(!((c>='a'&&c<='z')||(c>='A'&&c<='Z')||(c>='0'&&c<='9')||c=='_'))return false;
+        }
+        return false;
+    };
+    std::vector<const char*> found;
+    for(auto s:segments) {
+        if(!(s->initprot&VM_PROT_READ)||!strcmp(s->segname,"__LINKEDIT"))continue;
+        const auto low=(slide+s->vmaddr+7)&~uintptr_t(7);
+        const auto high=slide+s->vmaddr+s->filesize;
+        for(auto at=low;at+24<=high;at+=8) {
+            auto table=reinterpret_cast<const uintptr_t*>(at);
+            if(!valid(table[0])||strcmp(reinterpret_cast<const char*>(table[0]),"branch_slot")
+                ||!valid(table[1])||strcmp(reinterpret_cast<const char*>(table[1]),"indirect_jmp")
+                ||!valid(table[2])||strcmp(reinterpret_cast<const char*>(table[2]),"indirect_jmp_dyld_stub"))continue;
+            std::vector<const char*> candidate;
+            for(unsigned j=0;j<128&&at+8*(j+1)<=high&&valid(table[j]);j++)candidate.push_back(reinterpret_cast<const char*>(table[j]));
+            if(candidate.size()<32||candidate.size()>=128)continue;
+            if(!found.empty()&&found!=candidate)throw std::runtime_error("ambiguous ABI name table");
+            found=candidate;
+        }
+    }
+    if(found.empty())throw std::runtime_error("no bounded ABI name table");
+    return found;
 }
 int main(int argc,char** argv) try {
     if(argc!=4)throw std::runtime_error("usage: aot_probe arith|flags|fpchain|loop ir|translate output.bin");
@@ -47,19 +104,19 @@ int main(int argc,char** argv) try {
     memcpy(input,bytes.data(),bytes.size());
     Module* module=create(input,{0,0},{0,0},{0,(uint32_t)bytes.size()},{0,UINT64_MAX},{0,0},0,{0},{});
     if(!module)throw std::runtime_error("null IR module");
-    puts("IR_BEGIN");print(module,1);puts("IR_END");fflush(stdout);
+    puts("IR_BEGIN");fflush(stdout);print(module,1);puts("IR_END");fflush(stdout);
     if(mode=="translate") {
         // Synthetic metadata makes this a CODE-SHAPE probe, NOT a runnable
         // Rosetta process ABI. Output is never mapped executable or executed.
         // No copyrighted runtime helper code or protected cache is copied.
         uint32_t context_offsets[]={0,8,16,24,32,64};
         symbol<void(*)(const uint32_t*)>(h,"_ZN7rosetta14librosetta_aot31register_thread_context_offsetsEPKNS_20ThreadContextOffsetsE")(context_offsets);
-        uint32_t offsets[100]={};const char* names[100];
-        std::vector<std::string> storage;storage.reserve(100);
-        for(unsigned i=0;i<100;i++){offsets[i]=i*16;storage.push_back("synthetic_"+std::to_string(i));}
-        for(unsigned i=0;i<100;i++)names[i]=storage[i].c_str();
-        const uint64_t count=version>=0x15d0000000000ULL?100:98;
-        symbol<void(*)(const uint32_t*,const char**,uint64_t)>(h,"_ZN7rosetta14librosetta_aot32register_runtime_routine_offsetsEPKjPPKcm")(offsets,names,count);
+        auto register_offsets=symbol<void(*)(const uint32_t*,const char**,uint64_t)>(h,"_ZN7rosetta14librosetta_aot32register_runtime_routine_offsetsEPKjPPKcm");
+        auto names=routine_names(reinterpret_cast<void*>(register_offsets));
+        std::vector<uint32_t> offsets(names.size());
+        for(unsigned i=0;i<offsets.size();i++)offsets[i]=i*16;
+        printf("OBSERVED_ABI_ROUTINES %zu SYNTHETIC_OFFSETS=1\n",names.size());fflush(stdout);
+        register_offsets(offsets.data(),names.data(),names.size());
         auto result=symbol<Translation*(*)(const Module*)>(h,"_ZN7rosetta14librosetta_aot9translateEPKNS0_12ModuleResultE")(module);
         if(!result)throw std::runtime_error("null translation");
         auto size=symbol<uint64_t(*)(const Translation*)>(h,"_ZN7rosetta14librosetta_aot19translator_get_sizeEPKNS0_17TranslationResultE")(result);
