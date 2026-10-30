@@ -15,9 +15,9 @@
   "elapsed_is_not_a_benchmark": true,
   "app": "/Applications/DeepSeek Harness.app",
   "entry": "/Applications/DeepSeek Harness.app/Contents/MacOS/DeepSeek Harness",
-  "attesor": "/Users/zhez/bin/attesor",
+  "attesor": "/Users/USER/bin/attesor",
   "attesor_sha256": "c19e12ad398809cec1e9cc2bb3a4610c1dff7d34f2686a3629126665a1814550",
-  "runner": "/Users/zhez/attesor-launcher/run-app",
+  "runner": "/Users/USER/attesor-launcher/run-app",
   "runner_sha256": "98cf4b6b54d91f863e0f2335fd08d521a35d0e3ff93f563c1e496234545e1725",
   "owned_entry": {
     "arm64": true,
@@ -31,7 +31,7 @@
   "logs": {
     "entry": "/private/tmp/attesor-perf/final-dsh-gpu-6is817w7/entry.log",
     "private_application_copy": "/private/tmp/attesor-perf/final-dsh-gpu-6is817w7/application.log",
-    "existing_runner_log": "/Users/zhez/Library/Logs/Attesor/DeepSeek Harness.log",
+    "existing_runner_log": "/Users/USER/Library/Logs/Attesor/DeepSeek Harness.log",
     "policy": "source read-only tail from starting inode/offset; never truncated/deleted"
   },
   "command": [
@@ -47,9 +47,9 @@
   "private_data": "/private/tmp/aep-ykq9g12d",
   "app_arguments_use_shell": false,
   "launch_environment": {
-    "HOME": "/Users/zhez",
-    "ATTESOR": "/Users/zhez/bin/attesor",
-    "ATTESOR_BIN": "/Users/zhez/bin/attesor",
+    "HOME": "/Users/USER",
+    "ATTESOR": "/Users/USER/bin/attesor",
+    "ATTESOR_BIN": "/Users/USER/bin/attesor",
     "ATTESOR_CACHE": "/private/tmp/attesor-perf/final-dsh-gpu-6is817w7/cache",
     "ATTESOR_NO_AOT_BUILD": "1",
     "ATTESOR_AOT_CHECKPOINT": "0",

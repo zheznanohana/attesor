@@ -38,7 +38,7 @@ fn snapshot(c: &Cpu) -> Vec<u64> {
 }
 
 /// Pairs of (flag-setting instruction, flag consumer) to exercise compare-and-branch / select fusion.
-fn run_selftest_fuse(count: usize, deep: bool) {
+fn run_selftest_fuse(count: usize, deep: bool, seed: Option<u64>) {
     // (mask, value) of the flag-setting encodings: add/sub imm, shifted reg, extended reg (all with S),
     // logical imm, logical shifted reg (ANDS/BICS).
     const SETTERS: [(u32, u32); 5] = [
@@ -51,7 +51,7 @@ fn run_selftest_fuse(count: usize, deep: bool) {
     let page = unsafe {
         libc::mmap(std::ptr::null_mut(), 0x1000, libc::PROT_READ | libc::PROT_WRITE, libc::MAP_ANON | libc::MAP_PRIVATE, -1, 0) as u64
     };
-    let mut rng = Rng(0x1234_5678_9abc_def1);
+    let mut rng = Rng(seed.unwrap_or(0x1234_5678_9abc_def1));
     let (mut ok, mut bad, mut skipped, mut native, mut fused) = (0u64, 0u64, 0u64, 0u64, 0u64);
     for it in 0..count {
         let (mask, val) = SETTERS[(rng.next() % SETTERS.len() as u64) as usize];
@@ -169,11 +169,12 @@ fn run_selftest_fuse(count: usize, deep: bool) {
         }
     }
     println!("jit selftest [fuse{}]: ok={ok} mismatch={bad} skipped={skipped} native={native} pairs={fused} dead_flag_skips={}", if deep { "2" } else { "" }, DEAD_FLAG_SKIPS.load(Ordering::Relaxed));
+    assert_eq!(bad, 0, "fusion differential mismatches");
 }
 
 /// Flag setter feeding a chain of 1-3 selects, then either a B.cond over a writer or straight-line code
 /// up to a writer: the shape where the setter's guest flags are never stored (flags_dead_after_selects).
-fn run_selftest_selchain(count: usize) {
+fn run_selftest_selchain(count: usize, seed: Option<u64>) {
     const SETTERS: [(u32, u32); 5] = [
         (0x3F80_0000, 0x3100_0000),
         (0x3F20_0000, 0x2B00_0000),
@@ -184,7 +185,7 @@ fn run_selftest_selchain(count: usize) {
     let page = unsafe {
         libc::mmap(std::ptr::null_mut(), 0x1000, libc::PROT_READ | libc::PROT_WRITE, libc::MAP_ANON | libc::MAP_PRIVATE, -1, 0) as u64
     };
-    let mut rng = Rng(0x5e1c_4a11_0bad_cafe);
+    let mut rng = Rng(seed.unwrap_or(0x5e1c_4a11_0bad_cafe));
     let (mut ok, mut bad, mut skipped, mut native) = (0u64, 0u64, 0u64, 0u64);
     let skips0 = DEAD_FLAG_SKIPS.load(Ordering::Relaxed);
     let setter_of = |rng: &mut Rng| {
@@ -277,6 +278,7 @@ fn run_selftest_selchain(count: usize) {
         }
     }
     println!("jit selftest [selchain]: ok={ok} mismatch={bad} skipped={skipped} native={native} dead_flag_skips={}", DEAD_FLAG_SKIPS.load(Ordering::Relaxed) - skips0);
+    assert_eq!(bad, 0, "select-chain differential mismatches");
 }
 
 /// Random straight-line blocks over a small register set (so values are reused constantly): exercises
@@ -326,7 +328,7 @@ fn fp_val(rng: &mut Rng) -> u64 {
     }
 }
 
-fn run_selftest_blocks(count: usize, fp: bool) {
+fn run_selftest_blocks(count: usize, fp: bool, seed: Option<u64>) {
     const CLASSES: [(u32, u32); 6] = [
         (0x1C00_0000, 0x1000_0000), // dp immediate
         (0x0E00_0000, 0x0A00_0000), // dp register
@@ -340,7 +342,7 @@ fn run_selftest_blocks(count: usize, fp: bool) {
     };
     let mut buf = vec![0u8; 1 << 20];
     let bufp = buf.as_mut_ptr() as u64;
-    let mut rng = Rng(0x0dd_ba11_f00d_cafe);
+    let mut rng = Rng(seed.unwrap_or(0x0dd_ba11_f00d_cafe));
     let (mut ok, mut bad, mut skipped, mut insns, mut fallbacks) = (0u64, 0u64, 0u64, 0u64, 0u64);
     for it in 0..count {
         let len = match std::env::var("ATTESOR_SELFTEST_LEN").ok().and_then(|v| v.parse().ok()) {
@@ -463,6 +465,7 @@ fn run_selftest_blocks(count: usize, fp: bool) {
         buf.copy_from_slice(&mem0);
     }
     println!("jit selftest [{}]: ok={ok} mismatch={bad} skipped={skipped} insns={insns} fallback_insns={fallbacks}", if fp { "fpblocks" } else { "blocks" });
+    assert_eq!(bad, 0, "block differential mismatches");
 }
 
 /// Keep the loop counters (x24, x28), branch scratch
@@ -602,9 +605,9 @@ fn loop_insn(rng: &mut Rng, pool: &[u32], wide: bool, i: usize, index_option: u3
     }
 }
 
-/// Bounded single-block loops, plus side-exit, interpreter-helper and in-body
-/// SVC probes. Side exits/SVC split basic blocks deliberately: those cases must
-/// remain correct even when a loop is ineligible for the region optimization.
+/// Bounded single/multi-block loops: diamonds, side exits in either arm,
+/// helpers in one arm, flag-carrying joins, multiple latches and nested reentry.
+/// The same random memory/FP/alias/pressure operands run on the new path.
 fn run_selftest_loops(count: usize, seed: u64) {
     assert_ne!(seed, 0, "xorshift seed must be nonzero");
     let counting = COUNT_LOOP_REGIONS.swap(true, Ordering::Relaxed);
@@ -620,6 +623,9 @@ fn run_selftest_loops(count: usize, seed: u64) {
     let (mut ok, mut bad, mut skipped, mut native) = (0u64, 0u64, 0u64, 0u64);
     let (mut max_blocks, mut nested_entries, mut aliases, mut q_scale16, mut negative_sxtw) = (0u64,0u64,0u64,0u64,0u64);
     let regions0 = STATS_LOOP_REGIONS.load(Ordering::Relaxed);
+    let multi0 = STATS_MULTI_LOOP_REGIONS.load(Ordering::Relaxed);
+    let mut multi_cases = 0;
+    let mut guest_calls = 0;
     for it in 0..count {
         let wide = (it / 8) % 4 == 0;
         let pool_len = if wide { 12 + rng.next() as usize % 5 } else { 3 + rng.next() as usize % 4 };
@@ -630,13 +636,54 @@ fn run_selftest_loops(count: usize, seed: u64) {
         let branch_kind = it % 3;
         let max_body = it % 32 == 0;
         let nested = it % 16 == 1;
+        let shape = (it / 8) % 8;
         let len = if max_body { emit::MAX_BLOCK_INSNS - if branch_kind == 2 {3} else {2} }
             else if wide { pool_len - 2 } else { 2 + rng.next() as usize % 13 };
         let iterations = 1 + rng.next() % if max_body || nested {3} else {50};
         let outer = if nested { 2 + rng.next() % 15 } else {1};
         let index_option = [2,3,6,7][it % 4];
         let mut prog = Vec::new();
-        let mut side_branch = None;
+        let mut side_branches = Vec::new();
+        let mut guest_call = None;
+        if !max_body && shape != 0 {
+            multi_cases += 1;
+            // Both arms contain random operand forms. Even/odd trip counts
+            // exercise both arms repeatedly, with a single fixed assignment.
+            if shape == 7 {
+                prog.push(0xd100_0000 | ((1 + rng.next() % iterations) as u32) << 10 | (28 << 5) | 27);
+                side_branches.push(prog.len()); prog.push(0);
+            }
+            let split = prog.len(); prog.push(0); // TBZ counter -> second arm
+            for i in 0..3 { prog.push(loop_insn(&mut rng, &pool, wide, i, index_option)); }
+            if shape == 2 {
+                if it & 1 != 0 {
+                    guest_call = Some(prog.len()); prog.push(0); // BL callee, patched below
+                    guest_calls += 1;
+                } else {
+                    prog.push(0x1ac0_4000 | (pool[1] << 16) | (pool[0] << 5) | pool[0]);
+                }
+            }
+            if shape == 3 || shape == 6 {
+                prog.push(0xd100_0000 | ((1 + rng.next() % iterations) as u32) << 10 | (28 << 5) | 27);
+                side_branches.push(prog.len()); prog.push(0);
+            }
+            let join = prog.len(); prog.push(0); // B join
+            let arm = prog.len();
+            for i in 0..3 { prog.push(loop_insn(&mut rng, &pool, wide, i+3, index_option)); }
+            if shape == 3 || shape == 7 {
+                prog.push(0xd100_0000 | ((1 + rng.next() % iterations) as u32) << 10 | (28 << 5) | 27);
+                side_branches.push(prog.len()); prog.push(0);
+            }
+            prog[split] = 0x3600_001c | (((arm - split) as u32) << 5);
+            prog[join] = 0x1400_0000 | ((prog.len() - join) as u32);
+            if shape == 4 {
+                // NZCV survives a non-flag-setting branch and an internal join.
+                prog.push(0xf100_071f); // cmp x24,#1
+                prog.push(0x3600_005c); // tbz w28,#0,+8
+                prog.push(0xd503_201f); // nop
+                prog.push(0x9a9f_07fa); // cset x26,ne
+            }
+        }
         for i in 0..len {
             prog.push(loop_insn(&mut rng, &pool, wide, i, index_option));
             if !max_body && i == 0 && it % 16 < 4 {
@@ -655,7 +702,7 @@ fn run_selftest_loops(count: usize, seed: u64) {
                         // still positive here, so subtracting zero never takes it.
                         let at = if exit_kind == 4 { 1 + rng.next() % iterations } else { 0 };
                         prog.push(0xd100_0000 | ((at as u32) << 10) | (28 << 5) | 27);
-                        side_branch = Some(prog.len());
+                        side_branches.push(prog.len());
                         prog.push(0); // CBZ x27, side_svc (patched below)
                     }
                     6 => {
@@ -674,12 +721,22 @@ fn run_selftest_loops(count: usize, seed: u64) {
         // bit. NEG(counter) has its sign bit set exactly while counter > 0.
         prog.push(sf | 0x5100_0400 | (if branch_kind == 0 { 1 << 29 } else { 0 }) | (28 << 5) | 28);
         if branch_kind == 2 { prog.push(sf | 0x4b00_0000 | (28 << 16) | (31 << 5) | 27); }
-        let back = -(prog.len() as i32) as u32;
-        prog.push(match branch_kind {
-            0 => 0x5400_0001 | ((back & 0x7ffff) << 5),
-            1 => sf | 0x3500_0000 | ((back & 0x7ffff) << 5) | 28,
-            _ => sf | 0x3700_0000 | (31 << 19) | ((back & 0x3fff) << 5) | 27,
-        });
+        let latch = |at: usize| {
+            let back = -(at as i32) as u32;
+            match branch_kind {
+                0 => 0x5400_0001 | ((back & 0x7ffff) << 5),
+                1 => sf | 0x3500_0000 | ((back & 0x7ffff) << 5) | 28,
+                _ => sf | 0x3700_0000 | (31 << 19) | ((back & 0x3fff) << 5) | 27,
+            }
+        };
+        if !max_body && shape == 5 {
+            // Alternate between two genuinely executed backedges. All inserted
+            // branches preserve NZCV produced by SUBS on the flag-based form.
+            prog.push(0x3600_007c); // tbz w28,#0,+12
+            prog.push(latch(prog.len()));
+            prog.push(0x1400_0002); // b exit
+            prog.push(latch(prog.len()));
+        } else { prog.push(latch(prog.len())); }
         if max_body { assert_eq!(prog.len(),emit::MAX_BLOCK_INSNS); max_blocks += 1; }
         if nested { nested_entries += outer; }
         if index_option == 6 { negative_sxtw += 1; }
@@ -697,11 +754,16 @@ fn run_selftest_loops(count: usize, seed: u64) {
             prog.push(0x1400_0000 | (back & 0x3ff_ffff));
         }
         prog.push(0xd400_1001); // normal exit: SVC #0x80
-        if let Some(at) = side_branch {
+        for at in side_branches {
             let offset = (prog.len() - at) as u32;
             prog[at] = 0xb400_0000 | (offset << 5) | 27;
         }
         prog.push(0xd400_1021); // side exit: SVC #0x81
+        if let Some(at) = guest_call {
+            prog[at] = 0x9400_0000 | (prog.len()-at) as u32;
+            prog.push(0x1ac0_4000 | (pool[1] << 16) | (27 << 5) | 27); // CRC32B w27,w27,wM
+            prog.push(0xd65f_03c0); // RET: x30 was set by BL
+        }
         unsafe {
             for (i, &w) in prog.iter().enumerate() { *((page + i as u64 * 4) as *mut u32) = w; }
         }
@@ -732,9 +794,11 @@ fn run_selftest_loops(count: usize, seed: u64) {
         let mut reference = clone_cpu(&init);
         let limit = (prog.len() + 1) * (iterations as usize + 1) * (outer as usize + 1);
         let mut svc = None;
+        let mut helper_probe_executed = false;
         for _ in 0..limit {
             let idx = reference.pc().wrapping_sub(page) / 4;
             let Some(&w) = prog.get(idx as usize) else { break };
+            helper_probe_executed |= w & 0xffe0_fc00 == 0x1ac0_4000;
             match interp::exec(&mut reference, w) {
                 Ok(()) => {}
                 Err(Exit::Svc(imm)) => { svc = Some(imm); break; }
@@ -760,7 +824,7 @@ fn run_selftest_loops(count: usize, seed: u64) {
         let fallbacks = STATS_FALLBACK.load(Ordering::Relaxed) - fb0;
         if fallbacks == 0 { native += 1; }
         // Keep the fallback probe honest if native instruction coverage changes.
-        assert!(exit_kind != 6 || fallbacks != 0, "loop fallback probe became native");
+        assert!(!helper_probe_executed || fallbacks != 0, "loop fallback probe became native");
         let (a, b) = (snapshot(&reference), snapshot(&translated));
         let mem_diff = buf != expected_memory;
         if a != b || mem_diff || reference.pc() != translated.pc()
@@ -785,8 +849,98 @@ fn run_selftest_loops(count: usize, seed: u64) {
     unsafe { libc::munmap(page as *mut libc::c_void, 0x1000); }
     COUNT_LOOP_REGIONS.store(counting, Ordering::Relaxed);
     let loop_regions = STATS_LOOP_REGIONS.load(Ordering::Relaxed) - regions0;
-    println!("jit selftest [loops]: ok={ok} mismatch={bad} skipped={skipped} native={native} loop_regions={loop_regions} seed={seed:#x} max_blocks={max_blocks} nested_entries={nested_entries} aliases={aliases} q_scale16={q_scale16} negative_sxtw={negative_sxtw}");
+    let multi_regions = STATS_MULTI_LOOP_REGIONS.load(Ordering::Relaxed) - multi0;
+    println!("jit selftest [loops]: ok={ok} mismatch={bad} skipped={skipped} native={native} loop_regions={loop_regions} seed={seed:#x} max_blocks={max_blocks} nested_entries={nested_entries} aliases={aliases} q_scale16={q_scale16} negative_sxtw={negative_sxtw} multi_cases={multi_cases} multi_regions={multi_regions} guest_calls={guest_calls}");
     assert_eq!(bad, 0, "loop differential mismatches");
+}
+
+/// Exhaustive operand-form cycle: random encodings almost never combine region
+/// entry, SIMD Q x16 addressing, poisoned UXTW upper bits and aliased outputs.
+/// Check all architectural state and the entire memory image, not just a checksum.
+fn run_selftest_addrforms(count: usize, seed: u64) {
+    assert_ne!(seed, 0);
+    let page = unsafe { libc::mmap(std::ptr::null_mut(), 4096,
+        libc::PROT_READ | libc::PROT_WRITE, libc::MAP_ANON | libc::MAP_PRIVATE, -1, 0) };
+    assert_ne!(page, libc::MAP_FAILED);
+    let pc = page as u64;
+    let mut memory = vec![0u8; 8192];
+    let mut rng = Rng(seed);
+    // (SIMD, size, opc): integer signed/unsigned loads and stores, B/H/S/D/Q.
+    let mut forms = Vec::new();
+    for size in 0..4u32 {
+        for opc in 0..4u32 {
+            if (opc == 2 && size == 3) || (opc == 3 && size >= 2) { continue; }
+            forms.push((0, size, opc));
+        }
+        forms.push((1, size, 0)); forms.push((1, size, 1));
+    }
+    forms.extend([(1, 0, 2), (1, 0, 3)]);
+    let combinations = forms.len() * 4 * 2 * 2 * 2 * 5;
+    let (mut ok, mut native, mut q16) = (0usize, 0usize, 0usize);
+    for it in 0..count {
+        let mut n = it % combinations;
+        let (v, size, opc) = forms[n % forms.len()]; n /= forms.len();
+        let option = [2, 3, 6, 7][n % 4]; n /= 4;
+        let scaled = (n % 2) as u32; n /= 2;
+        let rn = if n % 2 == 0 { 0 } else { 31 }; n /= 2;
+        let rm = if n % 2 == 0 { 1 } else { 31 }; n /= 2;
+        let rt = [0, 1, 2, 30, 31][n % 5];
+        let access = 0x3820_0800 | (size << 30) | (v << 26) | (opc << 22)
+            | (rm << 16) | (option << 13) | (scaled << 12) | (rn << 5) | rt;
+        let words = [access, 0x9100_0000 | (21 << 5) | rn,
+            0x9100_0000 | (22 << 5) | 1, 0xf100_079c, 0x54ff_ff81, 0xd400_1001];
+        unsafe { std::ptr::copy_nonoverlapping(words.as_ptr(), page as *mut u32, words.len()); }
+        invalidate_range(pc, 4096);
+        for chunk in memory.chunks_exact_mut(8) { chunk.copy_from_slice(&rng.next().to_le_bytes()); }
+        let before = memory.clone();
+        let mut init = Cpu::new();
+        for r in 0..32 { init.x[r] = rng.val(); init.v[r] = [rng.next(), rng.next()]; }
+        let base = (memory.as_ptr() as u64 + 4096) | if it & 1 == 0 {0} else {0xab00_0000_0000_0000};
+        let index = match option {
+            2 => 0xdead_beef_0000_0000 | (1 + rng.next() % 31),
+            6 => 0xdead_beef_0000_0000 | ((-(1 + (rng.next() % 31) as i32)) as u32 as u64),
+            7 => (-(1 + (rng.next() % 31) as i64)) as u64,
+            _ => 1 + rng.next() % 31,
+        };
+        init.x[rn as usize] = base; init.x[1] = index;
+        init.x[21] = base; init.x[22] = index; init.x[28] = 3;
+        init.tpidr_el0 = rng.next(); init.tpidrro_el0 = rng.next();
+        init.fpsr = rng.next() & 0x0800_009f;
+        init.set_nzcv((rng.next() & 15) as u32); init.set_pc(pc);
+        let mut reference = clone_cpu(&init);
+        let mut expected_svc = None;
+        for _ in 0..32 {
+            let w = unsafe { *(reference.pc() as *const u32) };
+            match interp::exec(&mut reference, w) {
+                Ok(()) => {}, Err(Exit::Svc(imm)) => { expected_svc = Some(imm); break; },
+                other => panic!("addrforms reference rejected {access:08x}: {other:?}"),
+            }
+        }
+        assert_eq!(expected_svc, Some(0x80));
+        let expected_memory = memory.clone(); memory.copy_from_slice(&before);
+        let mut actual = clone_cpu(&init); setup_cpu(&mut actual);
+        let fb0 = STATS_FALLBACK.load(Ordering::Relaxed);
+        for _ in 0..32 {
+            let host = lookup_or_translate(actual.pc());
+            unsafe { attesor_jit_enter(&mut actual, host); }
+            if actual.exit_reason != EXIT_CONTINUE { break; }
+        }
+        assert!(PENDING.with(|p| p.take()).is_none(), "addrforms pending {access:08x}");
+        assert_eq!(snapshot(&reference), snapshot(&actual), "addrforms state case={it} word={access:08x}");
+        assert_eq!(reference.pc(), actual.pc(), "addrforms PC {access:08x}");
+        assert_eq!((reference.fpcr, reference.fpsr, reference.tpidrro_el0),
+            (actual.fpcr, actual.fpsr, actual.tpidrro_el0), "addrforms system state {access:08x}");
+        assert_eq!((reference.excl_addr, reference.excl_val, reference.excl_val2, reference.excl_size),
+            (actual.excl_addr, actual.excl_val, actual.excl_val2, actual.excl_size));
+        assert_eq!(actual.exit_reason, EXIT_SVC); assert_eq!(actual.exit_data, 0x80);
+        assert!(memory == expected_memory, "addrforms memory case={it} word={access:08x}");
+        if STATS_FALLBACK.load(Ordering::Relaxed) == fb0 { native += 1; }
+        if v == 1 && opc >= 2 && scaled == 1 { q16 += 1; }
+        ok += 1;
+    }
+    invalidate_range(pc, 4096);
+    unsafe { libc::munmap(page, 4096); }
+    println!("jit selftest [addrforms]: ok={ok} mismatch=0 skipped=0 native={native} combinations={combinations} q_scale16={q16} seed={seed:#x}");
 }
 
 /// Deterministic NaN boundary matrix, including signalling/quiet priority,
@@ -891,6 +1045,7 @@ fn run_selftest_fpnan(count: usize) {
     }
     unsafe { libc::munmap(page as *mut libc::c_void, 0x1000); }
     println!("jit selftest [fpnan]: ok={ok} mismatch={bad} skipped={skipped} native={native}");
+    assert_eq!(bad, 0, "FP NaN differential mismatches");
 }
 
 /// Memory-block test with tagged pointers, literal scratch writes and a
@@ -901,14 +1056,14 @@ extern "C" fn tbi_clobbering_helper(cpu: *mut Cpu, insn: u32, pc: u64) -> u64 {
     status
 }
 
-fn run_selftest_tbiblocks(count: usize) {
+fn run_selftest_tbiblocks(count: usize, seed: Option<u64>) {
     let page = unsafe {
         libc::mmap(std::ptr::null_mut(), 0x1000, libc::PROT_READ | libc::PROT_WRITE,
                    libc::MAP_ANON | libc::MAP_PRIVATE, -1, 0) as u64
     };
     let mut memory = vec![0u8; 8192];
     let addr = memory.as_mut_ptr() as u64;
-    let mut rng = Rng(0x7142_19a5_0022_8bb1);
+    let mut rng = Rng(seed.unwrap_or(0x7142_19a5_0022_8bb1));
     let (mut ok, mut bad, mut native, mut fallbacks) = (0u64, 0u64, 0u64, 0u64);
     for it in 0..count {
         for chunk in memory.chunks_exact_mut(8) { chunk.copy_from_slice(&rng.next().to_le_bytes()); }
@@ -971,6 +1126,7 @@ fn run_selftest_tbiblocks(count: usize) {
     }
     unsafe { libc::munmap(page as *mut libc::c_void, 0x1000); }
     println!("jit selftest [tbiblocks]: ok={ok} mismatch={bad} skipped=0 native={native} fallback_insns={fallbacks}");
+    assert_eq!(bad, 0, "TBI block differential mismatches");
 }
 
 /// Private complete units avoid relying on hot thresholds/chaining to exercise
@@ -1082,7 +1238,7 @@ impl CallsCode {
             emit::emit_block(&mut u, pc + i as u64 * 4, &|p| p.checked_sub(pc).and_then(|x| words.get((x / 4) as usize)).copied());
         }
         u.finish();
-        let r = u.a.assemble_options(self.base, BlockEncoderOptions::RETURN_NEW_INSTRUCTION_OFFSETS).unwrap();
+        let r = u.assemble_options(self.base, BlockEncoderOptions::RETURN_NEW_INSTRUCTION_OFFSETS).unwrap();
         assert!(r.inner.code_buffer.len() < self.len);
         unsafe { std::ptr::copy_nonoverlapping(r.inner.code_buffer.as_ptr(), self.base as *mut u8, r.inner.code_buffer.len()); }
         let hosts = u.labels.iter().map(|(&p, l)| (p, r.label_ip(l).unwrap())).collect();
@@ -1093,10 +1249,10 @@ impl Drop for CallsCode {
     fn drop(&mut self) { unsafe { libc::munmap(self.base as *mut _, self.len); } }
 }
 
-fn run_selftest_calls(count: usize) {
+fn run_selftest_calls(count: usize, seed: Option<u64>) {
     const PC: u64 = 0x2000_0000;
     let code = CallsCode::new();
-    let mut rng = Rng(0xca11_7e57_1234_5678);
+    let mut rng = Rng(seed.unwrap_or(0xca11_7e57_1234_5678));
     let mut stack = vec![0u8; 32768];
     let mut ok = 0; let mut bad = 0; let mut native = 0;
     for it in 0..count {
@@ -1119,7 +1275,12 @@ fn run_selftest_calls(count: usize) {
         assert!(svc.is_some(), "nonterminating calls reference: {mode}");
         let expected_memory = stack.clone(); stack.fill(0);
         let mut j = clone_cpu(&init); setup_cpu(&mut j);
-        ibtc_clear(); for (&p, &h) in &hosts { ibtc_insert(p, h); }
+        // These full-tier fixture hosts are intentionally not published in BLOCKS.
+        // Seed the fixture IBTC directly; tiered's production insertion requires
+        // current registry ownership and must reject unregistered/cold hosts.
+        ibtc_clear(); for (&p, &h) in &hosts {
+            IBTC.with(|t| t.borrow_mut().as_mut().unwrap().insert(p, h));
+        }
         let mut pending = None;
         for _ in 0..20000 {
             let Some(&host) = hosts.get(&j.pc()) else { break };
@@ -1140,26 +1301,319 @@ fn run_selftest_calls(count: usize) {
     }
     ibtc_clear(); // no dangling entries into the private mapping
     println!("jit selftest [calls]: ok={ok} mismatch={bad} skipped=0 native={native} callret={} deep={}", emit::callret_enabled() as u8, count / 8);
+    assert_eq!(bad, 0, "call differential mismatches");
+}
+
+/// Whole-unit relocation: short/near branches, patchable slots, indirect calls,
+/// RET, integer/FP constants, chaining, invalidation, and retranslation. Check
+/// stub label metadata before execution so a missing continuation rebase reports
+/// mismatches rather than jumping into the middle of an instruction.
+fn run_selftest_jitcode(count: usize, seed: u64) {
+    let page = unsafe { libc::mmap(std::ptr::null_mut(), 0x4000,
+        libc::PROT_READ | libc::PROT_WRITE, libc::MAP_ANON | libc::MAP_PRIVATE, -1, 0) as u64 };
+    assert_ne!(page, libc::MAP_FAILED as u64);
+    let mut rng = Rng(seed.max(1));
+    let (mut ok, mut bad) = (0, 0);
+    let mut residues = [0usize; 8];
+    for it in 0..count {
+        invalidate_range(page, 0x4000);
+        ibtc_clear();
+        // Every unit in this standalone fixture belonged to the just-retired
+        // generation. Production keeps old slot metadata for safety, but these
+        // test-only stale slots will never execute again. Retaining them makes
+        // the metadata audit quadratic (and auditing promotions multiplies it
+        // by the tier threshold), hiding failures behind an L1 timeout.
+        if let Some(ix) = INDEX.lock().unwrap().as_mut() { ix.slot_cont.clear(); }
+        let mut init = Cpu::new();
+        init.set_pc(page);
+        for n in 0..32 { init.x[n] = rng.val(); }
+        init.set_nzcv((rng.next() & 15) as u32);
+        let mut p = Vec::new();
+        // Change both encoding size and branch displacement. > 127 host bytes
+        // requires near conditional transfers, including constant pool operands.
+        for n in 0..it % 40 {
+            let rd = (n % 5) as u32;
+            p.push(0x9100_0000 | ((rng.next() as u32 & 4095) << 10) | (rd << 5) | rd);
+        }
+        p.push(0xd280_0000 | ((it as u32 & 1) << 5)); // movz x0, #0/1
+        p.push(0xb100_0421); // adds x1, x1, #1
+        p.push(0x9a84_0062 | (((it % 14) as u32) << 12)); // csel x2,x3,x4,cc
+        p.push(0x1e6e_1000); // fmov d0,#1.0
+        p.push(0x6ee0_f801); // fneg v1.2d,v0.2d: RIP-relative sign constant
+        p.push(0x4ee1_c402); // fminnm v2.2d,v0.2d,v1.2d: cold paths/pool
+        p.push(0x3500_0040); // cbnz w0,+8
+        p.push(0x9100_24a5); // add x5,x5,#9
+        let call = p.len(); p.push(0);
+        p.push(0xca04_0063); // eor x3,x3,x4
+        p.push(0xd400_1001); // svc #0x80
+        let callee = p.len();
+        p.push(0x9100_0442); // add x2,x2,#1
+        p.push(0xd65f_03c0); // ret x30
+        let rn = 6 + (it % 24) as u32;
+        p[call] = if it & 1 == 0 { 0x9400_0000 | (callee - call) as u32 }
+            else { init.x[rn as usize] = page + callee as u64 * 4; 0xd63f_0000 | (rn << 5) };
+        unsafe { std::ptr::copy_nonoverlapping(p.as_ptr(), page as *mut u32, p.len()); }
+        let mut reference = clone_cpu(&init);
+        let mut stopped = false;
+        for _ in 0..128 {
+            let insn = unsafe { *(reference.pc() as *const u32) };
+            match interp::exec(&mut reference, insn) {
+                Ok(()) => {}, Err(Exit::Svc(_)) => { stopped = true; break },
+                Err(e) => panic!("invalid jitcode reference {e:?}"),
+            }
+        }
+        assert!(stopped);
+        let mut translated = clone_cpu(&init);
+        setup_cpu(&mut translated);
+        let allocation_start = code_cache().cursor();
+        lookup_or_translate(page);
+        // Translate both callee and continuation up front. Repeated passes below
+        // then exercise IBTC hits and already-chained direct exits.
+        for pc in [page + callee as u64 * 4, page + (call + 1) as u64 * 4] {
+            let h = lookup_or_translate(pc); ibtc_insert(pc, h);
+        }
+        let metadata_valid = || {
+            INDEX.lock().unwrap().as_ref().unwrap().slot_cont.iter().all(|(&slot, &cont)| {
+                // Restrict the audit to this iteration, including promotions.
+                if cont < allocation_start { return true; }
+                let bytes = unsafe { std::slice::from_raw_parts(cont as *const u8, 15) };
+                // mmap guest PCs exceed imm32: MOV RAX, imm64 = 48 B8 + 8 bytes.
+                let target = u64::from_le_bytes(bytes[2..10].try_into().unwrap());
+                slot & 7 == 0 && bytes[..2] == [0x48, 0xb8]
+                    && (page..page + 0x4000).contains(&target)
+            })
+        };
+        let mut metadata_ok = metadata_valid();
+        if metadata_ok {
+            // Exercise real cold completions and promotion, not just three
+            // direct entries into cold code (which has no patchable slots).
+            let passes = if tiered_enabled() { tiered::threshold() as usize + 3 } else { 3 };
+            for _ in 0..passes {
+                translated = clone_cpu(&init); setup_cpu(&mut translated);
+                let mut host = if tiered_enabled() { tiered_dispatch(page) } else { lookup_or_translate(page) };
+                if !metadata_valid() { metadata_ok = false; break; }
+                let mut exited = false;
+                for _ in 0..32 {
+                    let entry_pc = translated.pc();
+                    unsafe { attesor_jit_enter(&mut translated, host); }
+                    if tiered_enabled() && translated.exit_reason != emit::EXIT_INTERP {
+                        note_cold_completion(entry_pc, host);
+                    }
+                    if translated.exit_reason == EXIT_SVC { exited = true; break; }
+                    if translated.exit_reason == EXIT_PENDING { break; }
+                    let pc = translated.pc();
+                    let target = if tiered_enabled() { tiered_dispatch(pc) } else { lookup_or_translate(pc) };
+                    if !metadata_valid() { metadata_ok = false; break; }
+                    ibtc_insert(pc, target);
+                    if translated.exit_data != 0 { chain_slot(translated.exit_data, pc, target); }
+                    host = target;
+                }
+                if !exited || snapshot(&reference) != snapshot(&translated) { metadata_ok = false; break; }
+            }
+        }
+        // The final dispatch may be a callee/continuation with no slots. Audit
+        // the original public entry, after any cold-to-full promotion.
+        residues[(lookup(page).expect("jitcode entry remains registered") & 7) as usize] += 1;
+        if metadata_ok { ok += 1; }
+        else { bad += 1; if bad <= 5 { println!("MISMATCH jitcode #{it}: seed={seed:#x} call_reg=x{rn}"); } }
+    }
+    invalidate_range(page, 0x4000); ibtc_clear();
+    unsafe { libc::munmap(page as *mut _, 0x4000); }
+    println!("jit selftest [jitcode]: ok={ok} mismatch={bad} seed={seed:#x} host-residues={residues:?}");
+    assert_eq!(bad, 0, "whole-unit relocation differential mismatch");
+    if slot_reuse() && count >= 256 { assert!(residues.iter().all(|n| *n > 0), "exercise all eight prefix alignments"); }
+}
+
+/// Every sample executes disk-loaded Plain code, not the runtime JIT. Public
+/// entries at every instruction force cross-block cases and canonical reentry.
+fn run_selftest_offline(count: usize, seed: u64) {
+    let root = std::path::PathBuf::from(format!("/private/tmp/attesor-offline-{}-{seed:x}", std::process::id()));
+    std::fs::create_dir(&root).expect("fresh private selftest cache");
+    std::env::set_var("ATTESOR_CACHE", &root);
+    let page = unsafe { libc::mmap(std::ptr::null_mut(), 4096, libc::PROT_READ | libc::PROT_WRITE,
+        libc::MAP_ANON | libc::MAP_PRIVATE, -1, 0) as u64 };
+    assert_ne!(page, libc::MAP_FAILED as u64);
+    if precise_invalidation_enabled() {
+        // An image may end in the middle of a readable page. AOT must not
+        // inline/read its neighbor and then register an image-only dependency.
+        let words = [0xd280_00e0u32, 0x9100_0400, 0xd280_0540, 0xd400_1001];
+        unsafe { std::ptr::copy_nonoverlapping(words.as_ptr(), page as *mut u32, words.len()); }
+        assert_eq!(crate::aot::selftest_page(page, 2).unwrap(), 2);
+        let original = lookup(page).expect("closed image must publish");
+        let execute = || {
+            let mut c = Cpu::new(); c.set_pc(page); setup_cpu(&mut c);
+            for _ in 0..16 {
+                let host = lookup_or_translate(c.pc());
+                unsafe { attesor_jit_enter(&mut *c, host); }
+                if c.exit_reason == EXIT_SVC { return c.x[0]; }
+                assert_eq!(c.exit_reason, EXIT_CONTINUE);
+            }
+            panic!("closed-image boundary fixture did not exit");
+        };
+        assert_eq!(execute(), 42);
+        unsafe { *((page + 8) as *mut u32) = 0xd280_0c60; } // MOV X0,#99
+        invalidate_range(page + 8, 4);
+        assert_eq!(lookup(page), Some(original), "neighbor invalidation must preserve proven AOT");
+        assert_eq!(execute(), 99, "unbounded AOT reader would execute stale 42");
+        invalidate_range(page, 8);
+        assert_eq!(lookup(page), None);
+        assert!(!register_aot_block(page, original, Some((page, page + 8))), "late stale image must stay revoked");
+        invalidate_range(page + 32, 4);
+        assert!(!register_aot_block(page + 32, original, Some((page + 32, page + 36))),
+            "invalidation before the first load must also be remembered");
+        println!("PASS offline closed-image boundary: stale oracle 42 != fresh 99; late load refused");
+    }
+    let removed0 = super::offline::REMOVED_STORES.load(Ordering::Relaxed);
+    let mut rng = Rng(seed);
+    let (mut ok, mut bad, mut loaded) = (0, 0, 0);
+    let mut memory = vec![0u8; 256];
+    let pointer = memory.as_mut_ptr() as u64;
+    for it in 0..count {
+        let d = (rng.next() % 16) as u32;
+        let m = (d + 1) % 16;
+        let sf = if rng.next() & 1 == 0 { 0 } else { 1 << 31 };
+        let mov = |r: u32, value: u32| sf | 0x5280_0000u32 | ((value & 0xffff) << 5) | r;
+        let a = rng.next() as u32;
+        let b = rng.next() as u32;
+        let mut prog = vec![mov(d, a)];
+        match it % 9 {
+            0 => { prog.extend([mov(d, b), 0x9100_0400 | (d << 5) | m]); }
+            1 => { // Both diamond successors overwrite; CBZ does not read NZCV.
+                prog.extend([0xb400_0060 | 19, mov(d, b), 0x1400_0002, mov(d, b ^ 0x55)]);
+            }
+            2 => { // Only one successor overwrites: the other observes d.
+                prog.extend([0xb400_0060 | 19, mov(d, b), 0x1400_0002, 0x9100_0400 | (d << 5) | m]);
+            }
+            3 => { // Finite multi-block cycle; no overwrite can be inferred from a cycle alone.
+                prog.extend([0x9100_0400 | (d << 5) | d, 0xf100_079c, 0x54ff_ffc1]);
+            }
+            4 => { prog.extend([0xf900_0280 | d, mov(d, b), 0xf940_0280 | m]); }
+            5 => { // Interpreter helper observes Cpu state; CRC32B.
+                prog.extend([0x1ac0_4000 | (m << 16) | (d << 5) | d, mov(m, b)]);
+            }
+            6 => { prog.extend([0xd400_1021, mov(d, b)]); }
+            7 => { // SP updates, SP reads, and ZR discard must not alias.
+                prog.extend([0x9100_43ff, 0x9100_03e0 | m, 0x9100_83ff, 0xaa1f_03ff, mov(d, b)]);
+            }
+            _ => { // W write zero extends; X read and overwrite chain.
+                prog.extend([0x5280_0000 | ((b & 0xffff) << 5) | d,
+                    0x8b00_0000 | (d << 16) | (d << 5) | m, mov(d, a ^ b)]);
+            }
+        }
+        // Addressing forms remain observable barriers: signed pre/post, Q pair,
+        // scaled SXTW (including negative index), and register/data aliases.
+        match it % 5 {
+            0 => prog.push(0xf800_8680 | d), // STR Xd,[x20],#8
+            1 => prog.push(0xf81f_8e80 | d), // STR Xd,[x20,#-8]!
+            2 => prog.extend([0x3cb5_da90, 0x3cb6_5a91]), // Q scaled SXTW/UXTW
+            3 => prog.extend([0xad00_0680, 0xad40_0e82]), // STP/LDP Q
+            _ => prog.push(0xf900_0280 | d),
+        }
+        prog.push(0xd400_1001);
+        unsafe { std::ptr::copy_nonoverlapping(prog.as_ptr(), page as *mut u32, prog.len()); }
+        invalidate_range(page, 4096);
+        // Production AOT entries are immutable image code, not indexed JIT
+        // units. This suite intentionally rewrites a page: discard its old
+        // external registrations and thread-local IBTC before the next load.
+        if let Some(blocks) = BLOCKS.write().unwrap().as_mut() {
+            blocks.entries.retain(|&pc, _| pc < page || pc >= page + 4096);
+            blocks.external.retain(|&pc, _| pc < page || pc >= page + 4096);
+            assert!(blocks.external.is_empty(), "offline fixture owns all external entries");
+            blocks.external_invalidations.clear();
+        }
+        ibtc_clear();
+        // Each sample is a NEW image generation built from the current private
+        // bytes below, not an attempt to republish an invalidated production
+        // blob. Isolate these synthetic lifetimes just like the directed AOT
+        // lifecycle test. Production's one-way latch is deliberately unchanged.
+        EXTERNAL_INVALIDATED.store(false, Ordering::Relaxed);
+        for byte in &mut memory { *byte = rng.next() as u8; }
+        let initial_memory = memory.clone();
+        let mut init = Cpu::new();
+        for n in 0..32 { init.x[n] = rng.val(); init.v[n] = [rng.next(), rng.next()]; }
+        init.x[19] = it as u64 & 1;
+        init.x[20] = pointer + 128;
+        init.x[21] = 0xfeed_beef_ffff_fffe; // negative SXTW, scale 16
+        init.x[22] = 0xfeed_beef_0000_0002; // UXTW ignores high bits, scale 16
+        init.x[28] = 1 + rng.next() % 8;
+        init.set_nzcv((rng.next() & 15) as u32);
+        // Alternate public entries prove that removed labelled stores retain
+        // valid entry offsets. Do not enter the middle of a loop unboundedly.
+        let entry = if it % 4 == 0 { 1 } else { 0 };
+        init.set_pc(page + entry * 4);
+        let mut reference = clone_cpu(&init);
+        let mut svc = None;
+        for _ in 0..1000 {
+            let index = reference.pc().wrapping_sub(page) / 4;
+            let Some(&w) = prog.get(index as usize) else { break; };
+            match interp::exec(&mut reference, w) {
+                Ok(()) => {}, Err(Exit::Svc(n)) => { svc = Some(n); break; },
+                Err(e) => panic!("offline reference exit {e:?}: {w:08x}"),
+            }
+        }
+        let expected_memory = memory.clone();
+        memory.copy_from_slice(&initial_memory);
+        let n = crate::aot::selftest_page(page, prog.len()).expect("build/load private AOT");
+        assert!(n >= prog.len(), "all public entries must survive");
+        loaded += n;
+        let mut translated = clone_cpu(&init);
+        setup_cpu(&mut translated);
+        let jit0 = STATS_BLOCKS.load(Ordering::Relaxed);
+        for _ in 0..1000 {
+            let host = lookup_or_translate(translated.pc());
+            unsafe { attesor_jit_enter(&mut translated, host); }
+            if translated.exit_reason != EXIT_CONTINUE { break; }
+        }
+        assert_eq!(STATS_BLOCKS.load(Ordering::Relaxed), jit0, "must execute disk code, not a JIT replacement");
+        let pending = PENDING.with(|p| p.take());
+        if snapshot(&reference) != snapshot(&translated) || expected_memory != memory
+            || reference.pc() != translated.pc() || translated.exit_reason != EXIT_SVC
+            || Some(translated.exit_data as u16) != svc || pending.is_some() {
+            bad += 1;
+            if bad < 5 { println!("MISMATCH offline #{it} seed={seed:#x} words={prog:x?}\nreference={:x?}\ntranslated={:x?}", snapshot(&reference), snapshot(&translated)); }
+        } else { ok += 1; }
+    }
+    invalidate_range(page, 4096);
+    unsafe { libc::munmap(page as *mut _, 4096); }
+    std::fs::remove_dir_all(root).unwrap();
+    let removed = super::offline::REMOVED_STORES.load(Ordering::Relaxed) - removed0;
+    // loopcensus publishes architectural PC at every public entry. This
+    // suite gives every instruction a public entry, so those intentional
+    // non-GPR observer barriers can prevent every DSE opportunity. Keep the
+    // semantic checks above; require positive work in non-census runs instead.
+    assert!(!super::offline::enabled() || super::loops::census_enabled()
+        || count < 9 || removed > 0, "optimizer was not exercised");
+    println!("jit selftest [offline]: removed_stores={removed} ok={ok} mismatch={bad} disk_loaded_blocks={loaded} seed={seed:#x} optimized={}", super::offline::enabled());
+    assert_eq!(bad, 0, "offline differential mismatches");
+}
+
+fn zeroed(bytes: &[u8]) -> bool {
+    // Exact OR reduction, not a hash: a nonzero byte cannot cancel another.
+    bytes.iter().fold(0u8, |bits, &byte| bits | byte) == 0
 }
 
 pub fn run_selftest(class: &str, count: usize, seed: Option<u64>) {
-    if class == "calls" { return run_selftest_calls(count); }
+    assert!(seed != Some(0), "xorshift seed must be nonzero");
+    if class == "addrforms" { return run_selftest_addrforms(count, seed.unwrap_or(0xa44f_0123)); }
+    if class == "offline" { return run_selftest_offline(count, seed.unwrap_or(0xd0ff_11ae_1234_5678)); }
+    if class == "jitcode" { return run_selftest_jitcode(count, seed.unwrap_or(0xc0de_1234_5678_9abc)); }
+    if class == "calls" { return run_selftest_calls(count, seed); }
     if class == "loops" { return run_selftest_loops(count, seed.unwrap_or(0x100f_5e1f_7e57_cafe)); }
-    if class == "tbiblocks" { return run_selftest_tbiblocks(count); }
+    if class == "tbiblocks" { return run_selftest_tbiblocks(count, seed); }
     if class == "fpnan" {
         return run_selftest_fpnan(count);
     }
     if class == "fuse" {
-        return run_selftest_fuse(count, false);
+        return run_selftest_fuse(count, false, seed);
     }
     if class == "fuse2" {
-        return run_selftest_fuse(count, true);
+        return run_selftest_fuse(count, true, seed);
     }
     if class == "blocks" || class == "fpblocks" {
-        return run_selftest_blocks(count, class == "fpblocks");
+        return run_selftest_blocks(count, class == "fpblocks", seed);
     }
     if class == "selchain" {
-        return run_selftest_selchain(count);
+        return run_selftest_selchain(count, seed);
     }
     let (mask, val): (u32, u32) = match class {
         "dpimm" => (0x1C00_0000, 0x1000_0000),
@@ -1172,6 +1626,13 @@ pub fn run_selftest(class: &str, count: usize, seed: Option<u64>) {
         }
     };
     let is_mem = class == "ldst" || std::env::var_os("ATTESOR_SELFTEST_MEM").is_some();
+    // Only suites whose entire encoding domain excludes data memory may use
+    // the immutable zero-buffer oracle. These are the DP/SIMD op0 groups in
+    // core::interp::exec; arbitrary masks that admit LD/ST retain byte snapshots.
+    // The named branch suite also filters out exceptions before execution.
+    let memory_free = class == "branch" || (0u32..16)
+        .filter(|op0| ((op0 << 25) ^ val) & mask & 0x1e00_0000 == 0)
+        .all(|op0| matches!(op0, 5 | 7 | 8 | 9 | 13 | 15));
     // The instruction under test plus an svc terminator live at pc. PC-relative
     // literal loads (`ldr ..., $±imm19<<2`) can reach ±1MB from pc, so centre pc
     // in a 4MB window: every literal target stays mapped (zeroed) and the result
@@ -1183,7 +1644,7 @@ pub fn run_selftest(class: &str, count: usize, seed: Option<u64>) {
     let pc = page + 0x200000;
     let mut buf = vec![0u8; 1 << 20];
     let bufp = buf.as_mut_ptr() as u64;
-    let mut rng = Rng(0x9e37_79b9_7f4a_7c15);
+    let mut rng = Rng(seed.unwrap_or(0x9e37_79b9_7f4a_7c15));
     let (mut ok, mut bad, mut skipped) = (0, 0, 0);
     let mut native = 0u64;
     for _ in 0..count {
@@ -1230,7 +1691,7 @@ pub fn run_selftest(class: &str, count: usize, seed: Option<u64>) {
         }
         interp::sys_sync_host_fp_mode(init.fpcr);
         init.set_pc(pc);
-        let mem0: Vec<u8> = buf.clone();
+        let mem0 = if memory_free { Vec::new() } else { buf.clone() };
         let mut r = Cpu::new();
         *r = clone_cpu(&init);
         match interp::exec(&mut r, insn) {
@@ -1240,8 +1701,11 @@ pub fn run_selftest(class: &str, count: usize, seed: Option<u64>) {
                 continue;
             }
         }
-        let mem_ref = buf.clone();
-        buf.copy_from_slice(&mem0);
+        let mem_ref = if memory_free {
+            assert!(zeroed(&buf), "non-memory reference changed the memory fixture");
+            Vec::new()
+        } else { buf.clone() };
+        if !memory_free { buf.copy_from_slice(&mem0); }
         // JIT: single instruction followed by SVC (block terminator).
         unsafe {
             *(pc as *mut u32) = insn;
@@ -1272,7 +1736,7 @@ pub fn run_selftest(class: &str, count: usize, seed: Option<u64>) {
         let pending = PENDING.with(|p| p.take());
         if j.exit_reason == EXIT_PENDING || pending.is_some() {
             skipped += 1;
-            buf.copy_from_slice(&mem0);
+            if memory_free { buf.fill(0); } else { buf.copy_from_slice(&mem0); }
             continue;
         }
         let mut a = snapshot(&r);
@@ -1281,7 +1745,7 @@ pub fn run_selftest(class: &str, count: usize, seed: Option<u64>) {
             a.push(r.pc());
             b.push(j.pc());
         }
-        let mem_diff = buf != mem_ref;
+        let mem_diff = if memory_free { !zeroed(&buf) } else { buf != mem_ref };
         if a != b || mem_diff || (!branch && j.exit_reason != EXIT_SVC) {
             bad += 1;
             if bad <= 40 {
@@ -1302,9 +1766,12 @@ pub fn run_selftest(class: &str, count: usize, seed: Option<u64>) {
         } else {
             ok += 1;
         }
-        buf.copy_from_slice(&mem0);
+        if memory_free {
+            if mem_diff { buf.fill(0); }
+        } else { buf.copy_from_slice(&mem0); }
     }
     println!("jit selftest [{class}]: ok={ok} mismatch={bad} skipped={skipped} native={native}");
+    assert_eq!(bad, 0, "instruction differential mismatches");
 }
 
 fn clone_cpu(c: &Cpu) -> Cpu {
@@ -1314,6 +1781,11 @@ fn clone_cpu(c: &Cpu) -> Cpu {
     n.set_nzcv(c.nzcv());
     n.v = c.v;
     n.fpcr = c.fpcr;
+    n.fpsr = c.fpsr;
+    n.excl_addr = c.excl_addr;
+    n.excl_val = c.excl_val;
+    n.excl_val2 = c.excl_val2;
+    n.excl_size = c.excl_size;
     n.tpidr_el0 = c.tpidr_el0;
     n.tpidrro_el0 = c.tpidrro_el0;
     n
@@ -1342,6 +1814,18 @@ pub fn dump_block(words: &[u32]) {
 mod callret_tests {
     use super::*;
     const PC: u64 = 0x2400_0000;
+
+    #[test]
+    fn non_memory_oracle_detects_every_byte_including_tail() {
+        let mut bytes = vec![0u8; 4099];
+        assert!(zeroed(&bytes));
+        for n in 0..bytes.len() {
+            bytes[n] = 0x80;
+            assert!(!zeroed(&bytes));
+            bytes[n] = 0;
+        }
+        assert!(zeroed(&bytes));
+    }
 
     extern "C" fn change_epoch(c: *mut Cpu, _: u32, _: u64) -> u64 {
         let c = unsafe { &mut *c };
@@ -1388,7 +1872,10 @@ mod callret_tests {
         let words = [0x94000003, 0x91000400, 0xd4001001, 0xd4001021, 0xd65f03c0];
         let (hosts, _) = code.compile(PC, &words, true);
         let mut c = Cpu::new(); setup_cpu(&mut c); c.x[0] = 42;
-        ibtc_clear(); for (&p, &h) in &hosts { ibtc_insert(p, h); }
+        // Full-tier fixture hosts are not in the production registry.
+        ibtc_clear(); for (&p, &h) in &hosts {
+            IBTC.with(|t| t.borrow_mut().as_mut().unwrap().insert(p, h));
+        }
         unsafe { attesor_jit_enter(&mut *c, hosts[&PC]); }
         assert_eq!(c.exit_reason, EXIT_SVC); assert_eq!(c.exit_data, 0x81);
         assert_eq!(c.pc(), PC + 16); assert_eq!(c.x[0], 42);

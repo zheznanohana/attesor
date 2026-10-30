@@ -1,6 +1,6 @@
 # Stage 3 实施与验证报告
 
-起点：`76236d4`，工作树 `/Users/zhez/attesor-s3`，分支 `stage3`。未推送。
+起点：`76236d4`，工作树 `/Users/USER/attesor-s3`，分支 `stage3`。未推送。
 
 ## A3：块内 dead V stores
 
@@ -496,7 +496,7 @@ callsites      98.0 ms
   跨线程单测改变实际返回 guard 所读的 AtomicU64，验证 guard/退栈行为；不是声称已实现代码释放压力测试。
 - 按任务约定未运行需要 sandbox socket bind 的 gdbstub.sh，留给 Claude。
 - build/test 有仓库既有 unused/clashing extern 等警告，未顺带修改无关代码。
-- git add 无法创建 `/Users/zhez/attesor/.git/worktrees/attesor-s3/index.lock`（Operation not permitted），
+- git add 无法创建 `/Users/USER/attesor/.git/worktrees/attesor-s3/index.lock`（Operation not permitted），
   因而没有 commit hash，也没有 push。工作树保留全部修改。
 - A3 单独补丁：`target/stage3-A3.patch`，只改 emit.rs / aot.rs（48 -> 49），
   在起始 commit 文件副本上通过 git apply --check。

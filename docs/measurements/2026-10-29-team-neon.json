@@ -1,5 +1,5 @@
 {
-  "host": "zhezdeMacBook-Pro.local",
+  "host": "host.local",
   "sha256": {
     "before": "f8d87bd8bf693b134c07b40d2b596a78cf6a1cba52c5348cda85f2a3f72b6df1",
     "after": "c61c19536a77d3c759a41822cb9a152eaff45a8e7313f05d6e5bd279d5bb6824",
@@ -12,7 +12,7 @@
       "command": [
         "/private/tmp/attesor-perf/baseline",
         "--no-aot",
-        "/Users/zhez/attesor/tests/attesor/build/neon-qdmulh",
+        "/Users/USER/attesor/tests/attesor/build/neon-qdmulh",
         "--bench",
         "1000000"
       ],
@@ -27,9 +27,9 @@
       "round": 0,
       "build": "after",
       "command": [
-        "/Users/zhez/attesor/target/release/attesor",
+        "/Users/USER/attesor/target/release/attesor",
         "--no-aot",
-        "/Users/zhez/attesor/tests/attesor/build/neon-qdmulh",
+        "/Users/USER/attesor/tests/attesor/build/neon-qdmulh",
         "--bench",
         "1000000"
       ],
@@ -44,9 +44,9 @@
       "round": 1,
       "build": "after",
       "command": [
-        "/Users/zhez/attesor/target/release/attesor",
+        "/Users/USER/attesor/target/release/attesor",
         "--no-aot",
-        "/Users/zhez/attesor/tests/attesor/build/neon-qdmulh",
+        "/Users/USER/attesor/tests/attesor/build/neon-qdmulh",
         "--bench",
         "1000000"
       ],
@@ -63,7 +63,7 @@
       "command": [
         "/private/tmp/attesor-perf/baseline",
         "--no-aot",
-        "/Users/zhez/attesor/tests/attesor/build/neon-qdmulh",
+        "/Users/USER/attesor/tests/attesor/build/neon-qdmulh",
         "--bench",
         "1000000"
       ],
@@ -80,7 +80,7 @@
       "command": [
         "/private/tmp/attesor-perf/baseline",
         "--no-aot",
-        "/Users/zhez/attesor/tests/attesor/build/neon-qdmulh",
+        "/Users/USER/attesor/tests/attesor/build/neon-qdmulh",
         "--bench",
         "1000000"
       ],
@@ -95,9 +95,9 @@
       "round": 2,
       "build": "after",
       "command": [
-        "/Users/zhez/attesor/target/release/attesor",
+        "/Users/USER/attesor/target/release/attesor",
         "--no-aot",
-        "/Users/zhez/attesor/tests/attesor/build/neon-qdmulh",
+        "/Users/USER/attesor/tests/attesor/build/neon-qdmulh",
         "--bench",
         "1000000"
       ],
@@ -112,9 +112,9 @@
       "round": 3,
       "build": "after",
       "command": [
-        "/Users/zhez/attesor/target/release/attesor",
+        "/Users/USER/attesor/target/release/attesor",
         "--no-aot",
-        "/Users/zhez/attesor/tests/attesor/build/neon-qdmulh",
+        "/Users/USER/attesor/tests/attesor/build/neon-qdmulh",
         "--bench",
         "1000000"
       ],
@@ -131,7 +131,7 @@
       "command": [
         "/private/tmp/attesor-perf/baseline",
         "--no-aot",
-        "/Users/zhez/attesor/tests/attesor/build/neon-qdmulh",
+        "/Users/USER/attesor/tests/attesor/build/neon-qdmulh",
         "--bench",
         "1000000"
       ],
@@ -148,7 +148,7 @@
       "command": [
         "/private/tmp/attesor-perf/baseline",
         "--no-aot",
-        "/Users/zhez/attesor/tests/attesor/build/neon-qdmulh",
+        "/Users/USER/attesor/tests/attesor/build/neon-qdmulh",
         "--bench",
         "1000000"
       ],
@@ -163,9 +163,9 @@
       "round": 4,
       "build": "after",
       "command": [
-        "/Users/zhez/attesor/target/release/attesor",
+        "/Users/USER/attesor/target/release/attesor",
         "--no-aot",
-        "/Users/zhez/attesor/tests/attesor/build/neon-qdmulh",
+        "/Users/USER/attesor/tests/attesor/build/neon-qdmulh",
         "--bench",
         "1000000"
       ],

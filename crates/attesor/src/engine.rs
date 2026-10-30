@@ -91,8 +91,26 @@ pub fn run_thread(cpu: &mut Cpu) {
     } else {
         crate::jit::run(cpu);
     }
-    CPUS.lock().unwrap().retain(|&k| k != key);
+    {
+        let mut cpus = CPUS.lock().unwrap();
+        let mut dead = COST_DEAD.lock().unwrap();
+        for (sum, n) in dead.iter_mut().zip(&cpu.jit_cost) { *sum += n.load(std::sync::atomic::Ordering::Relaxed); }
+        cpus.retain(|&k| k != key);
+    }
     crate::profile::unregister();
+}
+
+static COST_DEAD: std::sync::Mutex<[u64; 4]> = std::sync::Mutex::new([0; 4]);
+pub fn profile_jit_counts() -> [u64; 4] {
+    let cpus = CPUS.lock().unwrap();
+    let mut counts = *COST_DEAD.lock().unwrap();
+    for &cpu in cpus.iter() {
+        for (i, sum) in counts.iter_mut().enumerate() {
+            let p = unsafe { &*std::ptr::addr_of!((*(cpu as *const Cpu)).jit_cost[i]) };
+            *sum += p.load(std::sync::atomic::Ordering::Relaxed);
+        }
+    }
+    counts
 }
 
 /// Keep CPU lifetime protected while taking only atomic reads of published snapshots.
@@ -108,8 +126,18 @@ pub fn profile_samples() -> Vec<(u64, u64)> {
 
 pub fn fork_guard() -> impl FnOnce(bool) {
     let mut cpus = CPUS.lock().unwrap();
+    let mut dead = COST_DEAD.lock().unwrap();
     move |child| {
-        if child { cpus.retain(|&p| CURRENT_CPU.with(|c| c.get()) == p); }
+        if child {
+            cpus.retain(|&p| CURRENT_CPU.with(|c| c.get()) == p);
+            *dead = [0; 4];
+            for &cpu in cpus.iter() {
+                for i in 0..4 {
+                    let p = unsafe { &*std::ptr::addr_of!((*(cpu as *const Cpu)).jit_cost[i]) };
+                    p.store(0, std::sync::atomic::Ordering::Relaxed);
+                }
+            }
+        }
     }
 }
 
@@ -167,12 +195,13 @@ extern "C" fn fault_dump(sig: i32) {
 /// Handle an exit from interpreter/JIT. Returns false when the thread should stop.
 pub fn handle_exit(cpu: &mut Cpu, e: Exit) -> bool {
     match e {
-        Exit::Svc(_) => {
+        Exit::Svc(imm) => {
+            if crate::nativefixups::handle_svc(cpu, imm) { return true; }
             crate::syscalls::handle_svc(cpu);
             !EXIT_REQUESTED.with(|f| f.get())
         }
         Exit::IcInvalidate(addr) => {
-            crate::jit::invalidate_range(addr & !63, 64);
+            crate::jit::invalidate_for(addr & !63, 64, "ic-ivau");
             true
         }
         Exit::Brk(imm) => {

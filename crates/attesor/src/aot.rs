@@ -15,7 +15,6 @@
 //! the background, so the next launch starts with warm translations.
 
 use crate::jit::emit::{self, StubKind, Unit};
-use iced_x86::BlockEncoderOptions;
 use std::collections::{BTreeSet, HashSet};
 use std::io::{Read, Write};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
@@ -23,7 +22,9 @@ use std::sync::{Arc, Mutex, RwLock, Weak};
 
 const MAGIC: &[u8; 8] = b"MCLAOT05";
 /// Bump when the translator's output changes.
-const TRANSLATOR_VERSION: u32 = 53;
+const TRANSLATOR_VERSION: u32 = 68;
+
+mod layout;
 
 #[derive(Clone)]
 struct Image {
@@ -31,6 +32,7 @@ struct Image {
     key: String,
     start: u64,
     end: u64,
+    source: (u64, u64),
     /// Static entry points (function starts), if known.
     entries: Vec<u64>,
     loaded: bool,
@@ -78,6 +80,8 @@ fn fnv(parts: &[&[u8]]) -> String {
 
 /// Code generation options baked into translations: commpage checks and the optional host ISA
 /// extensions the JIT uses when present (a cache built with FMA must not load on a host without it).
+/// The high bit isolates the effective opt-in code-cache allocation policy;
+/// it does not indicate that the kernel granted actual superpage backing.
 fn flags_word() -> u32 {
     crate::jit::commpage_checks() as u32
         | (emit::has_fma() as u32) << 1
@@ -85,6 +89,14 @@ fn flags_word() -> u32 {
         | (emit::has_aes() as u32) << 3
         | (emit::has_pclmul() as u32) << 4
         | (emit::has_sha() as u32) << 5
+        | (emit::has_avx512() as u32) << 6
+        | (emit::avx512_enabled() as u32) << 7
+        | (emit::avx512_nan_enabled() as u32) << 8
+        | (crate::jit::fastenc_enabled() as u32) << 9
+        | (emit::ibtc2_enabled() as u32) << 10
+        | (crate::jit::flagreg::enabled() as u32) << 11
+        | crate::jit::isel2_mask() << 12
+        | (crate::jit::hugepages_enabled() as u32) << 31
 }
 
 /// Identifies the code generator: TRANSLATOR_VERSION mixed with this attesor binary's LC_UUID, so a
@@ -125,6 +137,26 @@ fn codegen_id() -> u32 {
                 h = h.wrapping_mul(0x100_0000_01b3);
             }
         }
+        // Disk translations always use full Units; runtime quick code is never persisted.
+        for &b in b"aot-full-only;tiered-quick-v1" {
+            h ^= b as u64;
+            h = h.wrapping_mul(0x100_0000_01b3);
+        }
+        // Same immutable, validated weights used later for placement.
+        if let Some(identity) = layout::identity() {
+            for byte in b"offline-layout-profile-v1".iter().copied().chain(identity.to_le_bytes()) {
+                h ^= byte as u64;
+                h = h.wrapping_mul(0x100_0000_01b3);
+            }
+        }
+        // Automatic opt-ins are process-local, not inherited environment. Include
+        // their effective set so app policies cannot reuse incompatible blobs.
+        for token in crate::policy::tokens() {
+            for &b in token.as_bytes().iter().chain([0u8].iter()) {
+                h ^= b as u64;
+                h = h.wrapping_mul(0x100_0000_01b3);
+            }
+        }
         // Stats-enabled Plain regions contain an r15-relative entry counter.
         // Keep those blobs separate so normal runs pay no instrumentation cost.
         h ^= crate::jit::stats_enabled() as u64;
@@ -133,28 +165,80 @@ fn codegen_id() -> u32 {
     })
 }
 
+/// Live-sharing identity is obtained before taking JIT TRANSLATE. Unlike the
+/// truncated disk identity it retains the complete host build LC_UUID and the
+/// exact option strings, app/image UUID keys and mapped guest bounds.
+pub(crate) fn shared_translation_identity(pc: u64) -> Option<(String, u64)> {
+    extern "C" { fn _dyld_get_image_header(i: u32) -> *const u8; }
+    let mut build = [0u8; 16];
+    unsafe {
+        let h = _dyld_get_image_header(0);
+        if h.is_null() || std::ptr::read_unaligned(h.cast::<u32>()) != 0xfeed_facf { return None; }
+        let n = std::ptr::read_unaligned(h.add(16).cast::<u32>()) as usize;
+        let size = std::ptr::read_unaligned(h.add(20).cast::<u32>()) as usize;
+        if n > 4096 || size > 16 * 1024 * 1024 { return None; }
+        let mut offset = 32usize;
+        for _ in 0..n {
+            if offset.checked_add(8)? > 32 + size { return None; }
+            let p = h.add(offset);
+            let cmd = std::ptr::read_unaligned(p.cast::<u32>());
+            let len = std::ptr::read_unaligned(p.add(4).cast::<u32>()) as usize;
+            if len < 8 || offset.checked_add(len)? > 32 + size { return None; }
+            if cmd == 0x1b && len >= 24 {
+                build.copy_from_slice(std::slice::from_raw_parts(p.add(8), 16));
+                break;
+            }
+            offset += len;
+        }
+    }
+    if build == [0; 16] { return None; }
+    let imgs = IMAGES.lock().unwrap();
+    let app = imgs.iter().find(|i| i.key.starts_with("main-"))?;
+    let image = imgs.iter().find(|i| pc >= i.start && pc < i.end)?;
+    if app.key.contains(&"0".repeat(32)) || image.key.contains(&"0".repeat(32)) { return None; }
+    let options: Vec<_> = ["ATTESOR_JIT_ON", "ATTESOR_JIT_OFF", "ATTESOR_JIT_DISABLE"]
+        .into_iter().map(|n| (n, std::env::var(n).unwrap_or_default())).collect();
+    let key = format!("live-plain-v1;uid={};app={:?}@{:x}-{:x};image={:?}@{:x}-{:x};build={};translator={};flags={:x};avx={};opts={:?}",
+        unsafe { libc::geteuid() }, app.key, app.start, app.end, image.key, image.start, image.end,
+        hex(&build), TRANSLATOR_VERSION, flags_word(), std::is_x86_feature_detected!("avx"), options);
+    Some((key, image.end))
+}
+
 /// Register the main executable (mapped at a fixed address).
-pub fn register_main(path: &str, uuid: [u8; 16], start: u64, end: u64, entries: Vec<u64>) {
+pub fn register_main(path: &str, uuid: [u8; 16], start: u64, end: u64, entries: Vec<u64>, source: (u64, u64)) {
     let key = format!("main-{}-{}", hex(&uuid), fnv(&[path.as_bytes()]));
-    add_image(Image { name: path.rsplit('/').next().unwrap_or(path).to_string(), key, start, end, entries, loaded: false });
+    add_image(Image { name: path.rsplit('/').next().unwrap_or(path).to_string(), key, start, end, source, entries, loaded: false });
 }
 
 /// Register dyld (also mapped at a fixed address).
-pub fn register_dyld(path: &str, uuid: [u8; 16], start: u64, end: u64) {
+pub fn register_dyld(path: &str, uuid: [u8; 16], start: u64, end: u64, source: (u64, u64)) {
     let key = format!("dyld-{}-{}", hex(&uuid), fnv(&[path.as_bytes()]));
-    add_image(Image { name: "dyld".into(), key, start, end, entries: vec![], loaded: false });
+    add_image(Image { name: "dyld".into(), key, start, end, source, entries: vec![], loaded: false });
 }
 
 /// Register the shared cache once dyld has had us map it.
 pub fn register_cache(uuid: [u8; 16], start: u64, end: u64) {
     let key = format!("dsc-{}", hex(&uuid));
-    add_image(Image { name: "dyld_shared_cache".into(), key, start, end, entries: vec![], loaded: false });
+    add_image(Image { name: "dyld_shared_cache".into(), key, start, end, source: (start, end), entries: vec![], loaded: false });
     ensure_loaded();
 }
 
 /// Register the arm64 Mach-O whose header is mapped at `addr` (a dyld-loaded library or
 /// helper image). Keyed by UUID and load address, so it only hits the cache when the
 /// library loads at the same place again.
+pub(crate) fn source_bounds(m: &crate::macho::MachO, slide: u64) -> (u64, u64) {
+    let (lo, hi) = m.vm_range();
+    if !crate::jit::precise_invalidation_enabled() { return (lo.wrapping_add(slide), hi.wrapping_add(slide)); }
+    let mut bounds = None::<(u64, u64)>;
+    for s in &m.segments {
+        if s.initprot & 4 == 0 || s.vmsize == 0 || s.name == "__PAGEZERO" { continue; }
+        let Some(end) = s.vmaddr.checked_add(s.vmsize) else { return (lo.wrapping_add(slide), hi.wrapping_add(slide)); };
+        bounds = Some(bounds.map_or((s.vmaddr, end), |(a,b)| (a.min(s.vmaddr), b.max(end))));
+    }
+    let (lo, hi) = bounds.unwrap_or((lo, hi));
+    (lo.wrapping_add(slide), hi.wrapping_add(slide))
+}
+
 pub fn register_image_at(addr: u64) {
     if !ENABLED.load(Ordering::Relaxed) {
         return;
@@ -171,6 +255,7 @@ pub fn register_image_at(addr: u64) {
     let mut off = 32u64;
     let mut uuid = [0u8; 16];
     let (mut text_vm, mut lo, mut hi) = (u64::MAX, u64::MAX, 0u64);
+    let (mut code_lo, mut code_hi) = (u64::MAX, 0u64);
     for _ in 0..ncmds.min(512) {
         let cmd = rd(off);
         let size = rd(off + 4) as u64;
@@ -197,6 +282,10 @@ pub fn register_image_at(addr: u64) {
             }
             lo = lo.min(vmaddr);
             hi = hi.max(vmaddr + vmsize);
+            if rd(off + 60) & 4 != 0 && vmsize != 0 {
+                code_lo = code_lo.min(vmaddr);
+                code_hi = code_hi.max(vmaddr + vmsize);
+            }
         }
         off += size;
     }
@@ -209,7 +298,10 @@ pub fn register_image_at(addr: u64) {
     if std::env::var_os("ATTESOR_STATS").is_some() {
         eprintln!("[attesor] aot: registered image {key} [{start:#x}, {end:#x})");
     }
-    add_image(Image { name: format!("lib-{}", &hex(&uuid)[..8]), key, start, end, entries: vec![], loaded: false });
+    let source = if crate::jit::precise_invalidation_enabled() && code_lo < code_hi {
+        (code_lo.wrapping_add(slide), code_hi.wrapping_add(slide))
+    } else { (start, end) };
+    add_image(Image { name: format!("lib-{}", &hex(&uuid)[..8]), key, start, end, source, entries: vec![], loaded: false });
     ensure_loaded();
 }
 
@@ -307,7 +399,8 @@ pub fn flush_pending() {
 }
 
 fn file_for(img: &Image, ext: &str) -> std::path::PathBuf {
-    cache_dir().join(format!("{}.{}", img.key, ext))
+    let suffix = if crate::jit::fastenc_enabled() { "-fastenc" } else { "" };
+    cache_dir().join(format!("{}{suffix}.{ext}", img.key))
 }
 
 /// Load AOT code for any registered image not loaded yet.
@@ -321,7 +414,7 @@ pub fn ensure_loaded() {
             continue;
         }
         img.loaded = true;
-        match load_file(&file_for(img, "aot")) {
+        match load_file(&file_for(img, "aot"), Some(img.source)) {
             Ok(n) if n > 0 => {
                 // in use: keep tidy_cache's 30-day rule from removing it (atime is not reliable)
                 for kind in ["aot", "profile"] {
@@ -348,7 +441,7 @@ fn code_offset(n: usize) -> usize {
     checked_code_offset(n).expect("AOT index too large")
 }
 
-fn load_file(path: &std::path::Path) -> std::io::Result<usize> {
+fn load_file(path: &std::path::Path, image: Option<(u64, u64)>) -> std::io::Result<usize> {
     let mut f = std::fs::File::open(path)?;
     let mut head = [0u8; 40];
     if f.read_exact(&mut head).is_err() || &head[..8] != MAGIC {
@@ -372,6 +465,14 @@ fn load_file(path: &std::path::Path) -> std::io::Result<usize> {
     if (0..n).any(|i| rd64(&idx, i * 16 + 8) >= code_len as u64) {
         return Ok(0);
     }
+    let precise = crate::jit::precise_invalidation_enabled();
+    if precise && image.is_some_and(|(lo, hi)| (0..n).any(|i| {
+        let pc = rd64(&idx, i * 16);
+        pc < lo || pc >= hi || pc & 3 != 0
+    })) { return Ok(0); }
+    // Avoid copying a blob whose source was already invalidated. Publication
+    // still rechecks under BLOCKS, closing an invalidation race after this test.
+    if precise && !crate::jit::aot_image_allowed(image) { return Ok(0); }
     // Copy the code into the JIT code cache. (Mapping the file itself PROT_EXEC makes macOS
     // run a Gatekeeper assessment on every cache file and pop up "could not verify" dialogs.)
     let cc = crate::jit::code_cache();
@@ -382,12 +483,13 @@ fn load_file(path: &std::path::Path) -> std::io::Result<usize> {
         let dst = unsafe { std::slice::from_raw_parts_mut(base as *mut u8, code_len) };
         f.read_exact(dst)?;
     }
+    let mut published = 0;
     for i in 0..n {
         let pc = rd64(&idx, i * 16);
         let off = rd64(&idx, i * 16 + 8);
-        crate::jit::register_block(pc, base + off);
+        published += crate::jit::register_aot_block(pc, base + off, image) as usize;
     }
-    Ok(n)
+    Ok(if precise { published } else { n })
 }
 
 /// Run `f` holding an exclusive advisory lock for `img`'s cache files. Processes of one app map the same
@@ -555,7 +657,14 @@ pub fn start_checkpoints() {
 // Recording releases its batch before SEEN; profile updates release all memory
 // locks before opening a file lock. Drop every guard in BOTH fork branches
 // before running guest code or starting a new checkpoint worker.
-fn fork_safely() -> libc::pid_t {
+fn fork_safely(wait_background: bool) -> libc::pid_t {
+    // Guest fork pauses new jobs and coordinates one bounded background unit
+    // before any existing fork locks. Only optional async AOT saving skips a
+    // busy emission. No worker queue mutex is acquired by this fork path.
+    let Ok(_bgtrans) = crate::jit::bgtrans_fork_guard(wait_background) else {
+        unsafe { *libc::__error() = libc::EAGAIN; }
+        return -1;
+    };
     let mut profile = crate::profile::fork_guard();
     let cpus = crate::engine::fork_guard();
     let (pid, error) = {
@@ -572,6 +681,7 @@ fn fork_safely() -> libc::pid_t {
         let _files = FILE_LOCKS.write().unwrap();
         profile.host_begin();
         let pid = unsafe { libc::fork() };
+        if pid == 0 { crate::jit::bgtrans_after_fork_child(); }
         let error = if pid < 0 { unsafe { *libc::__error() } } else { 0 };
         profile.host_end();
         (pid, error)
@@ -588,7 +698,7 @@ fn fork_safely() -> libc::pid_t {
 /// A guest fork is not a process exit: do not set SAVED or stop the parent's
 /// checkpoint worker. Only the calling thread survives in the child.
 pub fn fork_guest() -> libc::pid_t {
-    let pid = fork_safely();
+    let pid = fork_safely(true);
     if pid == 0 {
         PENDING_THREADS.lock().unwrap().clear();
         PENDING.with(|batch| PENDING_THREADS.lock().unwrap().push(Arc::downgrade(batch)));
@@ -622,11 +732,14 @@ fn save_profile_inner(exiting: bool) {
     let sync = std::env::var_os("ATTESOR_AOT_SYNC").is_some();
     // Fork: the child still has the guest's memory mapped, so it can read
     // the code it needs to translate.
-    let pid = if sync { 0 } else { fork_safely() };
+    let pid = if sync { 0 } else { fork_safely(false) };
     if pid != 0 {
         return;
     }
     if !sync {
+        // Only the detached fork child is a dedicated translator. In sync mode
+        // (including save-before-exec) this is still the guest's own thread.
+        crate::process_qos::background_translation_worker("aot-exit");
         unsafe {
             libc::setsid();
             let null = libc::open(c"/dev/null".as_ptr(), libc::O_RDWR);
@@ -689,8 +802,19 @@ fn discover(entries: &[u64], start: u64, end: u64, read: &dyn Fn(u64) -> Option<
     out
 }
 
+fn image_word(start: u64, end: u64, bounded: bool, pc: u64,
+              read: &dyn Fn(u64) -> Option<u32>) -> Option<u32> {
+    if bounded && (pc < start || pc.checked_add(4).is_none_or(|hi| hi > end)) { return None; }
+    read(pc)
+}
+
 fn build(img: &Image, profile: &BTreeSet<u64>) -> std::io::Result<()> {
-    let read = crate::jit::guest_reader();
+    let reader = crate::jit::guest_reader();
+    let bounded = crate::jit::precise_invalidation_enabled();
+    // This invariant lets the loader conservatively register the whole image
+    // without pretending that an entry PC describes an arbitrary AOT unit.
+    // It covers lookahead, loops, and inline direct targets as well as emission.
+    let read = |pc| image_word(img.source.0, img.source.1, bounded, pc, &reader);
     let mut blocks: BTreeSet<u64> = profile.clone();
     if !img.entries.is_empty() {
         blocks.extend(discover(&img.entries, img.start, img.end, &read, 400_000));
@@ -698,14 +822,16 @@ fn build(img: &Image, profile: &BTreeSet<u64>) -> std::io::Result<()> {
     // Profile-guided expansion: also follow direct branches from hot blocks.
     let hot: Vec<u64> = profile.iter().copied().collect();
     blocks.extend(discover(&hot, img.start, img.end, &read, profile.len() * 4 + 1000));
-    let blocks: Vec<u64> = blocks.into_iter().filter(|&pc| pc >= img.start && pc < img.end && pc & 3 == 0 && read(pc).is_some()).collect();
+    let mut blocks: Vec<u64> = blocks.into_iter().filter(|&pc| pc >= img.start && pc < img.end && pc & 3 == 0 && read(pc).is_some()).collect();
     if blocks.is_empty() {
         return Ok(());
     }
     // Translate in chunks so a single assembler run stays manageable.
     let mut code: Vec<u8> = Vec::new();
     let mut index: Vec<(u64, u64)> = Vec::new();
-    for chunk in blocks.chunks(4096) {
+    let mut offline_counts = crate::jit::offline::Counts::default();
+    let weighted_hot = layout::order(img, &mut blocks, profile);
+    for chunk in layout::chunks(&blocks, weighted_hot) {
         let mut u = Unit::new(StubKind::Plain, crate::jit::commpage_checks());
         for &pc in chunk {
             let l = u.a.create_label();
@@ -716,8 +842,12 @@ fn build(img: &Image, profile: &BTreeSet<u64>) -> std::io::Result<()> {
         }
         u.finish();
         let base = code.len() as u64;
-        let res = match u.a.assemble_options(base, BlockEncoderOptions::RETURN_NEW_INSTRUCTION_OFFSETS) {
-            Ok(r) => r,
+        let res = match crate::jit::offline::assemble(&mut u, base) {
+            Ok((r, counts)) => {
+                offline_counts.before += counts.before;
+                offline_counts.removed += counts.removed;
+                r
+            },
             Err(_) => continue,
         };
         for &pc in chunk {
@@ -729,6 +859,11 @@ fn build(img: &Image, profile: &BTreeSet<u64>) -> std::io::Result<()> {
         while code.len() % 16 != 0 {
             code.push(0xcc);
         }
+    }
+    if crate::jit::offline::enabled() && crate::jit::stats_enabled() {
+        eprintln!("[attesor] offline-dse: {} host_insns={} removed_stores={} remaining_insns={}",
+                  img.name, offline_counts.before, offline_counts.removed,
+                  offline_counts.before - offline_counts.removed);
     }
     let path = file_for(img, "aot");
     // per-process temporary: several processes may build the same image concurrently
@@ -842,6 +977,7 @@ fn prewarm_image(path: &str, dyld: bool) -> std::io::Result<PrewarmImage> {
     let base = if dyld { crate::loader::DYLD_BASE } else { crate::loader::MAIN_BASE };
     let slide = base.wrapping_sub(lo);
     let _mapping = map_prewarm_text(path, &m, base)?;
+    if dyld { crate::nativefixups::install(path, &m, slide); }
     let mut entries = function_starts(path, &m, slide);
     if let Some(off) = m.main_entryoff { entries.push(m.text_vmaddr().wrapping_add(off).wrapping_add(slide)); }
     if let Some(pc) = m.thread_pc { entries.push(pc.wrapping_add(slide)); }
@@ -849,7 +985,8 @@ fn prewarm_image(path: &str, dyld: bool) -> std::io::Result<PrewarmImage> {
     entries.dedup();
     let kind = if dyld { "dyld" } else { "main" };
     let key = format!("{kind}-{}-{}", hex(&m.uuid), fnv(&[path.as_bytes()]));
-    let img = Image { name: path.to_string(), key, start: base, end: hi.wrapping_add(slide), entries, loaded: false };
+    let img = Image { name: path.to_string(), key, start: base, end: hi.wrapping_add(slide),
+        source: source_bounds(&m, slide), entries, loaded: false };
     std::fs::create_dir_all(cache_dir())?;
     let prof = read_profile(&file_for(&img, "profile"));
     build(&img, &prof)?;
@@ -1017,7 +1154,7 @@ mod tests {
     fn checkpoints_publish_idle_and_exited_thread_tails() {
         let start = 0x1234_0000;
         add_image(Image { name: "tail-test".into(), key: "tail-test".into(),
-            start, end: start + 0x1000, entries: vec![], loaded: false });
+            start, end: start + 0x1000, source: (start, start + 0x1000), entries: vec![], loaded: false });
         let idx = IMAGES.lock().unwrap().iter().position(|i| i.key == "tail-test").unwrap();
         let (ready_tx, ready_rx) = std::sync::mpsc::channel();
         let (done_tx, done_rx) = std::sync::mpsc::channel();
@@ -1034,6 +1171,70 @@ mod tests {
         done_tx.send(()).unwrap();
         worker.join().unwrap();
         assert!(SEEN.lock().unwrap()[idx].contains(&(start + 4)));
+    }
+
+    // The integration runner compares this across fresh ON/OFF processes using
+    // the same test binary, so UUID/version are held constant.
+    #[test]
+    fn g4_cache_identity_bits_and_incompatible_headers() {
+        assert_eq!(TRANSLATOR_VERSION,68);
+        assert_eq!((flags_word()>>11)&1,crate::jit::flagreg::enabled() as u32);
+        assert_eq!((flags_word()>>12)&3,crate::jit::isel2_mask());
+        assert_eq!((flags_word()>>31)&1,crate::jit::hugepages_enabled() as u32);
+        eprintln!("G4_ID={:08x} VERSION={} FLAGS={:x}",codegen_id(),TRANSLATOR_VERSION,flags_word());
+        let dir=std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../target/port-g4");
+        std::fs::create_dir_all(&dir).unwrap();
+        let path=dir.join(format!("header-{}.aot",std::process::id()));
+        let mut h=Vec::new();h.extend_from_slice(MAGIC);h.extend_from_slice(&codegen_id().to_le_bytes());
+        h.extend_from_slice(&flags_word().to_le_bytes());h.extend_from_slice(&1u64.to_le_bytes());h.extend_from_slice(&16u64.to_le_bytes());h.resize(code_offset(1)+16,0);
+        for bit in [11,12,13,31] {
+            std::fs::write(&path,&h).unwrap();assert_eq!(compatible_count(&path),Some(1));
+            h[12+bit/8]^=1<<(bit%8);std::fs::write(&path,&h).unwrap();
+            assert_eq!(compatible_count(&path),None,"effective bit {bit} mismatch must reject AOT");
+            h[12+bit/8]^=1<<(bit%8);
+        }
+        std::fs::remove_file(path).unwrap();
+    }
+
+    #[test]
+    fn port_g2_codegen_identity() {
+        eprintln!("PORT_G2_ID={:08x} VERSION={} FLAGS={:x}", codegen_id(), TRANSLATOR_VERSION, flags_word());
+        assert_eq!((flags_word() >> 10) & 1, emit::ibtc2_enabled() as u32);
+    }
+
+    #[test]
+    fn fastenc_cache_bit_and_namespace() {
+        assert_eq!((flags_word() >> 9) & 1, crate::jit::fastenc_enabled() as u32);
+        let img = Image { name: "test".into(), key: "private-test".into(), start: 0, end: 4,
+            source: (0, 4), entries: vec![], loaded: false };
+        let expected = if crate::jit::fastenc_enabled() { "private-test-fastenc.aot" } else { "private-test.aot" };
+        assert_eq!(file_for(&img, "aot").file_name().unwrap(), expected);
+    }
+
+    #[test]
+    fn avx512_selection_is_part_of_cache_compatibility() {
+        assert_eq!((flags_word() >> 6) & 1, emit::has_avx512() as u32);
+        assert_eq!((flags_word() >> 7) & 1, emit::avx512_enabled() as u32);
+        assert!(!emit::avx512_enabled() || emit::has_avx512());
+        assert_eq!((flags_word() >> 8) & 1, emit::avx512_nan_enabled() as u32);
+        assert!(!emit::avx512_nan_enabled() || emit::has_avx512());
+        let path = std::env::temp_dir().join(format!("attesor-aot-avx512-{}", std::process::id()));
+        let mut h = Vec::new();
+        h.extend_from_slice(MAGIC);
+        h.extend_from_slice(&codegen_id().to_le_bytes());
+        h.extend_from_slice(&flags_word().to_le_bytes());
+        h.extend_from_slice(&1u64.to_le_bytes());
+        h.extend_from_slice(&16u64.to_le_bytes());
+        h.resize(code_offset(1) + 16, 0);
+        for bit in [6, 7, 8] {
+            std::fs::write(&path, &h).unwrap();
+            assert_eq!(compatible_count(&path), Some(1));
+            h[12 + bit / 8] ^= 1 << (bit % 8);
+            std::fs::write(&path, &h).unwrap();
+            assert_eq!(compatible_count(&path), None, "host/selected AVX-512 choice must reject cache");
+            h[12 + bit / 8] ^= 1 << (bit % 8);
+        }
+        std::fs::remove_file(path).unwrap();
     }
 
     #[test]
@@ -1059,7 +1260,33 @@ mod tests {
         h[16..24].copy_from_slice(&u64::MAX.to_le_bytes());
         std::fs::write(&path, &h).unwrap();
         assert_eq!(compatible_count(&path), None);
-        assert_eq!(load_file(&path).unwrap(), 0);
+        assert_eq!(load_file(&path, None).unwrap(), 0);
         std::fs::remove_file(path).unwrap();
     }
 }
+
+/// Directed differential CLI suite: serialize and actually reload a private
+/// page through exactly the production builder/header/index/loader path.
+/// The caller owns ATTESOR_CACHE and the mapped page for the whole operation.
+pub(crate) fn selftest_page(start: u64, words: usize) -> std::io::Result<usize> {
+    let img = Image { name: "offline-selftest".into(), key: "offline-selftest".into(),
+        start, end: start + words as u64 * 4,
+        source: (start, start + words as u64 * 4), entries: (0..words).map(|n| start + n as u64 * 4).collect(), loaded: false };
+    std::fs::create_dir_all(cache_dir())?;
+    let path = file_for(&img, "aot");
+    if path.exists() { std::fs::remove_file(&path)?; }
+    build(&img, &BTreeSet::new())?;
+    load_file(&path, Some(img.source))
+}
+    #[test]
+    fn precise_aot_reader_never_observes_outside_image() {
+        let calls = std::cell::Cell::new(0);
+        let read = |_| { calls.set(calls.get() + 1); Some(0xd503201f) };
+        assert_eq!(image_word(0x1000, 0x1008, true, 0x1000, &read), Some(0xd503201f));
+        assert_eq!(image_word(0x1000, 0x1008, true, 0x1004, &read), Some(0xd503201f));
+        for pc in [0xffc, 0x1005, 0x1008, u64::MAX] {
+            assert_eq!(image_word(0x1000, 0x1008, true, pc, &read), None);
+        }
+        assert_eq!(calls.get(), 2);
+        assert_eq!(image_word(0x1000, 0x1008, false, 0x1008, &read), Some(0xd503201f));
+    }

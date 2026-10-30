@@ -1,5 +1,5 @@
 //! Guest sampling: atomic CPU PC loads and a Rust-only state word. Generated code
-//! already publishes PC with aligned x86 MOV stores; its bytes are unchanged.
+//! already publishes PC with aligned x86 MOV stores. jitcost adds opt-in phase probes.
 use std::cell::Cell;
 use std::collections::BTreeMap;
 use std::fmt::Write;
@@ -11,8 +11,8 @@ use std::time::{Duration, Instant};
 pub static ENABLED: AtomicBool = AtomicBool::new(false);
 #[derive(Clone, Copy)]
 #[repr(u8)]
-pub enum State { Dispatch, Jit, Interp, Translate, Mach, Bsd, Gpu, Idle, Machdep }
-const STATES: [&str; 9] = ["dispatch", "jit", "interp", "translate", "syscall-mach", "syscall-bsd", "gpu", "idle", "syscall-machdep"];
+pub enum State { Dispatch, Jit, Interp, Translate, Mach, Bsd, Gpu, Idle, Machdep, Invalidate, Indirect, CallReturn, TranslateRuntime }
+const STATES: [&str; 13] = ["dispatch", "jit", "interp", "translate", "syscall-mach", "syscall-bsd", "gpu", "idle", "syscall-machdep", "invalidate", "indirect", "call-return", "translate-runtime"];
 thread_local! { static CURRENT: Cell<*const AtomicU64> = const { Cell::new(std::ptr::null()) }; }
 
 #[inline(always)]
@@ -230,7 +230,8 @@ pub fn unregister() { CURRENT.with(|c| c.set(std::ptr::null())); }
 
 #[derive(Default)]
 struct Counts {
-    states: [u64; 9],
+    pcs: BTreeMap<u64, u64>,
+    states: [u64; 13],
     // Full tables are persisted, even though the human-readable tables are truncated.
     images: BTreeMap<String, [u64; 2]>,
     symbols: BTreeMap<String, u64>,
@@ -243,6 +244,8 @@ struct Data {
     stats_base: (u64, u64),
     stats_prior: (u64, u64),
     mmap_fast_prior: (u64, u64),
+    metrics_prior: BTreeMap<String, u64>,
+    metrics_base: BTreeMap<String, u64>,
     resolved: BTreeMap<u64, (String, String)>,
     calls: BTreeMap<Key, Call>,
     bridge_selectors: Option<bool>,
@@ -255,7 +258,7 @@ pub fn init(name: &str, args: &[String]) {
         eprintln!("attesor: profile directory: {e}"); return;
     }
     let mut data = Data { dir: dir.into(), name: name.into(), args: args.to_vec(),
-        counts: Counts::default(), stats_base: (0, 0), stats_prior: (0, 0), mmap_fast_prior: (0, 0), resolved: BTreeMap::new(), calls: BTreeMap::new(), bridge_selectors: None };
+        counts: Counts::default(), stats_base: (0, 0), stats_prior: (0, 0), mmap_fast_prior: (0, 0), metrics_prior: BTreeMap::new(), metrics_base: BTreeMap::new(), resolved: BTreeMap::new(), calls: BTreeMap::new(), bridge_selectors: None };
     // A successful exec of the same executable keeps its pid and report path.
     // Continue that snapshot instead of losing the previous execution epoch.
     data.resume();
@@ -294,6 +297,7 @@ fn start() {
                     let state = (state & 255) as usize;
                     d.counts.states[state] += 1;
                     if state == State::Jit as usize || state == State::Interp as usize {
+                        if crate::jit::loops::census_enabled() { *d.counts.pcs.entry(pc).or_default() += 1; }
                         let (image, symbol) = d.resolved.entry(pc).or_insert_with(|| crate::symbols::attribute(pc));
                         d.counts.images.entry(image.clone()).or_default()[usize::from(state == State::Interp as usize)] += 1;
                         *d.counts.symbols.entry(format!("{image}`{symbol}")).or_default() += 1;
@@ -354,6 +358,8 @@ impl ForkGuard {
             for a in calls.active.values_mut() {
                 a.start = now(); a.host_ns = 0; a.host_start = None;
             }
+            d.metrics_prior.clear();
+            d.metrics_base = crate::jit::cost::snapshot();
             d.stats_prior = (0, 0);
             let s = crate::jit::stats_snapshot();
             d.stats_base = (s.0, s.1);
@@ -400,6 +406,9 @@ impl Data {
                 ["state", state, n] => {
                     if let (Some(i), Ok(n)) = (STATES.iter().position(|s| s == state), n.parse()) { self.counts.states[i] = n; }
                 }
+                ["pc", pc, n] => {
+                    if let (Ok(pc), Ok(n)) = (u64::from_str_radix(pc, 16), n.parse()) { self.counts.pcs.insert(pc, n); }
+                }
                 ["image", image, jit, interp] => {
                     if let (Ok(j), Ok(i)) = (jit.parse(), interp.parse()) { self.counts.images.insert(image.to_string(), [j, i]); }
                 }
@@ -411,6 +420,9 @@ impl Data {
                         (Class::parse(class), number.parse(), samples.parse(), idle_samples.parse(), calls.parse(), idle_calls.parse(), ns.parse(), host_ns.parse()) {
                         self.calls.insert((class, number), Call { name: name.to_string(), samples, idle_samples, calls, idle_calls, ns, host_ns });
                     }
+                }
+                ["jit-metric", key, n] => {
+                    if let Ok(n) = n.parse() { self.metrics_prior.insert(key.to_string(), n); }
                 }
                 ["bridge-selectors", available] => { self.bridge_selectors = available.parse().ok(); }
                 ["translation", blocks, ms] => {
@@ -482,7 +494,16 @@ impl Data {
         }
         if let Some(available) = self.bridge_selectors { let _ = writeln!(out, "bridge-selectors\t{available}"); }
         for (name, n) in &c.images { let _ = writeln!(out, "image\t{}\t{}\t{}", clean(name), n[0], n[1]); }
+        for (pc, n) in &c.pcs { let _ = writeln!(out, "pc\t{pc:x}\t{n}"); }
         for (name, n) in &c.symbols { let _ = writeln!(out, "symbol\t{}\t{n}", clean(name)); }
+        let mut metrics = self.metrics_prior.clone();
+        for (key, n) in crate::jit::cost::snapshot() {
+            *metrics.entry(key.clone()).or_default() += n.saturating_sub(*self.metrics_base.get(&key).unwrap_or(&0));
+        }
+        for (key, n) in ["branch.indirect", "branch.miss", "branch.call", "branch.return"].into_iter().zip(crate::engine::profile_jit_counts()) {
+            *metrics.entry(key.into()).or_default() += n;
+        }
+        for (key, n) in metrics { let _ = writeln!(out, "jit-metric\t{key}\t{n}"); }
         let path = self.path();
         let tmp = path.with_extension("tmp");
         if let Err(e) = std::fs::write(&tmp, out).and_then(|_| std::fs::rename(&tmp, &path)) {
@@ -560,12 +581,17 @@ mod call_tests {
         std::fs::create_dir_all(&dir).unwrap();
         let make = || Data { dir: dir.clone(), name: "roundtrip".into(), args: vec![],
             counts: Counts::default(), stats_base: (0, 0), stats_prior: (0, 0), mmap_fast_prior: (0, 0),
-            resolved: BTreeMap::new(), calls: BTreeMap::new(), bridge_selectors: Some(true) };
+            metrics_prior: BTreeMap::new(), metrics_base: BTreeMap::new(), resolved: BTreeMap::new(), calls: BTreeMap::new(), bridge_selectors: Some(true) };
         let mut first = make();
         first.mmap_fast_prior = (20, 15);
+        first.metrics_prior.insert("invalidate.ic-ivau.calls".into(), 17);
         first.calls.insert((Class::Bsd, 363), Call { name: "kevent".into(), samples: 4,
             idle_samples: 3, calls: 20, idle_calls: 20, ns: 900, host_ns: 600 });
         first.counts.states[State::Idle as usize] = 3;
+        // Loop census PCs and the new JIT phases must survive in the same snapshot.
+        first.counts.pcs.insert(0x1234, 7);
+        first.counts.states[State::TranslateRuntime as usize] = 5;
+        first.counts.states[State::Invalidate as usize] = 2;
         first.write();
         let mut resumed = make();
         resumed.resume();
@@ -573,6 +599,10 @@ mod call_tests {
         assert_eq!((c.samples, c.idle_samples, c.calls, c.idle_calls, c.ns, c.host_ns), (4, 3, 20, 20, 900, 600));
         assert_eq!(resumed.bridge_selectors, Some(true));
         assert_eq!(resumed.mmap_fast_prior, (20, 15));
+        assert_eq!(resumed.metrics_prior["invalidate.ic-ivau.calls"], 17);
+        assert_eq!(resumed.counts.pcs[&0x1234], 7);
+        assert_eq!(resumed.counts.states[State::TranslateRuntime as usize], 5);
+        assert_eq!(resumed.counts.states[State::Invalidate as usize], 2);
         std::fs::write(first.path(), "Attesor guest profile v1\nstate\tjit\t42\ntranslation\t5\t7\n").unwrap();
         let mut legacy = make();
         legacy.resume();

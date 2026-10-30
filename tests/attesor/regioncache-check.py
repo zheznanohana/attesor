@@ -27,8 +27,8 @@ def main():
     binary = Path(args.attesor).resolve()
     failures = []
     # General differential suites exercise all unchanged classes with opt-in set.
-    for cls in ['blocks', 'fpblocks', 'tbiblocks', 'selchain']:
-        out = run([binary, '--selftest-jit', cls, args.count], {'ATTESOR_JIT_ON': 'regioncache'})
+    for cls in ['blocks', 'fpblocks', 'tbiblocks', 'selchain', 'loops', 'addrforms']:
+        out = run([binary, '--selftest-jit', cls, args.count], {'ATTESOR_JIT_ON': 'regioncache', 'ATTESOR_JIT_OFF': 'loopra'})
         fields = {k: int(v) for k, v in re.findall(r'(\w+)=(\d+)', out)}
         if fields.get('mismatch') != 0 or fields.get('ok', 0) <= 0:
             failures.append(cls)
@@ -41,11 +41,13 @@ def main():
             run(['clang', '-arch', arch, '-O2', src, '-o', exe])
         reference = run([native, 257]).strip()
         for label, opts, env in [
-            ('baseline JIT', ['--no-aot'], {'ATTESOR_JIT_ON': ''}),
-            ('region JIT', ['--no-aot'], {'ATTESOR_JIT_ON': 'regioncache'}),
-            ('region commpage', ['--no-aot'], {'ATTESOR_JIT_ON': 'regioncache', 'ATTESOR_NO_COMMPAGE': '1'}),
-            ('region old predictor', ['--no-aot'], {'ATTESOR_JIT_ON': 'regioncache', 'ATTESOR_JIT_OFF': 'nextuse'}),
+            ('baseline JIT', ['--no-aot'], {'ATTESOR_JIT_ON': '', 'ATTESOR_JIT_OFF': 'loopra,regioncache'}),
+            ('region JIT', ['--no-aot'], {'ATTESOR_JIT_ON': 'regioncache', 'ATTESOR_JIT_OFF': 'loopra'}),
+            ('region commpage', ['--no-aot'], {'ATTESOR_JIT_ON': 'regioncache', 'ATTESOR_JIT_OFF': 'loopra', 'ATTESOR_NO_COMMPAGE': '1'}),
+            ('region old predictor', ['--no-aot'], {'ATTESOR_JIT_ON': 'regioncache', 'ATTESOR_JIT_OFF': 'loopra,nextuse'}),
         ]:
+            env = {**env, 'ATTESOR_CACHE': str(root / 'jit-cache'),
+                   'ATTESOR_NO_AOT_BUILD': '1', 'ATTESOR_AOT_CHECKPOINT': '0'}
             out = run([binary, *opts, guest, 257], env)
             actual = re.search(r'^checksum .+$', out, re.M).group(0)
             assert actual == reference, (label, actual, reference)
@@ -54,7 +56,7 @@ def main():
         # cold/warm cannot race a checkpoint or consume the user's cache.
         cache = root / 'cache'
         cache.mkdir()
-        aot_env = {'ATTESOR_JIT_ON': 'regioncache', 'ATTESOR_CACHE': str(cache),
+        aot_env = {'ATTESOR_JIT_ON': 'regioncache', 'ATTESOR_JIT_OFF': 'loopra', 'ATTESOR_CACHE': str(cache),
                    'ATTESOR_NO_AOT_BUILD': '1', 'ATTESOR_AOT_CHECKPOINT': '0',
                    'ATTESOR_STATS': '1'}
         loaded = r'aot: loaded ([1-9]\d*) blocks for arm64(?:\s|$)'

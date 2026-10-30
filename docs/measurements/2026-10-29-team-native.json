@@ -1,5 +1,5 @@
 {
-  "host": "zhezdeMacBook-Pro.local",
+  "host": "host.local",
   "sha256": {
     "before": "c61c19536a77d3c759a41822cb9a152eaff45a8e7313f05d6e5bd279d5bb6824",
     "after": "c61c19536a77d3c759a41822cb9a152eaff45a8e7313f05d6e5bd279d5bb6824",
@@ -10,9 +10,9 @@
       "round": 0,
       "build": "before",
       "command": [
-        "/Users/zhez/attesor/target/release/attesor",
+        "/Users/USER/attesor/target/release/attesor",
         "--no-aot",
-        "/Users/zhez/attesor/tests/attesor/build/native-zlib-bench"
+        "/Users/USER/attesor/tests/attesor/build/native-zlib-bench"
       ],
       "wall_ms": 2435.525349,
       "environment": {
@@ -32,14 +32,14 @@
       "round": 0,
       "build": "after",
       "command": [
-        "/Users/zhez/attesor/target/release/attesor",
+        "/Users/USER/attesor/target/release/attesor",
         "--no-aot",
-        "/Users/zhez/attesor/tests/attesor/build/native-zlib-bench"
+        "/Users/USER/attesor/tests/attesor/build/native-zlib-bench"
       ],
       "wall_ms": 943.5514890000003,
       "environment": {
         "ATTESOR_NATIVE_LIBS": "1",
-        "ATTESOR_NATIVE_DIR": "/Users/zhez/attesor/native/out"
+        "ATTESOR_NATIVE_DIR": "/Users/USER/attesor/native/out"
       },
       "cold_aot": false,
       "metrics": {
@@ -55,14 +55,14 @@
       "round": 1,
       "build": "after",
       "command": [
-        "/Users/zhez/attesor/target/release/attesor",
+        "/Users/USER/attesor/target/release/attesor",
         "--no-aot",
-        "/Users/zhez/attesor/tests/attesor/build/native-zlib-bench"
+        "/Users/USER/attesor/tests/attesor/build/native-zlib-bench"
       ],
       "wall_ms": 942.5204130000004,
       "environment": {
         "ATTESOR_NATIVE_LIBS": "1",
-        "ATTESOR_NATIVE_DIR": "/Users/zhez/attesor/native/out"
+        "ATTESOR_NATIVE_DIR": "/Users/USER/attesor/native/out"
       },
       "cold_aot": false,
       "metrics": {
@@ -78,9 +78,9 @@
       "round": 1,
       "build": "before",
       "command": [
-        "/Users/zhez/attesor/target/release/attesor",
+        "/Users/USER/attesor/target/release/attesor",
         "--no-aot",
-        "/Users/zhez/attesor/tests/attesor/build/native-zlib-bench"
+        "/Users/USER/attesor/tests/attesor/build/native-zlib-bench"
       ],
       "wall_ms": 2471.6718440000004,
       "environment": {
@@ -100,9 +100,9 @@
       "round": 2,
       "build": "before",
       "command": [
-        "/Users/zhez/attesor/target/release/attesor",
+        "/Users/USER/attesor/target/release/attesor",
         "--no-aot",
-        "/Users/zhez/attesor/tests/attesor/build/native-zlib-bench"
+        "/Users/USER/attesor/tests/attesor/build/native-zlib-bench"
       ],
       "wall_ms": 2455.3810780000013,
       "environment": {
@@ -122,14 +122,14 @@
       "round": 2,
       "build": "after",
       "command": [
-        "/Users/zhez/attesor/target/release/attesor",
+        "/Users/USER/attesor/target/release/attesor",
         "--no-aot",
-        "/Users/zhez/attesor/tests/attesor/build/native-zlib-bench"
+        "/Users/USER/attesor/tests/attesor/build/native-zlib-bench"
       ],
       "wall_ms": 935.101061000001,
       "environment": {
         "ATTESOR_NATIVE_LIBS": "1",
-        "ATTESOR_NATIVE_DIR": "/Users/zhez/attesor/native/out"
+        "ATTESOR_NATIVE_DIR": "/Users/USER/attesor/native/out"
       },
       "cold_aot": false,
       "metrics": {
@@ -145,14 +145,14 @@
       "round": 3,
       "build": "after",
       "command": [
-        "/Users/zhez/attesor/target/release/attesor",
+        "/Users/USER/attesor/target/release/attesor",
         "--no-aot",
-        "/Users/zhez/attesor/tests/attesor/build/native-zlib-bench"
+        "/Users/USER/attesor/tests/attesor/build/native-zlib-bench"
       ],
       "wall_ms": 969.6500090000004,
       "environment": {
         "ATTESOR_NATIVE_LIBS": "1",
-        "ATTESOR_NATIVE_DIR": "/Users/zhez/attesor/native/out"
+        "ATTESOR_NATIVE_DIR": "/Users/USER/attesor/native/out"
       },
       "cold_aot": false,
       "metrics": {
@@ -168,9 +168,9 @@
       "round": 3,
       "build": "before",
       "command": [
-        "/Users/zhez/attesor/target/release/attesor",
+        "/Users/USER/attesor/target/release/attesor",
         "--no-aot",
-        "/Users/zhez/attesor/tests/attesor/build/native-zlib-bench"
+        "/Users/USER/attesor/tests/attesor/build/native-zlib-bench"
       ],
       "wall_ms": 2460.049753,
       "environment": {
@@ -190,9 +190,9 @@
       "round": 4,
       "build": "before",
       "command": [
-        "/Users/zhez/attesor/target/release/attesor",
+        "/Users/USER/attesor/target/release/attesor",
         "--no-aot",
-        "/Users/zhez/attesor/tests/attesor/build/native-zlib-bench"
+        "/Users/USER/attesor/tests/attesor/build/native-zlib-bench"
       ],
       "wall_ms": 2485.6256210000006,
       "environment": {
@@ -212,14 +212,14 @@
       "round": 4,
       "build": "after",
       "command": [
-        "/Users/zhez/attesor/target/release/attesor",
+        "/Users/USER/attesor/target/release/attesor",
         "--no-aot",
-        "/Users/zhez/attesor/tests/attesor/build/native-zlib-bench"
+        "/Users/USER/attesor/tests/attesor/build/native-zlib-bench"
       ],
       "wall_ms": 919.2098840000007,
       "environment": {
         "ATTESOR_NATIVE_LIBS": "1",
-        "ATTESOR_NATIVE_DIR": "/Users/zhez/attesor/native/out"
+        "ATTESOR_NATIVE_DIR": "/Users/USER/attesor/native/out"
       },
       "cold_aot": false,
       "metrics": {

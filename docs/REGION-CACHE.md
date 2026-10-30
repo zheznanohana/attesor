@@ -1,5 +1,12 @@
 # Write-through natural-loop register cache experiment
 
+Current CPU acceptance (translator version 66): both `regioncache` and `loopra` are opt-in,
+with `ATTESOR_JIT_OFF` taking precedence. Write-through slots now use the normal next-use
+proof instead of copying dead values merely because a register belongs to the loop layout;
+the existing private-edge repair reloads invalidated slots. JIT and disk AOT are tested.
+The numbered implementation notes below are historical; current measurements and decisions
+are in [ACCEPTANCE-REPORT.md](ACCEPTANCE-REPORT.md).
+
 Enable with `ATTESOR_JIT_ON=regioncache`. It is off by default. This first
 implementation supports only a single basic block whose direct B/B.cond/CBZ/TBZ
 backedge returns to its own start. It does not implement multi-block regions,

@@ -5,7 +5,9 @@ set -euo pipefail
 cd "$(dirname "$0")/../.."
 mkdir -p target/loopra-dbg/cache
 export ATTESOR_CACHE="$PWD/target/loopra-dbg/cache"
-unset ATTESOR_JIT_ON ATTESOR_JIT_DISABLE ATTESOR_JIT_VERIFY
+unset ATTESOR_JIT_DISABLE ATTESOR_JIT_VERIFY
+# This is the explicit optimization gate; final defaults are covered by acceptance-check L2.
+export ATTESOR_JIT_ON=loopra
 cases=${CASES:-100000}
 batches=${BATCHES:-10}
 cargo build --release -p attesor > target/loopra-dbg/build.log 2>&1

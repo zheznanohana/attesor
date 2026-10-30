@@ -1,5 +1,5 @@
 {
-  "host": "zhezdeMacBook-Pro.local",
+  "host": "host.local",
   "sha256": {
     "before": "f8d87bd8bf693b134c07b40d2b596a78cf6a1cba52c5348cda85f2a3f72b6df1",
     "after": "c61c19536a77d3c759a41822cb9a152eaff45a8e7313f05d6e5bd279d5bb6824",
@@ -11,7 +11,7 @@
       "build": "before",
       "command": [
         "/private/tmp/attesor-perf/baseline",
-        "/Users/zhez/attesor/bench/native-ratio/k-arm64"
+        "/Users/USER/attesor/bench/native-ratio/k-arm64"
       ],
       "wall_ms": 3474.3151599999997,
       "environment": {},
@@ -30,8 +30,8 @@
       "round": 0,
       "build": "after",
       "command": [
-        "/Users/zhez/attesor/target/release/attesor",
-        "/Users/zhez/attesor/bench/native-ratio/k-arm64"
+        "/Users/USER/attesor/target/release/attesor",
+        "/Users/USER/attesor/bench/native-ratio/k-arm64"
       ],
       "wall_ms": 3439.91353,
       "environment": {},
@@ -50,8 +50,8 @@
       "round": 1,
       "build": "after",
       "command": [
-        "/Users/zhez/attesor/target/release/attesor",
-        "/Users/zhez/attesor/bench/native-ratio/k-arm64"
+        "/Users/USER/attesor/target/release/attesor",
+        "/Users/USER/attesor/bench/native-ratio/k-arm64"
       ],
       "wall_ms": 3448.4644120000007,
       "environment": {},
@@ -71,7 +71,7 @@
       "build": "before",
       "command": [
         "/private/tmp/attesor-perf/baseline",
-        "/Users/zhez/attesor/bench/native-ratio/k-arm64"
+        "/Users/USER/attesor/bench/native-ratio/k-arm64"
       ],
       "wall_ms": 3411.3652519999996,
       "environment": {},
@@ -91,7 +91,7 @@
       "build": "before",
       "command": [
         "/private/tmp/attesor-perf/baseline",
-        "/Users/zhez/attesor/bench/native-ratio/k-arm64"
+        "/Users/USER/attesor/bench/native-ratio/k-arm64"
       ],
       "wall_ms": 3434.114257000001,
       "environment": {},
@@ -110,8 +110,8 @@
       "round": 2,
       "build": "after",
       "command": [
-        "/Users/zhez/attesor/target/release/attesor",
-        "/Users/zhez/attesor/bench/native-ratio/k-arm64"
+        "/Users/USER/attesor/target/release/attesor",
+        "/Users/USER/attesor/bench/native-ratio/k-arm64"
       ],
       "wall_ms": 3431.071199000002,
       "environment": {},

@@ -1,0 +1,15 @@
+const crypto=require('crypto'),https=require('https');
+const out=[];
+const buf=Buffer.alloc(1<<20); for(let i=0;i<buf.length;i++) buf[i]=(i*2654435761>>>24)&255;
+out.push('sha256 '+crypto.createHash('sha256').update(buf).digest('hex').slice(0,16));
+out.push('sha512 '+crypto.createHash('sha512').update(buf).digest('hex').slice(0,16));
+const key=Buffer.alloc(32,7), iv=Buffer.alloc(12,3);
+const c=crypto.createCipheriv('aes-256-gcm',key,iv); const enc=Buffer.concat([c.update(buf),c.final()]);
+out.push('gcm '+crypto.createHash('sha256').update(enc).digest('hex').slice(0,16)+' tag '+c.getAuthTag().toString('hex').slice(0,16));
+const {publicKey,privateKey}=crypto.generateKeyPairSync('ec',{namedCurve:'P-256'});
+const sig=crypto.sign('sha256',buf,privateKey); out.push('ecdsa verify '+crypto.verify('sha256',buf,publicKey,sig));
+const dh1=crypto.createECDH('prime256v1'),dh2=crypto.createECDH('prime256v1'); dh1.generateKeys(); dh2.generateKeys();
+out.push('ecdh '+(dh1.computeSecret(dh2.getPublicKey()).equals(dh2.computeSecret(dh1.getPublicKey()))));
+out.push('string '+JSON.stringify("Gauß–日本語–😀".normalize('NFD')).length+' '+Buffer.from("左上角顶栏","utf8").toString('hex'));
+console.log(out.join('\n'));
+https.get('https://api.deepseek.com/models',r=>{console.log('https status',r.statusCode);r.resume();}).on('error',e=>console.log('https error',e.code||e.message));

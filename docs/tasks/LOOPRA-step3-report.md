@@ -73,4 +73,4 @@ No known unresolved correctness issues. The existing single-block, opt-in JIT sc
 
 ## Commit status
 
-No commit was created: `git add` was blocked by the sandbox (`Unable to create /Users/zhez/attesor/.git/worktrees/attesor-loopra/index.lock: Operation not permitted`). Changes remain in this worktree. The complete commit message is saved as `target/loopra-step3-commit-message.txt`. Nothing was pushed.
+No commit was created: `git add` was blocked by the sandbox (`Unable to create /Users/USER/attesor/.git/worktrees/attesor-loopra/index.lock: Operation not permitted`). Changes remain in this worktree. The complete commit message is saved as `target/loopra-step3-commit-message.txt`. Nothing was pushed.

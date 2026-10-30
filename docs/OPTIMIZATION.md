@@ -14,7 +14,7 @@ audit baseline, retained for context.
 
 | Direction | Current evidence | Remaining work / completion evidence needed |
 |---|---|---|
-| 1. JIT code quality | Existing flag fusion, register read caches, opt-in CALLRET; scalar source-alias reuse and removal of redundant FMA NaN tests added in this round | Benchmark loops, FP, calls and branches; investigate cross-block register lifetime and dispatch cost; resolve existing FP mismatches; verify real apps |
+| 1. JIT code quality | Existing flag fusion, register read caches (the host call/return experiment was dropped by CPU acceptance); scalar source-alias reuse and removal of redundant FMA NaN tests added in this round | Benchmark loops, FP, calls and branches; investigate cross-block register lifetime and dispatch cost; resolve existing FP mismatches; verify real apps |
 | 2. Ahead-of-time translation and persistent cache | Periodic in-process checkpoint implementation exists | Prove cache load and startup benefit after forced termination; investigate unflushed per-thread profile tails, rebuild races, and background pretranslation |
 | 3. Crypto extensions | AES/PMULL/SHA paths and probes exist | Audit instruction variants and host feature guards; compare native outputs and HTTPS workload performance |
 | 4. Remaining hot NEON instructions | Multiple SIMD translation batches landed | Collect current fallback histograms in actual app processes; prioritize remaining runtime hotspots and verify each native path |

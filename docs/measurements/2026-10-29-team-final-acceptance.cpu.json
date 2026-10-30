@@ -1,5 +1,5 @@
 {
-  "binary": "/Users/zhez/attesor/target/release/attesor",
+  "binary": "/Users/USER/attesor/target/release/attesor",
   "sha256": "c61c19536a77d3c759a41822cb9a152eaff45a8e7313f05d6e5bd279d5bb6824",
   "passed": true,
   "results": [
@@ -11,7 +11,7 @@
         "-ffp-contract=off",
         "-arch",
         "x86_64",
-        "/Users/zhez/attesor/tests/attesor/fpalias.c",
+        "/Users/USER/attesor/tests/attesor/fpalias.c",
         "-o",
         "/var/folders/b4/tnjkjcm52s5g4n894r8xrcfh0000gn/T/attesor-accept-ho2fu19s/fpalias-x86_64"
       ],
@@ -44,7 +44,7 @@
         "-ffp-contract=off",
         "-arch",
         "arm64",
-        "/Users/zhez/attesor/tests/attesor/fpalias.c",
+        "/Users/USER/attesor/tests/attesor/fpalias.c",
         "-o",
         "/var/folders/b4/tnjkjcm52s5g4n894r8xrcfh0000gn/T/attesor-accept-ho2fu19s/fpalias-arm64"
       ],
@@ -59,7 +59,7 @@
     {
       "name": "fpalias-arm64",
       "command": [
-        "/Users/zhez/attesor/target/release/attesor",
+        "/Users/USER/attesor/target/release/attesor",
         "--no-aot",
         "/var/folders/b4/tnjkjcm52s5g4n894r8xrcfh0000gn/T/attesor-accept-ho2fu19s/fpalias-arm64"
       ],
@@ -87,7 +87,7 @@
         "-ffp-contract=off",
         "-arch",
         "x86_64",
-        "/Users/zhez/attesor/tests/attesor/crypto.c",
+        "/Users/USER/attesor/tests/attesor/crypto.c",
         "-o",
         "/var/folders/b4/tnjkjcm52s5g4n894r8xrcfh0000gn/T/attesor-accept-ho2fu19s/crypto-x86_64"
       ],
@@ -120,7 +120,7 @@
         "-ffp-contract=off",
         "-arch",
         "arm64",
-        "/Users/zhez/attesor/tests/attesor/crypto.c",
+        "/Users/USER/attesor/tests/attesor/crypto.c",
         "-o",
         "/var/folders/b4/tnjkjcm52s5g4n894r8xrcfh0000gn/T/attesor-accept-ho2fu19s/crypto-arm64"
       ],
@@ -135,7 +135,7 @@
     {
       "name": "crypto-arm64",
       "command": [
-        "/Users/zhez/attesor/target/release/attesor",
+        "/Users/USER/attesor/target/release/attesor",
         "--no-aot",
         "/var/folders/b4/tnjkjcm52s5g4n894r8xrcfh0000gn/T/attesor-accept-ho2fu19s/crypto-arm64"
       ],
@@ -158,7 +158,7 @@
     {
       "name": "selftest-fpblocks",
       "command": [
-        "/Users/zhez/attesor/target/release/attesor",
+        "/Users/USER/attesor/target/release/attesor",
         "--selftest-jit",
         "fpblocks",
         "100000"
@@ -181,7 +181,7 @@
     {
       "name": "selftest-blocks",
       "command": [
-        "/Users/zhez/attesor/target/release/attesor",
+        "/Users/USER/attesor/target/release/attesor",
         "--selftest-jit",
         "blocks",
         "100000"
@@ -204,7 +204,7 @@
     {
       "name": "selftest-selchain",
       "command": [
-        "/Users/zhez/attesor/target/release/attesor",
+        "/Users/USER/attesor/target/release/attesor",
         "--selftest-jit",
         "selchain",
         "100000"
@@ -227,7 +227,7 @@
     {
       "name": "selftest-ff000000:1f000000",
       "command": [
-        "/Users/zhez/attesor/target/release/attesor",
+        "/Users/USER/attesor/target/release/attesor",
         "--selftest-jit",
         "ff000000:1f000000",
         "100000"
@@ -249,7 +249,7 @@
     {
       "name": "selftest-bf20fc00:0e20cc00",
       "command": [
-        "/Users/zhez/attesor/target/release/attesor",
+        "/Users/USER/attesor/target/release/attesor",
         "--selftest-jit",
         "bf20fc00:0e20cc00",
         "100000"
@@ -271,7 +271,7 @@
     {
       "name": "selftest-9f800400:0f000000",
       "command": [
-        "/Users/zhez/attesor/target/release/attesor",
+        "/Users/USER/attesor/target/release/attesor",
         "--selftest-jit",
         "9f800400:0f000000",
         "100000"
@@ -293,7 +293,7 @@
     {
       "name": "selftest-fpnan",
       "command": [
-        "/Users/zhez/attesor/target/release/attesor",
+        "/Users/USER/attesor/target/release/attesor",
         "--selftest-jit",
         "fpnan",
         "62208"
@@ -315,7 +315,7 @@
     {
       "name": "selftest-fpnan-fpcr",
       "command": [
-        "/Users/zhez/attesor/target/release/attesor",
+        "/Users/USER/attesor/target/release/attesor",
         "--selftest-jit",
         "fpnan",
         "62208"

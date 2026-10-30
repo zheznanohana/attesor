@@ -45,6 +45,30 @@ pub struct CommPage {
     pub in_place: bool,
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn g4_page16k_commpage_matches_syscall_policy() {
+        let span = (COMMPAGE_SPAN_END - COMMPAGE_SPAN_START) as usize;
+        let p = unsafe { libc::mmap(std::ptr::null_mut(), span, libc::PROT_READ | libc::PROT_WRITE,
+                                    libc::MAP_ANON | libc::MAP_PRIVATE, -1, 0) };
+        assert_ne!(p, libc::MAP_FAILED);
+        let cp = CommPage { base: p as u64, in_place: false };
+        unsafe {
+            // Fill a private copy without changing global commpage redirection.
+            cp.fill();
+            let expected = if crate::syscalls::page16k_enabled() { 14 } else { 12 };
+            for off in [0x24, 0x25, 0x37] {
+                assert_eq!(*cp.rw(off), expected);
+                assert_eq!(*cp.ro(off), expected);
+            }
+            assert_eq!(libc::munmap(p, span), 0);
+        }
+    }
+}
+
 fn host_ncpu() -> u8 {
     let mut n: i32 = 0;
     let mut len = std::mem::size_of::<i32>();
@@ -110,18 +134,22 @@ impl CommPage {
         (self.rw(0x1e) as *mut u16).write_unaligned(3);
         (self.rw(0x20) as *mut u32).write_unaligned(caps as u32);
         *self.rw(0x22) = ncpu;
-        // Page shifts: the host uses 4K pages, report that to the guest.
-        *self.rw(0x24) = 12;
-        *self.rw(0x25) = 12;
-        *self.ro(0x24) = 12;
-        *self.ro(0x25) = 12;
+        // The opt-in syscall alignment policy must agree with libc's page-size
+        // discovery. Advertising 4K while requiring 16K mprotect/munmap makes
+        // allocators issue valid-looking 4K operations that we then reject.
+        // Preserve the accepted 4K commpage in the default configuration.
+        let page_shift = if crate::syscalls::page16k_enabled() { 14 } else { 12 };
+        *self.rw(0x24) = page_shift;
+        *self.rw(0x25) = page_shift;
+        *self.ro(0x24) = page_shift;
+        *self.ro(0x25) = page_shift;
         (self.rw(0x26) as *mut u16).write_unaligned(64);
         *self.rw(0x2f) = 1; // clusters
         *self.rw(0x34) = ncpu;
         *self.rw(0x35) = ncpu;
         *self.rw(0x36) = ncpu;
-        *self.rw(0x37) = 12;
-        *self.ro(0x37) = 12;
+        *self.rw(0x37) = page_shift;
+        *self.ro(0x37) = page_shift;
         (self.rw(0x38) as *mut u64).write_unaligned(host_memsize());
         (self.rw(0x80) as *mut u32).write_unaligned(CPUFAMILY);
         // No user-readable timebase: mach_absolute_time() traps and we answer

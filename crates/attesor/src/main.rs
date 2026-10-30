@@ -13,8 +13,12 @@ mod jit;
 mod loader;
 mod macho;
 mod native;
+mod native_dsp;
+mod nativefixups;
 mod paths;
 mod profile;
+mod policy;
+mod process_qos;
 mod sandbox;
 mod signals;
 mod spawn;
@@ -28,7 +32,8 @@ use std::sync::atomic::Ordering;
 fn usage() -> ! {
     eprintln!("usage: attesor [options] <arm64-program> [args...]");
     eprintln!("       attesor --prewarm [options] <arm64-program|App.app>...  translate without running guest code");
-    eprintln!("       attesor --selftest-jit loops [count] [seed]  differential loop test (decimal/0x seed)");
+    eprintln!("       attesor --selftest-jit jitcode [count] [seed]  whole-unit relocation differential test");
+    eprintln!("       attesor --selftest-jit <class> [count] [seed]  differential test (decimal/0x seed)");
     eprintln!("                  --aot is an alias; app bundles include ARM executable helpers");
     eprintln!("options:");
     eprintln!("  --interp        interpreter only (no JIT/AOT)");
@@ -43,8 +48,27 @@ fn usage() -> ! {
     std::process::exit(2);
 }
 
+/// v2 defaults: JIT/loader accelerators plus functional opt-ins that did not slow the DSH launch benchmark.
+/// Off: `callret` (slower JS/start), `jitcost`/`loopcensus` (diagnostics), `page16k` (aborts DSH startup),
+/// `tiered` (DSH launch timeouts), `rel32chain` (+21%), `ibtc2` (+19%), `sharedtrans` (+10%),
+/// `bliccache` (+8%) and `loopra2` (DSH launch regressions in combination) on DSH launch.
+/// An explicit ATTESOR_JIT_ON (even empty) replaces this list and ATTESOR_JIT_OFF still wins per token.
+const DEFAULT_ON: &str = "avx512,avx512nan,bgtrans,fastenc,flagreg,hugepages,isel2,loopra,nativefixups,\
+notbi,offline-constprop,offline-dse,offline-layout-profile,pathcache,preciseinvalidate,process-qos,\
+regioncache,slotreuse";
+
 fn main() {
+    // Single-threaded here; children inherit, so execs keep the same configuration.
+    if std::env::var_os("ATTESOR_JIT_ON").is_none() {
+        std::env::set_var("ATTESOR_JIT_ON", DEFAULT_ON);
+    }
     let mut args: Vec<String> = std::env::args().skip(1).collect();
+    // Test-only real-kernel worker: exercises the exact loader/runtime with
+    // private file-backed sharing when the sandbox denies POSIX shm.
+    #[cfg(test)]
+    if let Ok(guest) = std::env::var("ATTESOR_TEST_KERNEL") {
+        args = vec!["--no-aot".into(), guest];
+    }
     let mut prewarm = false;
     let mut guest_argv0 = None;
     let mut dyld = std::env::var("ATTESOR_DYLD").unwrap_or_else(|_| "/usr/lib/dyld".to_string());
@@ -163,7 +187,13 @@ fn main() {
             paths::set_cache_dir(&d);
         }
     }
+    if !prewarm {
+        policy::initialize(std::path::Path::new(&resolve_path(&args[0])));
+    }
     if prewarm {
+        // This invocation never runs a guest; lowering the calling thread is
+        // safe here, unlike a synchronous save on a live guest thread.
+        process_qos::background_translation_worker("prewarm");
         // Match the runtime commpage/code-generation configuration before making
         // compatibility keys. Never initialize dyld or execute a guest entry.
         let _cp = commpage::CommPage::install();
@@ -217,7 +247,7 @@ fn main() {
     let gpu_active = std::env::var_os("ATTESOR_GPU").is_some()
         && std::env::var("ATTESOR_GPU_ONLY").map(|o| args.iter().skip(1).any(|a| a.contains(&o))).unwrap_or(true);
     let mut envp: Vec<String> = std::env::vars()
-        .filter(|(k, _)| !k.starts_with("ATTESOR_") || matches!(k.as_str(), "ATTESOR_DUMP_ON_FAULT" | "ATTESOR_GPU_BRIDGE" | "ATTESOR_GPU" | "ATTESOR_GPU_ONLY" | "ATTESOR_GPU_DIR" | "ATTESOR_DYLD" | "ATTESOR_SYSROOT" | "ATTESOR_UI_TRACE" | "ATTESOR_NO_DOCK_ICON" | "ATTESOR_STDERR_LOG" | "ATTESOR_CACHE" | "ATTESOR_NO_AOT_BUILD" | "ATTESOR_AOT_CHECKPOINT" | "ATTESOR_AOT_SYNC" | "ATTESOR_JIT_DISABLE" | "ATTESOR_JIT_THRESHOLD" | "ATTESOR_JIT_OFF" | "ATTESOR_JIT_ON" | "ATTESOR_PROFILE" | "ATTESOR_STATS" | "ATTESOR_FALLBACK_HIST" | "ATTESOR_NATIVE_LIBS" | "ATTESOR_NATIVE_DIR"))
+        .filter(|(k, _)| !k.starts_with("ATTESOR_") || matches!(k.as_str(), "ATTESOR_DUMP_ON_FAULT" | "ATTESOR_GPU_BRIDGE" | "ATTESOR_GPU" | "ATTESOR_GPU_ONLY" | "ATTESOR_GPU_DIR" | "ATTESOR_GPU_VT" | "ATTESOR_DYLD" | "ATTESOR_SYSROOT" | "ATTESOR_UI_TRACE" | "ATTESOR_NO_DOCK_ICON" | "ATTESOR_STDERR_LOG" | "ATTESOR_CACHE" | "ATTESOR_NO_AOT_BUILD" | "ATTESOR_AOT_CHECKPOINT" | "ATTESOR_AOT_SYNC" | "ATTESOR_JIT_DISABLE" | "ATTESOR_JIT_THRESHOLD" | "ATTESOR_JIT_OFF" | "ATTESOR_JIT_ON" | "ATTESOR_NATIVEFIXUPS_VERIFY" | "ATTESOR_PROFILE" | "ATTESOR_STATS" | "ATTESOR_FALLBACK_HIST" | "ATTESOR_NATIVE_LIBS" | "ATTESOR_NATIVE_DIR" | "ATTESOR_AUTOTUNE"))
         .map(|(k, v)| format!("{k}={v}"))
         .collect();
     // Native middlemen restart Attesor without Rust's FORWARD argv. Publish the
@@ -268,6 +298,7 @@ fn main() {
             std::process::exit(1);
         }
     };
+    nativefixups::install(&dyld, &loaded.dyld.macho, loaded.dyld.slide);
     let (lo, hi) = loaded.main.macho.vm_range();
     symbols::add_image(lo.wrapping_add(loaded.main.slide), hi.wrapping_add(loaded.main.slide), exe.rsplit('/').next().unwrap_or(&exe));
     let (lo, hi) = loaded.dyld.macho.vm_range();
@@ -279,10 +310,12 @@ fn main() {
         let m = &loaded.main.macho;
         let (lo, hi) = m.vm_range();
         let entries = aot::function_starts(&exe, m, loaded.main.slide);
-        aot::register_main(&exe, m.uuid, lo.wrapping_add(loaded.main.slide), hi.wrapping_add(loaded.main.slide), entries);
+        aot::register_main(&exe, m.uuid, lo.wrapping_add(loaded.main.slide), hi.wrapping_add(loaded.main.slide), entries,
+            aot::source_bounds(m, loaded.main.slide));
         let d = &loaded.dyld.macho;
         let (lo, hi) = d.vm_range();
-        aot::register_dyld(&dyld, d.uuid, lo.wrapping_add(loaded.dyld.slide), hi.wrapping_add(loaded.dyld.slide));
+        aot::register_dyld(&dyld, d.uuid, lo.wrapping_add(loaded.dyld.slide), hi.wrapping_add(loaded.dyld.slide),
+            aot::source_bounds(d, loaded.dyld.slide));
     }
     symbols::add_file_symbols(&exe, &loaded.main.macho, loaded.main.slide);
     symbols::add_file_symbols(&dyld, &loaded.dyld.macho, loaded.dyld.slide);
@@ -310,4 +343,10 @@ fn resolve_path(p: &str) -> String {
         }
     }
     p.to_string()
+}
+
+#[cfg(test)]
+#[test]
+fn fix2_kernel_worker() {
+    if std::env::var_os("ATTESOR_TEST_KERNEL").is_some() { main(); }
 }

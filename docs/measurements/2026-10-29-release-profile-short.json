@@ -1,5 +1,5 @@
 {
-  "host": "zhezdeMacBook-Pro.local",
+  "host": "host.local",
   "sha256": {
     "before": "70b266a0f521247bd42cb581aa9e504d399fc94da6a12f75e8e262636c0cde88",
     "after": "df6c3a34d7fdc6b58c1dc0478967cb02edec0c1e988951db557b3183263f9c6f",
@@ -61,7 +61,7 @@
           {
             "pid": 61666,
             "cpu_percent": 9.0,
-            "executable": "/Users/zhez/.codex/packages/app-server-daemon/releases/0.165.0-x86_64-apple-darwin/bin/codex"
+            "executable": "/Users/USER/.codex/packages/app-server-daemon/releases/0.165.0-x86_64-apple-darwin/bin/codex"
           }
         ]
       },
@@ -110,7 +110,7 @@
           {
             "pid": 876,
             "cpu_percent": 5.2,
-            "executable": "/Users/zhez/Library/Application Support/Steam/Steam.AppBundle/Steam/Contents/Frameworks/Steam Helper.app/Contents/MacOS/Steam Helper"
+            "executable": "/Users/USER/Library/Application Support/Steam/Steam.AppBundle/Steam/Contents/Frameworks/Steam Helper.app/Contents/MacOS/Steam Helper"
           }
         ]
       },
@@ -174,7 +174,7 @@
           {
             "pid": 876,
             "cpu_percent": 4.6,
-            "executable": "/Users/zhez/Library/Application Support/Steam/Steam.AppBundle/Steam/Contents/Frameworks/Steam Helper.app/Contents/MacOS/Steam Helper"
+            "executable": "/Users/USER/Library/Application Support/Steam/Steam.AppBundle/Steam/Contents/Frameworks/Steam Helper.app/Contents/MacOS/Steam Helper"
           }
         ]
       },
@@ -213,7 +213,7 @@
           {
             "pid": 876,
             "cpu_percent": 4.0,
-            "executable": "/Users/zhez/Library/Application Support/Steam/Steam.AppBundle/Steam/Contents/Frameworks/Steam Helper.app/Contents/MacOS/Steam Helper"
+            "executable": "/Users/USER/Library/Application Support/Steam/Steam.AppBundle/Steam/Contents/Frameworks/Steam Helper.app/Contents/MacOS/Steam Helper"
           },
           {
             "pid": 137,
@@ -282,7 +282,7 @@
           {
             "pid": 876,
             "cpu_percent": 4.1,
-            "executable": "/Users/zhez/Library/Application Support/Steam/Steam.AppBundle/Steam/Contents/Frameworks/Steam Helper.app/Contents/MacOS/Steam Helper"
+            "executable": "/Users/USER/Library/Application Support/Steam/Steam.AppBundle/Steam/Contents/Frameworks/Steam Helper.app/Contents/MacOS/Steam Helper"
           },
           {
             "pid": 17136,
@@ -321,12 +321,12 @@
           {
             "pid": 876,
             "cpu_percent": 4.6,
-            "executable": "/Users/zhez/Library/Application Support/Steam/Steam.AppBundle/Steam/Contents/Frameworks/Steam Helper.app/Contents/MacOS/Steam Helper"
+            "executable": "/Users/USER/Library/Application Support/Steam/Steam.AppBundle/Steam/Contents/Frameworks/Steam Helper.app/Contents/MacOS/Steam Helper"
           },
           {
             "pid": 598,
             "cpu_percent": 1.6,
-            "executable": "/Users/zhez/Library/Application Support/Steam/Steam.AppBundle/Steam/Contents/MacOS/steam_osx"
+            "executable": "/Users/USER/Library/Application Support/Steam/Steam.AppBundle/Steam/Contents/MacOS/steam_osx"
           },
           {
             "pid": 137,
@@ -385,7 +385,7 @@
           {
             "pid": 876,
             "cpu_percent": 4.8,
-            "executable": "/Users/zhez/Library/Application Support/Steam/Steam.AppBundle/Steam/Contents/Frameworks/Steam Helper.app/Contents/MacOS/Steam Helper"
+            "executable": "/Users/USER/Library/Application Support/Steam/Steam.AppBundle/Steam/Contents/Frameworks/Steam Helper.app/Contents/MacOS/Steam Helper"
           },
           {
             "pid": 217,
@@ -434,12 +434,12 @@
           {
             "pid": 876,
             "cpu_percent": 3.8,
-            "executable": "/Users/zhez/Library/Application Support/Steam/Steam.AppBundle/Steam/Contents/Frameworks/Steam Helper.app/Contents/MacOS/Steam Helper"
+            "executable": "/Users/USER/Library/Application Support/Steam/Steam.AppBundle/Steam/Contents/Frameworks/Steam Helper.app/Contents/MacOS/Steam Helper"
           },
           {
             "pid": 61666,
             "cpu_percent": 1.4,
-            "executable": "/Users/zhez/.codex/packages/app-server-daemon/releases/0.165.0-x86_64-apple-darwin/bin/codex"
+            "executable": "/Users/USER/.codex/packages/app-server-daemon/releases/0.165.0-x86_64-apple-darwin/bin/codex"
           },
           {
             "pid": 61422,
@@ -503,7 +503,7 @@
           {
             "pid": 876,
             "cpu_percent": 3.5,
-            "executable": "/Users/zhez/Library/Application Support/Steam/Steam.AppBundle/Steam/Contents/Frameworks/Steam Helper.app/Contents/MacOS/Steam Helper"
+            "executable": "/Users/USER/Library/Application Support/Steam/Steam.AppBundle/Steam/Contents/Frameworks/Steam Helper.app/Contents/MacOS/Steam Helper"
           },
           {
             "pid": 17161,
@@ -547,7 +547,7 @@
           {
             "pid": 876,
             "cpu_percent": 4.5,
-            "executable": "/Users/zhez/Library/Application Support/Steam/Steam.AppBundle/Steam/Contents/Frameworks/Steam Helper.app/Contents/MacOS/Steam Helper"
+            "executable": "/Users/USER/Library/Application Support/Steam/Steam.AppBundle/Steam/Contents/Frameworks/Steam Helper.app/Contents/MacOS/Steam Helper"
           },
           {
             "pid": 217,
@@ -562,7 +562,7 @@
           {
             "pid": 598,
             "cpu_percent": 0.8,
-            "executable": "/Users/zhez/Library/Application Support/Steam/Steam.AppBundle/Steam/Contents/MacOS/steam_osx"
+            "executable": "/Users/USER/Library/Application Support/Steam/Steam.AppBundle/Steam/Contents/MacOS/steam_osx"
           }
         ]
       },
@@ -611,7 +611,7 @@
           {
             "pid": 876,
             "cpu_percent": 5.3,
-            "executable": "/Users/zhez/Library/Application Support/Steam/Steam.AppBundle/Steam/Contents/Frameworks/Steam Helper.app/Contents/MacOS/Steam Helper"
+            "executable": "/Users/USER/Library/Application Support/Steam/Steam.AppBundle/Steam/Contents/Frameworks/Steam Helper.app/Contents/MacOS/Steam Helper"
           },
           {
             "pid": 602,
@@ -660,7 +660,7 @@
           {
             "pid": 876,
             "cpu_percent": 3.8,
-            "executable": "/Users/zhez/Library/Application Support/Steam/Steam.AppBundle/Steam/Contents/Frameworks/Steam Helper.app/Contents/MacOS/Steam Helper"
+            "executable": "/Users/USER/Library/Application Support/Steam/Steam.AppBundle/Steam/Contents/Frameworks/Steam Helper.app/Contents/MacOS/Steam Helper"
           },
           {
             "pid": 61422,
@@ -670,7 +670,7 @@
           {
             "pid": 598,
             "cpu_percent": 1.1,
-            "executable": "/Users/zhez/Library/Application Support/Steam/Steam.AppBundle/Steam/Contents/MacOS/steam_osx"
+            "executable": "/Users/USER/Library/Application Support/Steam/Steam.AppBundle/Steam/Contents/MacOS/steam_osx"
           },
           {
             "pid": 602,
@@ -729,17 +729,17 @@
           {
             "pid": 876,
             "cpu_percent": 4.0,
-            "executable": "/Users/zhez/Library/Application Support/Steam/Steam.AppBundle/Steam/Contents/Frameworks/Steam Helper.app/Contents/MacOS/Steam Helper"
+            "executable": "/Users/USER/Library/Application Support/Steam/Steam.AppBundle/Steam/Contents/Frameworks/Steam Helper.app/Contents/MacOS/Steam Helper"
           },
           {
             "pid": 930,
             "cpu_percent": 2.7,
-            "executable": "/Users/zhez/Library/Application Support/Steam/Steam.AppBundle/Steam/Contents/Frameworks/Steam Helper.app/Contents/MacOS/Steam Helper"
+            "executable": "/Users/USER/Library/Application Support/Steam/Steam.AppBundle/Steam/Contents/Frameworks/Steam Helper.app/Contents/MacOS/Steam Helper"
           },
           {
             "pid": 598,
             "cpu_percent": 1.3,
-            "executable": "/Users/zhez/Library/Application Support/Steam/Steam.AppBundle/Steam/Contents/MacOS/steam_osx"
+            "executable": "/Users/USER/Library/Application Support/Steam/Steam.AppBundle/Steam/Contents/MacOS/steam_osx"
           }
         ]
       },
@@ -773,7 +773,7 @@
           {
             "pid": 876,
             "cpu_percent": 4.1,
-            "executable": "/Users/zhez/Library/Application Support/Steam/Steam.AppBundle/Steam/Contents/Frameworks/Steam Helper.app/Contents/MacOS/Steam Helper"
+            "executable": "/Users/USER/Library/Application Support/Steam/Steam.AppBundle/Steam/Contents/Frameworks/Steam Helper.app/Contents/MacOS/Steam Helper"
           },
           {
             "pid": 217,
@@ -842,7 +842,7 @@
           {
             "pid": 876,
             "cpu_percent": 4.5,
-            "executable": "/Users/zhez/Library/Application Support/Steam/Steam.AppBundle/Steam/Contents/Frameworks/Steam Helper.app/Contents/MacOS/Steam Helper"
+            "executable": "/Users/USER/Library/Application Support/Steam/Steam.AppBundle/Steam/Contents/Frameworks/Steam Helper.app/Contents/MacOS/Steam Helper"
           },
           {
             "pid": 602,
@@ -886,7 +886,7 @@
           {
             "pid": 876,
             "cpu_percent": 4.5,
-            "executable": "/Users/zhez/Library/Application Support/Steam/Steam.AppBundle/Steam/Contents/Frameworks/Steam Helper.app/Contents/MacOS/Steam Helper"
+            "executable": "/Users/USER/Library/Application Support/Steam/Steam.AppBundle/Steam/Contents/Frameworks/Steam Helper.app/Contents/MacOS/Steam Helper"
           },
           {
             "pid": 61422,
@@ -950,7 +950,7 @@
           {
             "pid": 876,
             "cpu_percent": 4.1,
-            "executable": "/Users/zhez/Library/Application Support/Steam/Steam.AppBundle/Steam/Contents/Frameworks/Steam Helper.app/Contents/MacOS/Steam Helper"
+            "executable": "/Users/USER/Library/Application Support/Steam/Steam.AppBundle/Steam/Contents/Frameworks/Steam Helper.app/Contents/MacOS/Steam Helper"
           },
           {
             "pid": 17084,
@@ -999,7 +999,7 @@
           {
             "pid": 876,
             "cpu_percent": 4.5,
-            "executable": "/Users/zhez/Library/Application Support/Steam/Steam.AppBundle/Steam/Contents/Frameworks/Steam Helper.app/Contents/MacOS/Steam Helper"
+            "executable": "/Users/USER/Library/Application Support/Steam/Steam.AppBundle/Steam/Contents/Frameworks/Steam Helper.app/Contents/MacOS/Steam Helper"
           },
           {
             "pid": 61422,
@@ -1009,7 +1009,7 @@
           {
             "pid": 598,
             "cpu_percent": 1.1,
-            "executable": "/Users/zhez/Library/Application Support/Steam/Steam.AppBundle/Steam/Contents/MacOS/steam_osx"
+            "executable": "/Users/USER/Library/Application Support/Steam/Steam.AppBundle/Steam/Contents/MacOS/steam_osx"
           },
           {
             "pid": 217,
@@ -1063,12 +1063,12 @@
           {
             "pid": 876,
             "cpu_percent": 4.2,
-            "executable": "/Users/zhez/Library/Application Support/Steam/Steam.AppBundle/Steam/Contents/Frameworks/Steam Helper.app/Contents/MacOS/Steam Helper"
+            "executable": "/Users/USER/Library/Application Support/Steam/Steam.AppBundle/Steam/Contents/Frameworks/Steam Helper.app/Contents/MacOS/Steam Helper"
           },
           {
             "pid": 61666,
             "cpu_percent": 4.2,
-            "executable": "/Users/zhez/.codex/packages/app-server-daemon/releases/0.165.0-x86_64-apple-darwin/bin/codex"
+            "executable": "/Users/USER/.codex/packages/app-server-daemon/releases/0.165.0-x86_64-apple-darwin/bin/codex"
           },
           {
             "pid": 602,
@@ -1112,7 +1112,7 @@
           {
             "pid": 876,
             "cpu_percent": 4.5,
-            "executable": "/Users/zhez/Library/Application Support/Steam/Steam.AppBundle/Steam/Contents/Frameworks/Steam Helper.app/Contents/MacOS/Steam Helper"
+            "executable": "/Users/USER/Library/Application Support/Steam/Steam.AppBundle/Steam/Contents/Frameworks/Steam Helper.app/Contents/MacOS/Steam Helper"
           },
           {
             "pid": 217,
@@ -1122,7 +1122,7 @@
           {
             "pid": 598,
             "cpu_percent": 1.5,
-            "executable": "/Users/zhez/Library/Application Support/Steam/Steam.AppBundle/Steam/Contents/MacOS/steam_osx"
+            "executable": "/Users/USER/Library/Application Support/Steam/Steam.AppBundle/Steam/Contents/MacOS/steam_osx"
           },
           {
             "pid": 61422,
@@ -1176,7 +1176,7 @@
           {
             "pid": 876,
             "cpu_percent": 4.1,
-            "executable": "/Users/zhez/Library/Application Support/Steam/Steam.AppBundle/Steam/Contents/Frameworks/Steam Helper.app/Contents/MacOS/Steam Helper"
+            "executable": "/Users/USER/Library/Application Support/Steam/Steam.AppBundle/Steam/Contents/Frameworks/Steam Helper.app/Contents/MacOS/Steam Helper"
           },
           {
             "pid": 17084,
@@ -1225,7 +1225,7 @@
           {
             "pid": 876,
             "cpu_percent": 4.5,
-            "executable": "/Users/zhez/Library/Application Support/Steam/Steam.AppBundle/Steam/Contents/Frameworks/Steam Helper.app/Contents/MacOS/Steam Helper"
+            "executable": "/Users/USER/Library/Application Support/Steam/Steam.AppBundle/Steam/Contents/Frameworks/Steam Helper.app/Contents/MacOS/Steam Helper"
           },
           {
             "pid": 602,
@@ -1289,7 +1289,7 @@
           {
             "pid": 876,
             "cpu_percent": 4.0,
-            "executable": "/Users/zhez/Library/Application Support/Steam/Steam.AppBundle/Steam/Contents/Frameworks/Steam Helper.app/Contents/MacOS/Steam Helper"
+            "executable": "/Users/USER/Library/Application Support/Steam/Steam.AppBundle/Steam/Contents/Frameworks/Steam Helper.app/Contents/MacOS/Steam Helper"
           },
           {
             "pid": 17084,
@@ -1348,7 +1348,7 @@
           {
             "pid": 876,
             "cpu_percent": 4.2,
-            "executable": "/Users/zhez/Library/Application Support/Steam/Steam.AppBundle/Steam/Contents/Frameworks/Steam Helper.app/Contents/MacOS/Steam Helper"
+            "executable": "/Users/USER/Library/Application Support/Steam/Steam.AppBundle/Steam/Contents/Frameworks/Steam Helper.app/Contents/MacOS/Steam Helper"
           },
           {
             "pid": 124,
@@ -1451,7 +1451,7 @@
           {
             "pid": 876,
             "cpu_percent": 6.6,
-            "executable": "/Users/zhez/Library/Application Support/Steam/Steam.AppBundle/Steam/Contents/Frameworks/Steam Helper.app/Contents/MacOS/Steam Helper"
+            "executable": "/Users/USER/Library/Application Support/Steam/Steam.AppBundle/Steam/Contents/Frameworks/Steam Helper.app/Contents/MacOS/Steam Helper"
           },
           {
             "pid": 602,
@@ -1461,7 +1461,7 @@
           {
             "pid": 598,
             "cpu_percent": 1.9,
-            "executable": "/Users/zhez/Library/Application Support/Steam/Steam.AppBundle/Steam/Contents/MacOS/steam_osx"
+            "executable": "/Users/USER/Library/Application Support/Steam/Steam.AppBundle/Steam/Contents/MacOS/steam_osx"
           },
           {
             "pid": 61422,
@@ -1515,12 +1515,12 @@
           {
             "pid": 876,
             "cpu_percent": 5.3,
-            "executable": "/Users/zhez/Library/Application Support/Steam/Steam.AppBundle/Steam/Contents/Frameworks/Steam Helper.app/Contents/MacOS/Steam Helper"
+            "executable": "/Users/USER/Library/Application Support/Steam/Steam.AppBundle/Steam/Contents/Frameworks/Steam Helper.app/Contents/MacOS/Steam Helper"
           },
           {
             "pid": 61666,
             "cpu_percent": 4.7,
-            "executable": "/Users/zhez/.codex/packages/app-server-daemon/releases/0.165.0-x86_64-apple-darwin/bin/codex"
+            "executable": "/Users/USER/.codex/packages/app-server-daemon/releases/0.165.0-x86_64-apple-darwin/bin/codex"
           },
           {
             "pid": 602,
@@ -1564,7 +1564,7 @@
           {
             "pid": 876,
             "cpu_percent": 4.4,
-            "executable": "/Users/zhez/Library/Application Support/Steam/Steam.AppBundle/Steam/Contents/Frameworks/Steam Helper.app/Contents/MacOS/Steam Helper"
+            "executable": "/Users/USER/Library/Application Support/Steam/Steam.AppBundle/Steam/Contents/Frameworks/Steam Helper.app/Contents/MacOS/Steam Helper"
           },
           {
             "pid": 61422,
@@ -1574,12 +1574,12 @@
           {
             "pid": 598,
             "cpu_percent": 1.2,
-            "executable": "/Users/zhez/Library/Application Support/Steam/Steam.AppBundle/Steam/Contents/MacOS/steam_osx"
+            "executable": "/Users/USER/Library/Application Support/Steam/Steam.AppBundle/Steam/Contents/MacOS/steam_osx"
           },
           {
             "pid": 61666,
             "cpu_percent": 1.0,
-            "executable": "/Users/zhez/.codex/packages/app-server-daemon/releases/0.165.0-x86_64-apple-darwin/bin/codex"
+            "executable": "/Users/USER/.codex/packages/app-server-daemon/releases/0.165.0-x86_64-apple-darwin/bin/codex"
           }
         ]
       },

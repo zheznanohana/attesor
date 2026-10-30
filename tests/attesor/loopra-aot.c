@@ -44,6 +44,42 @@ __attribute__((noinline)) static uint64_t kernel(void) {
     struct node *p = nodes; uint64_t s = 0;
     for (unsigned i = 0; i < 12000; i++) { s += p->v; p = p->next; }
     return s;
+#elif KERNEL >= 7
+    uint64_t h = 11, mix = 0x12345678;
+    unsigned n = 128, outer = KERNEL == 9 ? 5 : 1;
+#if defined(__aarch64__)
+    __asm__ volatile("0: mov %w[n], #128\n"
+                     "1: add %[h], %[h], #3\n"
+                     "tbz %w[n], #0, 2f\n"
+                     "eor %[h], %[h], %[mix]\n"
+#if KERNEL == 8
+                     "cmp %w[n], #17\n"
+                     "b.eq 4f\n"
+#endif
+                     "b 3f\n"
+                     "2: sub %[h], %[h], #1\n"
+#if KERNEL == 8
+                     "cmp %w[n], #22\n"
+                     "b.eq 4f\n"
+#endif
+                     "3: subs %w[n], %w[n], #1\n"
+                     "b.ne 1b\n"
+                     "subs %w[o], %w[o], #1\n"
+                     "b.ne 0b\n"
+                     "4:"
+                     : [h] "+&r"(h), [n] "+&r"(n), [o] "+&r"(outer)
+                     : [mix] "r"(mix) : "cc");
+#else
+    do {
+        for (n = 128; n; n--) {
+            h += 3;
+            if (n & 1) { h ^= mix; if (KERNEL == 8 && n == 17) goto done; }
+            else { h -= 1; if (KERNEL == 8 && n == 22) goto done; }
+        }
+    } while (--outer);
+    done:;
+#endif
+    return h + n + outer;
 #else
     uint64_t a[258], b[258] = {0}, sum = 0;
     for (unsigned i = 0; i < 258; i++) a[i] = i * 7919u + 17;

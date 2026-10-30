@@ -44,7 +44,7 @@ Node 每次使用新的输出目录；基线二进制在修改前保存为 `targ
 ELECTRON_RUN_AS_NODE=1 \
 RES="/Applications/DeepSeek Harness.app/Contents/Resources" \
 ATTESOR_PROFILE="$OUT/profile" ATTESOR_CACHE="$OUT/aot" ATTESOR_NO_AOT_BUILD=1 \
-ATTESOR_SYSROOT="/Users/zhez/attesor-sysroot/26.6.2__Mac14,2" \
+ATTESOR_SYSROOT="/Users/USER/attesor-sysroot/26.6.2__Mac14,2" \
 TMPDIR="$OUT/tmp" HOME="$OUT/home" \
 target/release/attesor "/Applications/DeepSeek Harness.app/Contents/MacOS/DeepSeek Harness" \
 "$PWD/docs/tasks/node-workload.js"

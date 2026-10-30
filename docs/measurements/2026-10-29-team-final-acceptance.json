@@ -1,5 +1,5 @@
 {
-  "binary": "/Users/zhez/attesor/target/release/attesor",
+  "binary": "/Users/USER/attesor/target/release/attesor",
   "sha256": "c61c19536a77d3c759a41822cb9a152eaff45a8e7313f05d6e5bd279d5bb6824",
   "automated_passed": true,
   "completed": 11,
@@ -24,7 +24,7 @@
         "python3",
         "tests/attesor/accept.py",
         "--attesor",
-        "/Users/zhez/attesor/target/release/attesor",
+        "/Users/USER/attesor/target/release/attesor",
         "--count",
         "100000",
         "--output",
@@ -40,7 +40,7 @@
       "name": "crypto",
       "command": [
         "env",
-        "ATTESOR=/Users/zhez/attesor/target/release/attesor",
+        "ATTESOR=/Users/USER/attesor/target/release/attesor",
         "tests/attesor/crypto-check.sh"
       ],
       "returncode": 0,
@@ -55,7 +55,7 @@
         "python3",
         "tests/attesor/aot-checkpoint.py",
         "--attesor",
-        "/Users/zhez/attesor/target/release/attesor"
+        "/Users/USER/attesor/target/release/attesor"
       ],
       "returncode": 0,
       "stdout": "PASS: checkpoint survived SIGKILL and next process loaded main-image blocks\nPASS: changed code-generation switches reject the default cache\nPASS: incompatible cache rebuilt from unchanged profile and loaded on restart\nPASS: interrupted coverage rebuild retries without new profile blocks\nPASS: failed exec preserves checkpoints and SIGKILL cache reuse\nPASS: multithreaded guest fork keeps parent and child checkpoints running\nPASS: parent/child checkpoint output survives SIGKILL and loads on restart\n",
@@ -68,7 +68,7 @@
       "command": [
         "python3",
         "tests/attesor/neon-qdmulh-check.py",
-        "/Users/zhez/attesor/target/release/attesor"
+        "/Users/USER/attesor/target/release/attesor"
       ],
       "returncode": 0,
       "stdout": "PASS JIT qdmulh digest 4d92fd0ec98359f5 qc_cases 12708 boundary PASS\nPASS interpreter qdmulh digest 4d92fd0ec98359f5 qc_cases 12708 boundary PASS\njit selftest [9fe0fc00:0e60b400]: ok=20000 mismatch=0 skipped=0 native=20000\njit selftest [9fe0fc00:0ea0b400]: ok=20000 mismatch=0 skipped=0 native=20000\nPASS benchmark checksum checksum 93579ade5b97531f 01c691828ef0017b\n",
@@ -81,7 +81,7 @@
       "command": [
         "python3",
         "tests/attesor/fp16-convert-check.py",
-        "/Users/zhez/attesor/target/release/attesor"
+        "/Users/USER/attesor/target/release/attesor"
       ],
       "returncode": 0,
       "stdout": "PASS integer-reference: tiny FP32 FZ boundaries PASS\nfp16-convert PASS cases=60000 digest=40c315811183ddde\nPASS JIT: tiny FP32 FZ boundaries PASS\nfp16-convert PASS cases=60000 digest=40c315811183ddde\nPASS interpreter: tiny FP32 FZ boundaries PASS\nfp16-convert PASS cases=60000 digest=40c315811183ddde\ndefault jit selftest [bffffc00:0e216800]: ok=20000 mismatch=0 skipped=0 native=20000\nFPCR jit selftest [bffffc00:0e216800]: ok=20000 mismatch=0 skipped=0 native=20000\n",
@@ -94,10 +94,10 @@
       "command": [
         "python3",
         "tests/attesor/gdb-protocol.py",
-        "/Users/zhez/attesor/target/release/attesor"
+        "/Users/USER/attesor/target/release/attesor"
       ],
       "returncode": 0,
-      "stdout": "PASS initial stop\nPASS feature negotiation\nPASS vCont advertises implemented actions only\nPASS vCont rejects unsupported action\nPASS malformed continue rejected\nPASS register write\nPASS register read\nPASS short register write rejected\nPASS invalid register hex rejected\nPASS bad writes preserve register\nPASS truncated register file rejected\nPASS invalid register file rejected atomically\nPASS bad checksum negatively acknowledged\nPASS bad checksum does not mutate\nPASS NAK retransmits last reply\nPASS vector register write\nPASS vector register read\nPASS memory write\nPASS memory read\nPASS length mismatch rejected\nPASS invalid memory hex rejected\nPASS bad memory writes preserve bytes\nPASS unknown free rejected\nPASS debugger allocation released\nPASS double free rejected\nPASS upload to RX expression allocation\nPASS free RX allocation\nPASS huge XML offset does not overflow\nPASS no-ack negotiation\nPASS no-ack request\nPASS set guest PC\nPASS single step\nPASS unaligned breakpoint rejected\nPASS wrong breakpoint size rejected\nPASS breakpoint insert\nPASS continue reaches breakpoint\nPASS breakpoint remove\nPASS running Ctrl-C reports SIGINT\nPASS stop query preserves SIGINT\nPASS set exit PC\nPASS exit status packet\nPASS guest exit status\nPASS initial stop\nPASS set detach PC\nPASS detach acknowledged\nPASS detached guest continues\nPASS initial stop\nPASS set disconnect PC\nPASS disconnected guest continues\n{\"passed\": true, \"checks\": 49, \"binary\": \"/Users/zhez/attesor/target/release/attesor\"}\n",
+      "stdout": "PASS initial stop\nPASS feature negotiation\nPASS vCont advertises implemented actions only\nPASS vCont rejects unsupported action\nPASS malformed continue rejected\nPASS register write\nPASS register read\nPASS short register write rejected\nPASS invalid register hex rejected\nPASS bad writes preserve register\nPASS truncated register file rejected\nPASS invalid register file rejected atomically\nPASS bad checksum negatively acknowledged\nPASS bad checksum does not mutate\nPASS NAK retransmits last reply\nPASS vector register write\nPASS vector register read\nPASS memory write\nPASS memory read\nPASS length mismatch rejected\nPASS invalid memory hex rejected\nPASS bad memory writes preserve bytes\nPASS unknown free rejected\nPASS debugger allocation released\nPASS double free rejected\nPASS upload to RX expression allocation\nPASS free RX allocation\nPASS huge XML offset does not overflow\nPASS no-ack negotiation\nPASS no-ack request\nPASS set guest PC\nPASS single step\nPASS unaligned breakpoint rejected\nPASS wrong breakpoint size rejected\nPASS breakpoint insert\nPASS continue reaches breakpoint\nPASS breakpoint remove\nPASS running Ctrl-C reports SIGINT\nPASS stop query preserves SIGINT\nPASS set exit PC\nPASS exit status packet\nPASS guest exit status\nPASS initial stop\nPASS set detach PC\nPASS detach acknowledged\nPASS detached guest continues\nPASS initial stop\nPASS set disconnect PC\nPASS disconnected guest continues\n{\"passed\": true, \"checks\": 49, \"binary\": \"/Users/USER/attesor/target/release/attesor\"}\n",
       "stderr": "",
       "passed": true,
       "seconds": 0.23211175899999148
@@ -107,7 +107,7 @@
       "command": [
         "python3",
         "tests/attesor/gdb-lldb-fd.py",
-        "/Users/zhez/attesor/target/release/attesor"
+        "/Users/USER/attesor/target/release/attesor"
       ],
       "returncode": 0,
       "stdout": "(lldb) target create \"/var/folders/b4/tnjkjcm52s5g4n894r8xrcfh0000gn/T/attesor-lldb-fd-lwsd5ccg/guest\"\nCurrent executable set to '/var/folders/b4/tnjkjcm52s5g4n894r8xrcfh0000gn/T/attesor-lldb-fd-lwsd5ccg/guest' (arm64).\n(lldb) process connect --plugin gdb-remote fd://4\nProcess 88418 stopped\n* thread #1, stop reason = signal SIGTRAP\n    frame #0: 0x00000005800049c0 \n->  0x5800049c0: mov    x0, sp\n    0x5800049c4: and    sp, x0, #0xfffffffffffffff0\n    0x5800049c8: mov    x29, #0x0                 ; =0 \n    0x5800049cc: mov    x30, #0x0                 ; =0 \nTarget 0: (guest) stopped.\n(lldb) target modules load --file guest --slide 0x400000000\n(lldb) b add3\nBreakpoint 1: where = guest`add3 at guest.c:2:72, address = 0x0000000500000460\n(lldb) c\nwarning: guest was compiled with optimization - stepping may behave oddly; variables may not be available.\nProcess 88418 resuming\nProcess 88418 stopped\n* thread #1, stop reason = breakpoint 1.1\n    frame #0: 0x0000000500000460 guest`add3(a=0, b=10, c=100) at guest.c:2:72 [opt]\n   1   \t#include <stdio.h>\n-> 2   \t__attribute__((noinline)) long add3(long a, long b, long c) { return a + b * 2 + c * 3; }\n    \t                                                                       ^\n   3   \tint main(void) { long s = 0; for (int i = 0; i < 5; i++) s += add3(i, 10, 100); printf(\"sum %ld\\n\", s); return 7; }\nTarget 0: (guest) stopped.\n(lldb) p a + b\n(long) 10\n(lldb) p add3(1, 2, 3)\n(long) 14\n(lldb) register write x1 5\n(lldb) finish\nProcess 88418 stopped\n* thread #1, stop reason = step out\nReturn value: (long) $0 = 310\n\n    frame #0: 0x0000000500000498 guest`main at guest.c:3:60 [opt]\n   1   \t#include <stdio.h>\n   2   \t__attribute__((noinline)) long add3(long a, long b, long c) { return a + b * 2 + c * 3; }\n-> 3   \tint main(void) { long s = 0; for (int i = 0; i < 5; i++) s += add3(i, 10, 100); printf(\"sum %ld\\n\", s); return 7; }\n    \t                                                           ^\nTarget 0: (guest) stopped.\n(lldb) breakpoint delete\nAll breakpoints removed. (1 breakpoint)\n\nsum 1600\n\ngdb-lldb-fd: PASS (symbols, arguments, expressions including guest function call, register write, finish, exit)\n",
@@ -119,7 +119,7 @@
       "name": "native-zlib",
       "command": [
         "env",
-        "ATTESOR=/Users/zhez/attesor/target/release/attesor",
+        "ATTESOR=/Users/USER/attesor/target/release/attesor",
         "tests/attesor/native-zlib-check.sh"
       ],
       "returncode": 0,
@@ -133,7 +133,7 @@
       "command": [
         "python3",
         "tests/attesor/thread-startup-check.py",
-        "/Users/zhez/attesor/target/release/attesor"
+        "/Users/USER/attesor/target/release/attesor"
       ],
       "returncode": 0,
       "stdout": "PASS x86_64: 30 rounds x 4 joined workers x 1 processes\nPASS arm64: 30 rounds x 4 joined workers x 10 processes\n",
@@ -147,7 +147,7 @@
         "python3",
         "tests/attesor/launcher-check.py",
         "--attesor",
-        "/Users/zhez/attesor/target/release/attesor"
+        "/Users/USER/attesor/target/release/attesor"
       ],
       "returncode": 0,
       "stdout": "PASS universal executable contains x86 and ARM\nPASS injection preserves ARM slice byte for byte\nPASS injection preserves executable permissions\nPASS stub/runner preserve empty, quoted, Unicode and shell-like arguments\nPASS shell-like arguments are never evaluated\nPASS ordinary app GPU flags\nPASS Electron flags preserve executable position and arguments\nPASS running application restore is refused\nPASS unknown process visibility refuses restore\nPASS missing runner preserves launch failure status 127\nPASS real emulator executes the retained ARM slice and returns its exit status\nPASS failed restore preparation leaves the universal executable intact\nPASS thin original restores exactly, including file layout\nPASS same bundle identifier cannot collide in backup storage\nPASS failed preparation leaves the original executable intact\nPASS restore retains updated ARM code instead of reverting backup\nPASS scan upgrades an old owned stub and retains updated ARM code\nPASS reinject is safe for an already-current stub\nPASS injection retains both arm64 and arm64e slices\nPASS multi-ARM original fat file restores exactly\nPASS scan does not inject a running application\nPASS scan does not inject when process status is unknown\nPASS legacy nested wrapper migrates to one universal bundle\nPASS migrated wrapper restores exact original executable\nPASS list reports handled apps without modifying application executables\nlauncher integration: 25 checks PASS\n",

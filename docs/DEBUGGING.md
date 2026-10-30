@@ -65,7 +65,7 @@ attesor --selftest-jit fpblocks 100000 # random scalar/vector FP + SIMD&FP load/
 `ATTESOR_JIT_OFF=loopra` disables hot-loop register allocation (single-block loops keep their working set
 in ten host registers and write back only on exit; on by default, `--selftest-jit loops` tests it, see
 docs/tasks/LOOPRA.md). `ATTESOR_JIT_OFF=vcache` disables the V-register cache, `selflags` the select-chain flag elimination
-(`ATTESOR_JIT_ON=callret` enables the experimental host call/ret translation of BL/BLR/RET, measured slower).
+(the former host call/ret experiment was removed after CPU acceptance measured regressions; see `ACCEPTANCE-REPORT.md`).
 `ldst` centres pc in a 4MB window so the `ldr <v>, literal` pool (±1MB) stays mapped: expect `mismatch=0`.
 (Before, the 4K test page left the literal pool outside it: garbage reads showed up as ~13 mismatches on some
 hosts and faulted outright on hosts with sparse mappings around the test page.) Sensitivity check of `blocks`: removing one `rc_inval` gives ~60 mismatches

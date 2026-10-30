@@ -5,7 +5,9 @@
 //!  * `rsp` is 16-byte aligned, so helpers can be `call`ed directly.
 //!  * Generated code never embeds absolute host addresses: helpers and the
 //!    exit trampoline are reached through `[r15 + off]`. Code is therefore
-//!    position independent, which lets the AOT cache store it on disk.
+//!    position independent, which lets the AOT cache store it on disk. The
+//!    runtime-only opt-in rel32chain prefix is added separately by jit/mod.rs
+//!    and is never persisted as an AOT Unit.
 //!  * Instructions the translator does not handle natively are executed by
 //!    calling the reference interpreter (`HELPER_INTERP`) for that single
 //!    instruction; write-back regions synchronize guest state around that call.
@@ -15,6 +17,9 @@ use attesor_core::cpu::off;
 use attesor_core::interp::simd::vfp_expand_imm;
 use std::collections::HashMap;
 
+#[path = "notbi.rs"]
+mod notbi;
+
 pub const HELPER_INTERP: usize = 0;
 pub const HELPER_COMMPAGE: usize = 1;
 
@@ -23,6 +28,8 @@ pub const EXIT_SVC: u64 = 1;
 pub const EXIT_PENDING: u64 = 2;
 /// The block needs the interpreter (FPCR not in the default mode the native FP code assumes).
 pub const EXIT_INTERP: u64 = 3;
+/// A thread-private BLR site-cache miss; exit_data is the complete guest call PC.
+pub const EXIT_BLICCACHE: u64 = 0x10;
 /// FPCR bits the native FP translations cannot honour: AHP, DN, FZ16. (RMode and FZ are applied to the
 /// host MXCSR whenever FPCR is written, see interp::sys::sync_host_fp_mode.)
 const FPCR_NONDEFAULT: u32 = 0x0608_0000;
@@ -45,6 +52,9 @@ pub struct Stub {
     pub cont: CodeLabel,
     /// Label of the 8-byte chaining slot (Patchable only).
     pub slot: CodeLabel,
+    /// Assembler instruction ordinal, resolved before JIT code publication.
+    /// Unlike a fresh label this also works when a block-entry label is pending.
+    pub link_site: usize,
 }
 
 /// Emission context shared by all blocks assembled into one unit.
@@ -56,6 +66,8 @@ pub struct Unit {
     pub stub_kind: StubKind,
     /// Verification mode: every block exits after one pass (no self loops).
     pub no_internal_jumps: bool,
+    /// JIT-only cold tier: no speculative lookahead, regions, fusion or fast exits.
+    pub(super) quick: bool,
     /// Padding inserted before the slot table so slots are 8-byte aligned.
     pub slot_padding: usize,
     /// Label of the first slot (to check alignment after assembly).
@@ -80,10 +92,16 @@ pub struct Unit {
     loop_cache: Option<LoopCache>,
     regioncache: bool,
     loopra: bool,
+    loopra2: bool,
+    // Private clones only: never published in the JIT registry or AOT index.
+    region_labels: HashMap<u64, CodeLabel>,
+    pub extra_guest_range: Option<(u64, u64)>,
     region: Option<LoopRa>,
     region_exits: Vec<LoopRa>,
     // Final fused loop condition: materialize NZCV only on the exit edge.
     loop_exit_flags: Option<FuseKind>,
+    // Recompute a final CMP only on the public edge of an audited private loop.
+    loop_exit_compare: Option<super::flagreg::ExitCompare>,
     /// Set once an instruction has created an internal label (conditional code follows): cached
     /// state may then be used but not extended, or paths could disagree about what is cached.
     pub rc_frozen: bool,
@@ -103,7 +121,7 @@ pub struct Unit {
     /// Blocks to translate into this unit after the current one: call continuations, so a translated
     /// RET lands on code that runs straight into the caller's next block.
     pub inline_queue: Vec<u64>,
-    /// Guest V registers held in xmm8-xmm15 within the current block (see `VCache`).
+    /// Guest V registers held in xmm8-xmm15 (optionally through xmm31), per block.
     pub vc: VCache,
     /// Current result stores proven dead before an in-block full overwrite.
     dead_v: u32,
@@ -113,20 +131,28 @@ pub struct Unit {
     /// r11 holds the TBI mask on every path to this point. Per-block, never
     /// established under conditional emission, invalidated by scratch writes/calls.
     pub tbi_mask_live: bool,
+    /// Exact guest values for the opt-in, block-local redundant-mask proof.
+    notbi: notbi::Facts,
+    notbi_enabled: bool,
     /// Rare FP fixups, emitted after the current block's unconditional transfer.
     cold_paths: Vec<Box<dyn FnOnce(&mut Unit)>>,
     /// Broadcast constants live in this unit's code buffer, including in AOT blobs.
     constants: HashMap<u64, CodeLabel>,
     constant_pool: Vec<(CodeLabel, u64)>,
     pool_avx: bool,
+    /// Opt-in 128-bit EVEX cache bank; never enable without host/OS support.
+    avx512: bool,
+    /// Independently opt-in AVX-512 NaN selection / range instructions.
+    avx512_nan: bool,
     #[cfg(any(debug_assertions, test))]
     cold_ranges: Vec<(std::ops::Range<usize>, bool)>,
 }
 
 pub const NCREGS: usize = 5;
-pub const NVREGS: usize = 8;
+pub const NVREGS: usize = 24;
+const BASE_NVREGS: usize = 8;
 
-/// Cache of guest V registers in xmm8-xmm15, within one block. Stores proven dead
+/// Cache of guest V registers in xmm8-xmm15, optionally xmm16-xmm31, within one block. Stores proven dead
 /// before a full overwrite may be register-only; dirty eviction writes them back.
 /// Dependent FP operations read a register instead
 /// of reloading what the previous instruction just stored (store-forwarding latency on the critical
@@ -147,7 +173,13 @@ impl VCache {
     }
 }
 
-const VREGS: [AsmRegisterXmm; NVREGS] = [xmm8, xmm9, xmm10, xmm11, xmm12, xmm13, xmm14, xmm15];
+const VREGS: [AsmRegisterXmm; NVREGS] = [
+    xmm8, xmm9, xmm10, xmm11, xmm12, xmm13, xmm14, xmm15,
+    xmm16, xmm17, xmm18, xmm19, xmm20, xmm21, xmm22, xmm23,
+    xmm24, xmm25, xmm26, xmm27, xmm28, xmm29, xmm30, xmm31,
+];
+
+fn high_xmm(x: AsmRegisterXmm) -> bool { iced_x86::Register::from(x).number() >= 16 }
 
 /// V registers `insn` may write: `None` = none, `Some([a, b])` (0xff = unused), or all of them when
 /// the encoding is not understood (structure loads, anything new).
@@ -361,10 +393,24 @@ pub fn x86_cc(kind: FuseKind, cond: u32) -> Option<Cc> {
     }
 }
 
+#[cfg(test)]
+thread_local! {
+    // Only used by the native self-test matrix after explicit host authorization.
+    static TEST_AVX512_FEATURES: std::cell::Cell<Option<(bool, bool)>> = const { std::cell::Cell::new(None) };
+}
+
 impl Unit {
+    /// Finished-unit assembly; keep original instructions for relocation fallback.
+    pub fn assemble_options(&mut self, ip: u64, options: u32) -> Result<CodeAssemblerResult, IcedError> {
+        super::fastenc::assemble(&mut self.a, ip, options)
+    }
+
     pub fn new(stub_kind: StubKind, commpage_checks: bool) -> Unit {
         let mut a = CodeAssembler::new(64).unwrap();
         let exit_label = a.create_label();
+        let features = (avx512_enabled(), avx512_nan_enabled());
+        #[cfg(test)]
+        let features = TEST_AVX512_FEATURES.with(|f| f.get()).unwrap_or(features);
         Unit {
             a,
             labels: HashMap::new(),
@@ -372,6 +418,7 @@ impl Unit {
             stub_kind,
             slot_padding: 0,
             no_internal_jumps: false,
+            quick: false,
             first_slot: None,
             commpage_checks,
             exit_label,
@@ -383,9 +430,13 @@ impl Unit {
             loop_cache: None,
             regioncache: regioncache_enabled(),
             loopra: loopra_enabled(),
+            loopra2: loopra2_enabled(),
+            region_labels: HashMap::new(),
+            extra_guest_range: None,
             region: None,
             region_exits: Vec::new(),
             loop_exit_flags: None,
+            loop_exit_compare: None,
             rc_frozen: false,
             look: Vec::new(),
             cache_uses: [[u8::MAX; 32]; 2],
@@ -398,10 +449,14 @@ impl Unit {
             dead_v: 0,
             vc_dest: [0xff; 2],
             tbi_mask_live: false,
+            notbi: notbi::Facts::new(),
+            notbi_enabled: !commpage_checks && notbi_enabled(),
             cold_paths: Vec::new(),
             constants: HashMap::new(),
             constant_pool: Vec::new(),
             pool_avx: has_avx(),
+            avx512: features.0,
+            avx512_nan: features.1,
             #[cfg(any(debug_assertions, test))]
             cold_ranges: Vec::new(),
         }
@@ -570,6 +625,12 @@ macro_rules! a {
     ($e:expr, $m:ident ( $($arg:expr),* )) => { $e.u.a.$m($($arg),*).unwrap() };
 }
 
+// iced's default VEX preference does not promote high-XMM operands to EVEX.
+// Explicitly select EVEX for instructions whose operands can name xmm16-xmm31.
+macro_rules! evex {
+    ($e:expr, $m:ident ( $($arg:expr),* )) => { $e.u.a.evex().$m($($arg),*).unwrap() };
+}
+
 // Legacy SSE arithmetic memory operands require alignment. VEX forms allow
 // unaligned constants; on SSE-only hosts each caller supplies a dead scratch.
 macro_rules! pool_op {
@@ -597,7 +658,8 @@ fn check_cold_registers(instructions: &[iced_x86::Instruction], tbi_mask_live: b
             let allowed = if reg.is_vector_register() {
                 reg.number() < 8
             } else {
-                matches!(reg.full_register(), Register::RAX | Register::RCX | Register::RDX)
+                // k1 is a dead scratch at every guest boundary and cold resume.
+                matches!(reg.full_register(), Register::RAX | Register::RCX | Register::RDX | Register::K1)
                     || (reg.full_register() == Register::R11 && !tbi_mask_live)
             };
             if !allowed {
@@ -886,6 +948,7 @@ impl<'a> E<'a> {
         }
     }
     fn rc_clear(&mut self) {
+        if self.u.notbi_enabled { self.u.notbi.clear(); }
         self.u.tbi_mask_live = false;
         self.u.rc = RegCache::new();
         self.u.vc = VCache::new();
@@ -899,14 +962,17 @@ impl<'a> E<'a> {
     }
     fn vc_alloc(&mut self, n: u32) -> usize {
         let vc = &self.u.vc;
-        let s = (0..NVREGS).find(|&i| vc.reg[i] == 0xff).unwrap_or_else(|| {
-            if jit_off("nextuse") { (0..NVREGS).min_by_key(|&i| vc.stamp[i]).unwrap() }
-            else { (0..NVREGS).max_by_key(|&i| (self.u.cache_uses[1][vc.reg[i] as usize], u32::MAX - vc.stamp[i])).unwrap() }
+        let slots = if self.u.avx512 { NVREGS } else { BASE_NVREGS };
+        let s = (0..slots).find(|&i| vc.reg[i] == 0xff).unwrap_or_else(|| {
+            if jit_off("nextuse") { (0..slots).min_by_key(|&i| vc.stamp[i]).unwrap() }
+            else { (0..slots).max_by_key(|&i| (self.u.cache_uses[1][vc.reg[i] as usize], u32::MAX - vc.stamp[i])).unwrap() }
         });
         // A dead memory store can still have live cache consumers. Eviction must
         // materialize it before any later operand can fall back to Cpu memory.
         if vc.dirty[s] {
-            a!(self, movdqu(xmmword_ptr(r15 + voff(vc.reg[s] as u32)), VREGS[s]));
+            let dst = xmmword_ptr(r15 + voff(vc.reg[s] as u32));
+            if high_xmm(VREGS[s]) { a!(self, vmovdqu64(dst, VREGS[s])); }
+            else { a!(self, movdqu(dst, VREGS[s])); }
         }
         self.u.vc.dirty[s] = false;
         self.u.vc.reg[s] = n as u8;
@@ -930,7 +996,7 @@ impl<'a> E<'a> {
             self.vfill(d, x);
         } else {
             let s = self.vc_find(d).unwrap_or_else(|| self.vc_alloc(d));
-            a!(self, movdqa(VREGS[s], x));
+            self.cache_copy(VREGS[s], x);
             self.u.vc.dirty[s] = true;
             self.vc_touch(s);
         }
@@ -946,9 +1012,19 @@ impl<'a> E<'a> {
             None if self.used_soon_bank(d, true) => self.vc_alloc(d),
             None => return,
         };
-        a!(self, movdqa(VREGS[s], x));
+        self.cache_copy(VREGS[s], x);
         self.u.vc.dirty[s] = false;
         self.vc_touch(s);
+    }
+    /// Legacy SSE cannot name xmm16-xmm31. Keep all cache transfers 128-bit;
+    /// low-bank emission stays byte-for-byte unchanged when the flag is off.
+    fn cache_copy(&mut self, dst: AsmRegisterXmm, src: AsmRegisterXmm) {
+        if high_xmm(dst) || high_xmm(src) { a!(self, vmovdqa64(dst, src)); }
+        else { a!(self, movdqa(dst, src)); }
+    }
+    fn cache_low64(&mut self, dst: AsmRegisterXmm, src: AsmRegisterXmm) {
+        if high_xmm(src) { evex!(self, vmovq(dst, src)); }
+        else { a!(self, movq(dst, src)); }
     }
     /// Scalar FP operand Vn into `x` (64-bit lane for double, 32-bit otherwise), rest of `x` zero.
     fn fld_scalar(&mut self, x: AsmRegisterXmm, n: u32, double: bool) {
@@ -965,17 +1041,19 @@ impl<'a> E<'a> {
     }
     fn fld_source(&mut self, x: AsmRegisterXmm, src: FpSource, double: bool) {
         match src.cached {
-            Some(c) if double => a!(self, movq(x, c)),
+            Some(c) if double => self.cache_low64(x, c),
             Some(c) => {
                 a!(self, xorps(x, x));
-                a!(self, movss(x, c));
+                if high_xmm(c) { evex!(self, vmovss_3(x, x, c)); }
+                else { a!(self, movss(x, c)); }
             }
             None if double => a!(self, movsd_2(x, qword_ptr(r15 + src.offset))),
             None => a!(self, movss(x, dword_ptr(r15 + src.offset))),
         }
     }
     /// Register contracts are the same as the hot FP helper: only xmm0-xmm7
-    /// and rax/rcx/rdx/r11 may be scratched, with no cache fills or helper calls.
+    /// and rax/rcx/rdx/r11 plus dead opmask k1 may be scratched, with no cache
+    /// fills or helper calls. r11 must be preserved while the TBI mask is live.
     fn cold_path(&mut self, mut cold: CodeLabel, emit: impl FnOnce(&mut E<'_>) + 'static) {
         let mut resume = self.u.a.create_label();
         self.u.a.set_label(&mut resume).unwrap();
@@ -1004,7 +1082,12 @@ impl<'a> E<'a> {
     fn used_soon_bank(&self, n: u32, vector: bool) -> bool {
         if !vector && self.u.region.is_some() { return false; }
         if !vector {
-            if let Some(l) = self.u.loop_cache { return l.reg.contains(&(n as u8)); }
+            // A fixed slot is not a reason to copy a value whose next use is
+            // only on the next iteration. The existing backedge repair reloads
+            // invalidated slots from canonical Cpu memory, preserving semantics.
+            if let Some(l) = self.u.loop_cache {
+                if !l.reg.contains(&(n as u8)) { return false; }
+            }
         }
         if !jit_off("nextuse") { return self.u.cache_uses[vector as usize][n as usize] != u8::MAX; }
         self.u.look.iter().any(|&w| (w & 31) == n || ((w >> 5) & 31) == n || ((w >> 10) & 31) == n || ((w >> 16) & 31) == n)
@@ -1012,6 +1095,7 @@ impl<'a> E<'a> {
     fn used_soon(&self, n: u32) -> bool { self.used_soon_bank(n, false) }
     /// A label is about to be created: code after it may be conditional.
     fn new_label(&mut self) -> CodeLabel {
+        if self.u.notbi_enabled { self.u.notbi.clear(); }
         self.u.rc_frozen = true;
         self.u.a.create_label()
     }
@@ -1268,7 +1352,18 @@ impl<'a> E<'a> {
 
     /// Jump to a direct successor: inside the unit, or through a stub.
     fn goto(&mut self, target: u64) {
+        if self.u.quick {
+            self.st_pc_and_exit(target);
+            return;
+        }
         if let Some(r) = self.u.region {
+            if let Some(label) = self.u.region_labels.get(&target).copied() {
+                if !self.u.commpage_checks && !jit_off("tbimask") && !self.u.tbi_mask_live {
+                    a!(self, mov(r11, 0x00ff_ffff_ffff_ffffu64));
+                }
+                a!(self, jmp(label));
+                return;
+            }
             if target == r.pc && !self.u.no_internal_jumps {
                 // A helper or scratch immediate may have invalidated the mask.
                 // MOV preserves fused condition flags on this edge.
@@ -1277,6 +1372,15 @@ impl<'a> E<'a> {
                 }
                 a!(self, jmp(r.fast));
                 return;
+            }
+            if let Some(cmp) = self.u.loop_exit_compare {
+                // CBZ/TBZ destroyed host flags, not the CMP operand. Read that
+                // operand before region writeback/cache changes and recompute
+                // exactly the original W/X subtraction. No live EFLAGS cache.
+                let r = self.src(cmp.rn, false, cmp.sf, rax);
+                if cmp.sf { a!(self, cmp(r, cmp.imm)); }
+                else { a!(self, cmp(r32_of(r), cmp.imm)); }
+                self.flags_sub(); // ARM C = !borrow; N/Z/V use the existing path
             }
             if let Some(kind) = self.u.loop_exit_flags {
                 match kind { FuseKind::Add => self.flags_add(), FuseKind::Sub => self.flags_sub(), FuseKind::Logic => self.flags_logic() }
@@ -1304,22 +1408,32 @@ impl<'a> E<'a> {
         }
         let cont = self.u.a.create_label();
         let slot = self.u.a.create_label();
+        let link_site = self.u.a.instructions().len();
         if self.u.stub_kind == StubKind::Patchable {
             // jmp [slot]; the slot initially points at `cont`.
             a!(self, jmp(qword_ptr(slot)));
         } else {
             a!(self, jmp(cont));
         }
-        self.u.stubs.push(Stub { target, cont, slot });
+        self.u.stubs.push(Stub { target, cont, slot, link_site });
     }
 
     /// Guest effective address in rax; applies commpage redirection if needed.
     fn commpage_fix(&mut self) {
+        self.commpage_fix_known(false);
+    }
+
+    fn commpage_fix_known(&mut self, untagged: bool) {
         // ARM top-byte-ignore: keep 55:0, with one dependent operation instead
         // of shl/shr. r11 is otherwise only st_imm's scratch; mov_imm invalidates
         // this copy. Do not establish it under conditional emission: a branch
         // could skip the load and join code that would otherwise trust it.
         // Redirected commpages call a host helper, so keep their existing path.
+        // Only the audited immediate-scalar path can supply a proof. Keep
+        // redirected commpages on their original stripping/helper path.
+        if untagged && self.u.notbi_enabled && !self.u.commpage_checks {
+            return;
+        }
         if !self.u.commpage_checks && !jit_off("tbimask") {
             if !self.u.tbi_mask_live {
                 self.mov_imm(r11, 0x00ff_ffff_ffff_ffff);
@@ -1656,11 +1770,23 @@ fn jit_off(group: &str) -> bool {
         .any(|g| g == group)
 }
 
-/// Host call/return remains opt-in until every required alternating benchmark
-/// wins. OFF always takes precedence, including over an explicit ON.
+/// Exact-token, default-off two-way IBTC. Runtime allocation, fill and emission
+/// all consult this single frozen decision; OFF takes precedence over ON.
+pub(crate) fn ibtc2_enabled() -> bool {
+    static F: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *F.get_or_init(|| !jit_off("ibtc2") && std::env::var("ATTESOR_JIT_ON").unwrap_or_default().split(',').any(|g| g == "ibtc2"))
+}
+
+/// Exact token opt-in; OFF takes precedence.
+fn notbi_enabled() -> bool {
+    static F: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *F.get_or_init(|| !jit_off("notbi") && std::env::var("ATTESOR_JIT_ON").unwrap_or_default().split(',').any(|g| g == "notbi"))
+}
+
+/// Host call/return remains opt-in. OFF takes precedence over ON.
 pub(super) fn callret_enabled() -> bool {
     static F: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
-    *F.get_or_init(|| !jit_off("callret") && std::env::var("ATTESOR_JIT_ON").unwrap_or_default().split(',').any(|g| g == "callret"))
+    *F.get_or_init(|| !jit_off("callret") && (crate::policy::enabled("callret") || std::env::var("ATTESOR_JIT_ON").unwrap_or_default().split(',').any(|g| g == "callret")))
 }
 
 /// Ten-register write-back region for JIT units and position-independent AOT blobs.
@@ -1693,17 +1819,23 @@ fn loopra_bisect(pc: u64) -> bool {
     range.is_none_or(|(a, b)| i >= a && i < b)
 }
 
-/// On by default (ATTESOR_JIT_OFF=loopra turns it off): single-block loops keep their working set in
-/// ten host registers. Measured int-hash +34%, branchy +54%, memops +45%, crc32 +19%.
+/// Opt-in pending whole-tree performance and no-regression acceptance. OFF wins.
 fn loopra_enabled() -> bool {
     static F: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
-    *F.get_or_init(|| !jit_off("loopra"))
+    *F.get_or_init(|| !jit_off("loopra") && std::env::var("ATTESOR_JIT_ON").unwrap_or_default().split(',').any(|g| g == "loopra"))
+}
+
+/// Phase 2 remains opt-in, independently of the accepted phase-1 default.
+fn loopra2_enabled() -> bool {
+    static F: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *F.get_or_init(|| !jit_off("loopra2") && !jit_off("loopra")
+        && std::env::var("ATTESOR_JIT_ON").unwrap_or_default().split(',').any(|g| g == "loopra2"))
 }
 
 /// Experimental write-through natural-loop region; public entries remain canonical.
 fn regioncache_enabled() -> bool {
     static F: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
-    *F.get_or_init(|| std::env::var("ATTESOR_JIT_ON").unwrap_or_default().split(',').any(|g| g == "regioncache"))
+    *F.get_or_init(|| !jit_off("regioncache") && (crate::policy::enabled("regioncache") || std::env::var("ATTESOR_JIT_ON").unwrap_or_default().split(',').any(|g| g == "regioncache")))
 }
 
 // Discover only a single-entry basic block ending in a direct natural backedge.
@@ -1751,6 +1883,55 @@ fn has_avx() -> bool {
     *F.get_or_init(|| std::is_x86_feature_detected!("avx"))
 }
 
+/// Only 128-bit EVEX forms are used, but all four feature sets are required.
+/// macOS lazily enables AVX-512 state on the first instruction: XCR0 can be
+/// 0x7 on a fully supported thread, so Rust's XCR0-based detector is not valid
+/// there. Require CPUID *and* the kernel's sysctl policy; errors fail closed.
+pub fn has_avx512() -> bool {
+    static F: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *F.get_or_init(|| {
+        #[cfg(target_os = "macos")]
+        {
+            let leaf = std::arch::x86_64::__cpuid_count(7, 0);
+            let os = [c"hw.optional.avx512f", c"hw.optional.avx512vl",
+                      c"hw.optional.avx512bw", c"hw.optional.avx512dq"].map(|name| {
+                let mut value: libc::c_int = 0;
+                let mut len = std::mem::size_of_val(&value);
+                let rc = unsafe { libc::sysctlbyname(name.as_ptr(),
+                    &mut value as *mut _ as *mut libc::c_void, &mut len,
+                    std::ptr::null_mut(), 0) };
+                rc == 0 && len == std::mem::size_of_val(&value) && value == 1
+            });
+            avx512_macos_policy(leaf.ebx, os)
+        }
+        #[cfg(not(target_os = "macos"))]
+        {
+            std::is_x86_feature_detected!("avx512f")
+                && std::is_x86_feature_detected!("avx512vl")
+                && std::is_x86_feature_detected!("avx512bw")
+                && std::is_x86_feature_detected!("avx512dq")
+        }
+    })
+}
+
+#[cfg(any(target_os = "macos", test))]
+fn avx512_macos_policy(features: u32, os: [bool; 4]) -> bool {
+    const REQUIRED: u32 = (1 << 16) | (1 << 31) | (1 << 30) | (1 << 17); // F/VL/BW/DQ
+    features & REQUIRED == REQUIRED && os.into_iter().all(|v| v)
+}
+
+pub fn avx512_enabled() -> bool {
+    static F: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *F.get_or_init(|| has_avx512() && !jit_off("avx512")
+        && std::env::var("ATTESOR_JIT_ON").unwrap_or_default().split(',').any(|g| g == "avx512"))
+}
+
+pub fn avx512_nan_enabled() -> bool {
+    static F: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *F.get_or_init(|| has_avx512() && !jit_off("avx512nan")
+        && std::env::var("ATTESOR_JIT_ON").unwrap_or_default().split(',').any(|g| g == "avx512nan"))
+}
+
 /// FMA3 (fused multiply-add) on the host: FMLA/FMADD are translated natively only with it, since an
 /// unfused multiply + add rounds twice. Not part of the SSE4.1 baseline, so detected at run time.
 pub fn has_fma() -> bool {
@@ -1782,20 +1963,109 @@ pub fn has_f16c() -> bool {
     *F.get_or_init(|| std::is_x86_feature_detected!("f16c"))
 }
 
+/// Resolve the lazy switches reachable by restricted background emission on the
+/// foreground thread. The worker disables internal jumps, hence never enters
+/// loopra_bisect (which may read live guest memory and perform diagnostic I/O).
+pub(super) fn prepare_bgtrans() {
+    let _ = (disabled_classes(), jit_off("bgtrans"), callret_enabled(),
+        loopra_enabled(), regioncache_enabled(), has_avx(), has_fma(),
+        has_aes(), has_pclmul(), has_sha(), has_f16c(), loopra2_enabled(),
+        has_avx512(), avx512_enabled(), avx512_nan_enabled(), super::fastenc_enabled(),
+        super::loops::census_enabled(), super::cost::probes());
+}
+
 /// Translate one basic block starting at `pc` into `u`. The caller must have
 /// created and registered the label for `pc` if it wants intra-unit jumps.
 /// Returns the guest address just past the block.
 pub fn emit_block(u: &mut Unit, pc: u64, read: &dyn Fn(u64) -> Option<u32>) -> u64 {
+    if u.loopra2 && u.loopra && !u.no_internal_jumps
+        && loop_layout::<NLOOPREGS>(u, pc, read).is_none() {
+        if let Some(mut l) = super::loops::allocation(pc, read).filter(|l| l.starts.len() > 1) {
+            // Calls/context changes and the phase-1 scratch exclusions remain
+            // barriers. Unknown non-terminators still use synchronized helpers.
+            let safe = l.words.values().all(|&w| {
+                !(w & 0x3fa0_7c00 == 0x08a0_7c00 || w & 0x3f20_0c00 == 0x3820_0000
+                    || w & 0xffe0_ec00 == 0x5e00_4000)
+                && (!is_terminator(w) || w & 0xfc00_0000 == 0x1400_0000
+                    || w & 0xff00_0010 == 0x5400_0000 || w & 0x7e00_0000 == 0x3400_0000
+                    || w & 0x7e00_0000 == 0x3600_0000)
+            });
+            // Public AOT/profile cuts and maximum-length cuts are private block
+            // boundaries too. No fusion/dead-store proof may straddle them.
+            l.starts.extend(u.labels.keys().filter(|p| l.words.contains_key(p)).copied());
+            let mut n = 0;
+            for &p in l.words.keys() {
+                if l.starts.contains(&p) || n == MAX_BLOCK_INSNS { l.starts.insert(p); n = 0; }
+                n += 1;
+            }
+            if safe && l.starts.len() <= 32 && l.words.len() <= 256 && l.reducible() && loopra_bisect(pc) {
+                return emit_multi_region(u, &l, read);
+            }
+        }
+    }
+    emit_block_inner(u, pc, read, None)
+}
+
+fn emit_multi_region(u: &mut Unit, l: &super::loops::Loop, read: &dyn Fn(u64) -> Option<u32>) -> u64 {
+    assert!(GUEST_FAULTS_FATAL); // identical fatal-fault contract to phase 1
+    if super::loops::census_enabled() {
+        eprintln!("loopra2-region\t{:x}\t{}\t{}", l.header, l.starts.len(), l.words.len());
+    }
+    let mut counts = [0u32; 32];
+    for &w in l.words.values() {
+        let a = cache_access(w);
+        if a.xr != u32::MAX {
+            for n in 0..32 { counts[n] += ((a.xr >> n) & 1) * 2 + ((a.xw >> n) & 1); }
+        }
+    }
+    let mut regs: Vec<usize> = (0..32).filter(|&n| counts[n] != 0).collect();
+    regs.sort_by_key(|&n| (std::cmp::Reverse(counts[n]), n));
+    let mut reg = [0xff; NLOOPREGS];
+    for (s, n) in regs.into_iter().take(NLOOPREGS).enumerate() { reg[s] = n as u8; }
+    let region = LoopRa { pc: l.header, fast: u.a.create_label(), exit: u.a.create_label(), reg,
+        // Every predecessor/iteration can have written any assigned slot.
+        // A compile-order dirtiness mask is NOT a dataflow solution at joins.
+        dirty: u32::MAX };
+    u.region_exits.push(region);
+    let mut saved = Vec::new();
+    for &p in &l.starts {
+        let label = if p == l.header { region.fast } else { u.a.create_label() };
+        u.region_labels.insert(p, label);
+        if p != l.header { saved.push((p, u.labels.insert(p, label))); }
+    }
+    let lo = *l.words.first_key_value().unwrap().0;
+    let hi = *l.words.last_key_value().unwrap().0 + 4;
+    u.extra_guest_range = Some(u.extra_guest_range.map_or((lo, hi), |(a,b)| (a.min(lo),b.max(hi))));
+    // Snapshot exactly the selected members. A cut/unreadable successor exits
+    // canonically rather than accidentally emitting past the discovered region.
+    let snapshot = |p| l.words.get(&p).copied();
+    super::loops::census(l.header, read);
+    let end = emit_block_inner(u, l.header, &snapshot, Some(region));
+    for &p in l.starts.iter().filter(|&&p| p != l.header) {
+        emit_block_inner(u, p, &snapshot, Some(region));
+    }
+    for (p, old) in saved {
+        if let Some(label) = old { u.labels.insert(p, label); } else { u.labels.remove(&p); }
+    }
+    u.region_labels.clear();
+    u.region = None;
+    end
+}
+
+fn emit_block_inner(u: &mut Unit, pc: u64, read: &dyn Fn(u64) -> Option<u32>, multi: Option<LoopRa>) -> u64 {
+    super::loops::census(pc, read);
     u.fuse = None;
     u.loop_cache = None;
-    u.region = None;
+    u.region = multi;
+    if u.notbi_enabled { u.notbi.clear(); } // no facts cross public/private loop entries
     u.loop_exit_flags = None;
-    u.tbi_mask_live = false;
+    u.loop_exit_compare = None;
+    u.tbi_mask_live = multi.is_some() && !u.commpage_checks && !jit_off("tbimask");
     u.rc = RegCache::new();
     u.vc = VCache::new();
     u.rc_frozen = false;
     u.look.clear();
-    {
+    if !u.quick {
         let mut c2 = pc + 4;
         while u.look.len() < LOOKAHEAD {
             let Some(w) = read(c2) else { break };
@@ -1808,20 +2078,29 @@ pub fn emit_block(u: &mut Unit, pc: u64, read: &dyn Fn(u64) -> Option<u32>) -> u
     }
     let mut label = *u.labels.get(&pc).expect("block label");
     u.a.set_label(&mut label).unwrap();
-    if u.loopra && !u.no_internal_jumps {
-        if let Some(reg) = loop_layout::<NLOOPREGS>(u, pc, read).filter(|_| loopra_bisect(pc)) {
+    if super::cost::probes() {
+        u.a.mov(qword_ptr(r15 + off::PROFILE_STATE), crate::profile::State::Jit as i32).unwrap();
+    }
+    if multi.is_some_and(|r| r.pc != pc) {
+        // Private internal entry: all incoming edges share the same assignment.
+    } else if u.loopra && !u.no_internal_jumps {
+        let layout = multi.map(|r| r.reg).or_else(|| loop_layout::<NLOOPREGS>(u, pc, read).filter(|_| loopra_bisect(pc)));
+        if let Some(reg) = layout {
             // signals.rs does not deliver guest fault handlers. Register-only
             // state is therefore visible only in fatal crash dumps; revisit this
             // feature before implementing resumable guest faults.
             assert!(GUEST_FAULTS_FATAL);
-            let fast = u.a.create_label();
-            let exit = u.a.create_label();
-            let region = LoopRa { pc, fast, exit, reg, dirty: 0 };
+            let region = multi.unwrap_or_else(|| LoopRa { pc, fast: u.a.create_label(), exit: u.a.create_label(), reg, dirty: 0 });
+            let fast = region.fast;
             // JIT-only instrumentation: absolute host addresses must never enter
             // an AOT blob. Count executed public entries, not translations.
             if u.stub_kind == StubKind::Patchable && super::COUNT_LOOP_REGIONS.load(std::sync::atomic::Ordering::Relaxed) {
                 u.a.mov(rax, &super::STATS_LOOP_REGIONS as *const _ as u64).unwrap();
                 u.a.lock().inc(qword_ptr(rax)).unwrap();
+                if multi.is_some() {
+                    u.a.mov(rax, &super::STATS_MULTI_LOOP_REGIONS as *const _ as u64).unwrap();
+                    u.a.lock().inc(qword_ptr(rax)).unwrap();
+                }
             }
             if u.stub_kind == StubKind::Plain && super::stats_enabled() {
                 // Cpu belongs to this thread; no host pointer or locked shared
@@ -1836,7 +2115,7 @@ pub fn emit_block(u: &mut Unit, pc: u64, read: &dyn Fn(u64) -> Option<u32>) -> u
             let mut fast_label = fast;
             u.a.set_label(&mut fast_label).unwrap();
             u.region = Some(region);
-            u.region_exits.push(region);
+            if multi.is_none() { u.region_exits.push(region); }
         }
     } else if u.regioncache && !u.no_internal_jumps {
         if let Some(reg) = loop_layout::<NCREGS>(u, pc, read) {
@@ -1848,6 +2127,12 @@ pub fn emit_block(u: &mut Unit, pc: u64, read: &dyn Fn(u64) -> Option<u32>) -> u
             u.loop_cache = Some(LoopCache { pc, fast, reg });
             u.rc.reg = reg;
         }
+    }
+    // Diagnostic-only exact block-PC publication, after the private backedge
+    // label too. Existing sampling otherwise sees stale PCs in chained loops.
+    if super::loops::census_enabled() {
+        u.a.mov(rax, pc).unwrap();
+        u.a.mov(qword_ptr(r15 + off::PC), rax).unwrap();
     }
     // Native FP code follows FPCR.RMode/FZ through MXCSR, but not DN/AHP/FZ16: a block with any SIMD&FP
     // instruction checks those on entry and hands itself to the interpreter when one is set.
@@ -1891,11 +2176,12 @@ pub fn emit_block(u: &mut Unit, pc: u64, read: &dyn Fn(u64) -> Option<u32>) -> u
             u.emit_cold_paths();
             return cur;
         };
-        let fuse_in = u.fuse.take();
-        if !jit_off("nextuse") { u.cache_uses = cache_next_uses(&u.look); }
+        let previous_fuse = u.fuse.take();
+        let fuse_in = if u.quick { None } else { previous_fuse };
+        if !u.quick && !jit_off("nextuse") { u.cache_uses = cache_next_uses(&u.look); }
         u.rc_frozen = false;
         u.dead_flags = false;
-        if let Some(kind) = fusable_setter(insn) {
+        if let Some(kind) = fusable_setter(insn).filter(|_| !u.quick) {
             if let Some(&nx) = u.look.first() {
                 if nx & 0xFF00_0010 == 0x5400_0000
                     && (nx & 15) < 14
@@ -1910,7 +2196,7 @@ pub fn emit_block(u: &mut Unit, pc: u64, read: &dyn Fn(u64) -> Option<u32>) -> u
                     // the exit when the next iteration overwrites it before a
                     // reader. No helper may observe it in between. Faults are
                     // fatal (GUEST_FAULTS_FATAL), as for flags_dead_at itself.
-                    if u.region.is_some() && target == pc && !u.commpage_checks
+                    if u.region.is_some() && u.region_labels.is_empty() && target == pc && !u.commpage_checks
                         && disabled_classes() == 0 && flags_dead_at(pc, read)
                         && !u.a.instructions()[loop_body_start..].iter().any(|i| i.mnemonic() == iced_x86::Mnemonic::Call)
                     {
@@ -1935,8 +2221,23 @@ pub fn emit_block(u: &mut Unit, pc: u64, read: &dyn Fn(u64) -> Option<u32>) -> u
                 DEAD_FLAG_SKIPS.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
             }
         }
+        // A deliberately narrow lazy-NZCV slice. Every proof dependency is
+        // inside this emitted block (including the private edge's next kill),
+        // so normal unit source invalidation also covers the entire proof.
+        // Unknown/native-disabled paths retain their original materialization.
+        if super::flagreg::enabled() && u.region.is_some() && u.region_labels.is_empty()
+            && !u.no_internal_jumps && disabled_classes() == 0
+            && count + 1 < MAX_BLOCK_INSNS
+        {
+            if let Some(cmp) = super::flagreg::exit_compare(
+                pc, cur, MAX_BLOCK_INSNS, &|p| u.labels.contains_key(&p), read,
+            ) {
+                u.dead_flags = true;
+                u.loop_exit_compare = Some(cmp);
+            }
+        }
         u.dead_v = 0;
-        if !jit_off("vdead") && !jit_off("vcache") && !jit_off("scalaralias")
+        if !u.quick && !jit_off("vdead") && !jit_off("vcache") && !jit_off("scalaralias")
             && disabled_classes() == 0 && !u.commpage_checks {
             if let Some(regs) = v_writes(insn) {
                 for d in regs.into_iter().filter(|&d| d < 32) {
@@ -1970,7 +2271,7 @@ pub fn emit_block(u: &mut Unit, pc: u64, read: &dyn Fn(u64) -> Option<u32>) -> u
         e.u.dead_v = 0;
         e.u.vc_dest = [0xff; 2];
         if e.u.skip_next || e.u.a.instructions()[code_start..].iter().any(|i| i.mnemonic() == iced_x86::Mnemonic::Call) {
-            e.u.vc = VCache::new(); // fused pair (writes the next one's Vd too) or helper call (clobbers xmm8-15)
+            e.u.vc = VCache::new(); // fused pair (writes the next one's Vd too) or helper call (clobbers caller-saved V cache)
             e.u.tbi_mask_live = false; // host calls may overwrite caller-saved r11
         }
         if !translated {
@@ -1978,6 +2279,18 @@ pub fn emit_block(u: &mut Unit, pc: u64, read: &dyn Fn(u64) -> Option<u32>) -> u
                 e.fallback_terminator(insn);
             } else {
                 e.fallback(insn);
+            }
+        }
+        // The proof domain is not the profitability/cache decoder. Only its
+        // small audited native subset can extend facts; everything else kills.
+        // Labels and helpers (including conditional calls) are hard barriers.
+        if e.u.notbi_enabled {
+            if translated && !e.u.rc_frozen && !e.u.skip_next
+                && !e.u.a.instructions()[code_start..].iter().any(|i| i.mnemonic() == iced_x86::Mnemonic::Call)
+            {
+                e.u.notbi.advance(insn, cur);
+            } else {
+                e.u.notbi.clear();
             }
         }
         cur += 4;
@@ -2672,6 +2985,32 @@ impl<'a> E<'a> {
                 true
             }
             0b001000..=0b001011 => {
+                if opcode != 0b001011 && super::isel2::selected().bmi2 {
+                    // Capture both operands before writing rd. BMI2 accepts
+                    // independent sources/counts, including an assigned region
+                    // register, without forcing the count through CL. The CPU
+                    // masks count to 5/6 bits for 32/64-bit operands, as ARM does.
+                    let n = self.src(rn, false, sf, rax);
+                    let m = self.src(rm, false, sf, rcx);
+                    let d = self.dst(rd, false, rax);
+                    if sf {
+                        match opcode & 3 {
+                            0 => a!(self, shlx(d, n, m)),
+                            1 => a!(self, shrx(d, n, m)),
+                            2 => a!(self, sarx(d, n, m)),
+                            _ => unreachable!(),
+                        }
+                    } else {
+                        match opcode & 3 {
+                            0 => a!(self, shlx(r32_of(d), r32_of(n), r32_of(m))),
+                            1 => a!(self, shrx(r32_of(d), r32_of(n), r32_of(m))),
+                            2 => a!(self, sarx(r32_of(d), r32_of(n), r32_of(m))),
+                            _ => unreachable!(),
+                        }
+                    }
+                    self.stx(rd, d, false);
+                    return true;
+                }
                 self.ld(rcx, rm, false, sf);
                 let r = if self.u.region.is_some() {self.init_dst(rd,rn,false,false,sf,rax)}
                     else {self.ld(rax,rn,false,sf);rax};
@@ -2772,6 +3111,36 @@ impl<'a> E<'a> {
                 self.stx(rd, rax, false);
                 true
             }
+            0b000100 if super::isel2::selected().lzcnt => {
+                let n = self.src(rn, false, sf, rax);
+                let d = self.dst(rd, false, rax);
+                // Unlike BSR, LZCNT defines the zero input as the operand width.
+                if sf { a!(self, lzcnt(d, n)); }
+                else { a!(self, lzcnt(r32_of(d), r32_of(n))); }
+                self.stx(rd, d, false);
+                true
+            }
+            0b000101 if super::isel2::selected().lzcnt => {
+                // CLS(x) = CLZ(x XOR sign_mask(x)) - 1. Use scratch
+                // registers for normalization so an assigned non-destination
+                // source is never modified. The normalized sign bit is zero,
+                // so CLZ >= 1 and subtraction cannot underflow.
+                self.ld(rax, rn, false, sf);
+                if sf {
+                    a!(self, mov(rcx, rax));
+                    a!(self, sar(rcx, 63));
+                    a!(self, xor(rax, rcx));
+                    a!(self, lzcnt(rax, rax));
+                } else {
+                    a!(self, mov(ecx, eax));
+                    a!(self, sar(ecx, 31));
+                    a!(self, xor(eax, ecx));
+                    a!(self, lzcnt(eax, eax));
+                }
+                a!(self, sub(eax, 1));
+                self.stx(rd, rax, false);
+                true
+            }
             0b000100 => {
                 // CLZ via BSR
                 self.ld(rax, rn, false, sf);
@@ -2820,6 +3189,10 @@ impl<'a> E<'a> {
         if insn & 0x7C00_0000 == 0x1400_0000 {
             let target = pc.wrapping_add((sext((insn & 0x03ff_ffff) as u64, 26) << 2) as u64);
             if insn & 0x8000_0000 != 0 {
+                if super::cost::probes() {
+                    a!(self, inc(qword_ptr(r15 + off::JIT_COST + 16)));
+                    a!(self, mov(qword_ptr(r15 + off::PROFILE_STATE), crate::profile::State::CallReturn as i32));
+                }
                 self.st_imm(30, next);
                 if self.u.callret {
                     self.host_call(next, |e| e.goto(target));
@@ -2912,12 +3285,22 @@ impl<'a> E<'a> {
                 8 | 9 => rn,
                 _ => return false,
             };
+            if super::cost::probes() && (opc == 2 || opc & 1 != 0) {
+                let offset = if opc == 2 { 24 } else { 16 };
+                a!(self, inc(qword_ptr(r15 + off::JIT_COST + offset)));
+                a!(self, mov(qword_ptr(r15 + off::PROFILE_STATE), crate::profile::State::CallReturn as i32));
+            }
             self.ldx(rax, reg, false);
             if opc & 1 != 0 {
                 self.st_imm(30, next);
                 if self.u.callret {
                     // BLR/BLRAA…: rax holds the target across the call setup (only rcx is used)
                     self.host_call(next, |e| e.indirect(false));
+                    return true;
+                }
+                if self.u.stub_kind == StubKind::Patchable && self.u.inline_ok
+                    && !self.u.no_internal_jumps && super::bliccache::enabled() {
+                    self.blr_site_cached(pc);
                     return true;
                 }
             }
@@ -3077,6 +3460,14 @@ impl<'a> E<'a> {
     /// for the not-taken edge; successors retain the existing intra-unit/slot paths.
     /// Guest NZCV is in Cpu and is not modified by CBZ/TBZ or these host flags.
     fn flags_branch(&mut self, taken: u64, not_taken: u64, cc_not_taken: Cc) {
+        if let Some(label) = self.u.region_labels.get(&taken).copied() {
+            if !self.u.commpage_checks && !jit_off("tbimask") && !self.u.tbi_mask_live {
+                a!(self, mov(r11, 0x00ff_ffff_ffff_ffffu64));
+            }
+            self.jcc(cc_not_taken.inverse(), label);
+            self.goto(not_taken);
+            return;
+        }
         if let Some(r) = self.u.region.filter(|r| r.pc == taken && !self.u.no_internal_jumps) {
             // Branch straight to the private entry on another iteration.
             // The exit falls through; no jcc-exit + unconditional backedge pair.
@@ -3101,20 +3492,98 @@ impl<'a> E<'a> {
         self.flags_branch(taken, not_taken, Cc::E);
     }
 
-    /// Indirect branch to the guest address in rax via the per-thread
-    /// indirect-branch table; misses go to the dispatcher.
-    fn indirect(&mut self, _is_ret: bool) {
+    /// Ordinary JIT BLR only. The target was loaded before writing x30, so
+    /// BLR x30 keeps the original target. No helper/host call or code patching.
+    fn blr_site_cached(&mut self, site: u64) {
+        use super::bliccache as cache;
         self.writeback();
         let mut l_miss = self.new_label();
-        a!(self, mov(rcx, rax));
-        a!(self, shr(ecx, 2));
-        a!(self, and(ecx, (crate::jit::IBTC_SIZE - 1) as i32));
-        a!(self, shl(ecx, 4));
-        a!(self, add(rcx, qword_ptr(r15 + off::IBTC)));
-        a!(self, cmp(rax, qword_ptr(rcx)));
+        let mut l_plain = self.new_label();
+        a!(self, mov(rcx, qword_ptr(r15 + off::BLICCACHE)));
+        // A private emitter consumer without setup must retain the old path.
+        a!(self, test(rcx, rcx));
+        a!(self, jz(l_plain));
+        a!(self, mov(rdx, qword_ptr(r15 + off::EPOCH_PTR)));
+        a!(self, mov(rdx, qword_ptr(rdx)));
+        a!(self, cmp(rdx, qword_ptr(r15 + off::ENTRY_EPOCH)));
         a!(self, jne(l_miss));
-        a!(self, jmp(qword_ptr(rcx + 8)));
+        a!(self, add(rcx, cache::offset(site) as i32));
+        a!(self, cmp(rdx, qword_ptr(rcx + cache::EPOCH_OFFSET)));
+        a!(self, jne(l_miss));
+        self.mov_imm(rdx, site);
+        a!(self, cmp(rdx, qword_ptr(rcx + cache::SITE)));
+        a!(self, jne(l_miss));
+        a!(self, cmp(rax, qword_ptr(rcx + cache::TARGET)));
+        a!(self, jne(l_miss));
+        // host=0 is a negative entry, not a cached unregistered AOT address.
+        a!(self, cmp(qword_ptr(rcx + cache::HOST), 0));
+        a!(self, je(l_plain));
+        a!(self, jmp(qword_ptr(rcx + cache::HOST)));
         self.u.a.set_label(&mut l_miss).unwrap();
+        a!(self, mov(qword_ptr(r15 + off::PC), rax));
+        a!(self, mov(qword_ptr(r15 + off::EXIT_REASON), EXIT_BLICCACHE as i32));
+        self.mov_imm(rdx, site);
+        a!(self, mov(qword_ptr(r15 + off::EXIT_DATA), rdx));
+        let exit = self.dispatcher_exit();
+        a!(self, jmp(exit));
+        self.u.a.set_label(&mut l_plain).unwrap();
+        self.indirect(false);
+    }
+
+    /// Indirect branch to the guest address in rax via the per-thread
+    /// indirect-branch table; misses go to the dispatcher.
+    fn indirect(&mut self, is_ret: bool) {
+        self.writeback();
+        if self.u.quick {
+            a!(self, mov(qword_ptr(r15 + off::PC), rax));
+            a!(self, mov(qword_ptr(r15 + off::EXIT_REASON), EXIT_CONTINUE as i32));
+            a!(self, mov(qword_ptr(r15 + off::EXIT_DATA), 0));
+            let exit = self.dispatcher_exit();
+            a!(self, jmp(exit));
+            return;
+        }
+        if super::cost::probes() {
+            a!(self, inc(qword_ptr(r15 + off::JIT_COST)));
+        }
+        if super::cost::probes() && !is_ret {
+            a!(self, mov(qword_ptr(r15 + off::PROFILE_STATE), crate::profile::State::Indirect as i32));
+        }
+        let mut l_miss = self.new_label();
+        if ibtc2_enabled() {
+            // Compare the epoch of the table, not the value resampled by
+            // jit_enter. Cross-thread invalidation must reject both old ways.
+            a!(self, mov(rcx, qword_ptr(r15 + off::EPOCH_PTR)));
+            a!(self, mov(rcx, qword_ptr(rcx)));
+            a!(self, cmp(rcx, qword_ptr(r15 + off::IBTC_EPOCH)));
+            a!(self, jne(l_miss));
+            a!(self, test(rax, 3));
+            a!(self, jne(l_miss)); // never match the invalid/empty tag
+            a!(self, mov(rcx, rax));
+            a!(self, shr(ecx, crate::jit::IBTC_GUEST_SHIFT));
+            a!(self, and(ecx, (crate::jit::IBTC2_SETS - 1) as i32));
+            a!(self, shl(ecx, crate::jit::IBTC2_SET_BYTES.trailing_zeros()));
+            a!(self, add(rcx, qword_ptr(r15 + off::IBTC)));
+            let mut l_way1 = self.new_label();
+            a!(self, cmp(rax, qword_ptr(rcx))); // complete 64-bit guest tag
+            a!(self, jne(l_way1));
+            a!(self, jmp(qword_ptr(rcx + 8)));
+            self.u.a.set_label(&mut l_way1).unwrap();
+            a!(self, cmp(rax, qword_ptr(rcx + crate::jit::IBTC_ENTRY_BYTES)));
+            a!(self, jne(l_miss));
+            a!(self, jmp(qword_ptr(rcx + crate::jit::IBTC_ENTRY_BYTES + 8)));
+        } else {
+            // Original direct-map fallback, including its original entry budget.
+            a!(self, mov(rcx, rax));
+            a!(self, shr(ecx, crate::jit::IBTC_GUEST_SHIFT));
+            a!(self, and(ecx, (crate::jit::IBTC_SIZE - 1) as i32));
+            a!(self, shl(ecx, crate::jit::IBTC_ENTRY_BYTES.trailing_zeros()));
+            a!(self, add(rcx, qword_ptr(r15 + off::IBTC)));
+            a!(self, cmp(rax, qword_ptr(rcx)));
+            a!(self, jne(l_miss));
+            a!(self, jmp(qword_ptr(rcx + 8)));
+        }
+        self.u.a.set_label(&mut l_miss).unwrap();
+        if super::cost::probes() { a!(self, inc(qword_ptr(r15 + off::JIT_COST + 8))); }
         a!(self, mov(qword_ptr(r15 + off::PC), rax));
         a!(self, mov(qword_ptr(r15 + off::EXIT_REASON), EXIT_CONTINUE as i32));
         a!(self, mov(qword_ptr(r15 + off::EXIT_DATA), 0));
@@ -3293,7 +3762,7 @@ impl<'a> E<'a> {
                 self.ldx(rax, rn, true);
                 if imm != 0 { a!(self, add(rax, imm as i32)); }
             }
-            return self.access_sized(rt, v, size, opc);
+            return self.access_immediate(insn, rt, v, size, opc);
         }
         if insn & 0x3B20_0000 == 0x3800_0000 {
             let size = bits(insn, 31, 30);
@@ -3303,7 +3772,7 @@ impl<'a> E<'a> {
             if self.u.region.is_some() && (mode == 0 || mode == 2) {
                 let base = self.src(rn,true,true,rax);
                 a!(self, lea(rax,qword_ptr(base + imm as i32)));
-                return self.access_sized(rt,v,size,opc);
+                return self.access_immediate(insn, rt, v, size, opc);
             }
             self.ldx(rax, rn, true);
             if self.u.region.is_some() && (mode == 1 || mode == 3) {
@@ -3329,7 +3798,7 @@ impl<'a> E<'a> {
                     if imm != 0 {
                         a!(self, add(rax, imm as i32));
                     }
-                    self.access_sized(rt, v, size, opc)
+                    self.access_immediate(insn, rt, v, size, opc)
                 }
                 1 => {
                     // post-index: access at base, then base += imm
@@ -3364,7 +3833,7 @@ impl<'a> E<'a> {
             let scale = if v && opc & 2 != 0 { 4 } else { size };
             if self.u.region.is_some() && (option == 3 || option == 2) {
                 let index = self.src(rm,false,true,rcx);
-                let mut index = if option == 2 { // UXTW must ignore Xrm[63:32].
+                let index = if option == 2 { // UXTW must ignore Xrm[63:32].
                     a!(self, mov(ecx,r32_of(index))); rcx
                 } else { index };
                 let shift = if s != 0 { scale } else { 0 };
@@ -3388,9 +3857,20 @@ impl<'a> E<'a> {
         }
     }
 
+    /// Only these scalar, non-writeback immediate encodings can omit TBI.
+    /// The decoder checks the complete EA, not merely the base register.
+    fn access_immediate(&mut self, insn: u32, rt: u32, v: bool, size: u32, opc: u32) -> bool {
+        let untagged = self.u.notbi_enabled && !self.u.rc_frozen && self.u.notbi.untagged_address(insn);
+        self.access_sized_known(rt, v, size, opc, untagged)
+    }
+
     /// Access with LDR/STR (size, opc) semantics at address rax.
     /// Preserves r8 (used for writeback).
     fn access_sized(&mut self, rt: u32, v: bool, size: u32, opc: u32) -> bool {
+        self.access_sized_known(rt, v, size, opc, false)
+    }
+
+    fn access_sized_known(&mut self, rt: u32, v: bool, size: u32, opc: u32, untagged: bool) -> bool {
         if v {
             let q = opc & 2 != 0;
             if q && size != 0 {
@@ -3401,19 +3881,19 @@ impl<'a> E<'a> {
         }
         // kind: 0..3 = zero-extend size, 5..6 = sign-extend to 64 (b,h), 7 = sign-extend w, 8.. = sign-extend to 32
         match opc {
-            0 => self.access(rt, false, size, 0, false),
-            1 => self.access(rt, false, size, 1, false),
+            0 => self.access_known(rt, false, size, 0, false, untagged),
+            1 => self.access_known(rt, false, size, 1, false, untagged),
             2 => {
                 if size == 3 {
                     return true; // PRFM
                 }
-                self.access(rt, false, 16 + size, 1, false)
+                self.access_known(rt, false, 16 + size, 1, false, untagged)
             }
             _ => {
                 if size >= 2 {
                     return false;
                 }
-                self.access(rt, false, 32 + size, 1, false)
+                self.access_known(rt, false, 32 + size, 1, false, untagged)
             }
         }
     }
@@ -3422,8 +3902,12 @@ impl<'a> E<'a> {
     /// kind: 0-3 = 1/2/4/8 bytes; 4 = 16 bytes (SIMD only); 16+s = sign-extend
     /// to 64; 32+s = sign-extend to 32. `load`: 1 = load, 0 = store.
     fn access(&mut self, rt: u32, v: bool, kind: u32, load: u32, literal: bool) -> bool {
+        self.access_known(rt, v, kind, load, literal, false)
+    }
+
+    fn access_known(&mut self, rt: u32, v: bool, kind: u32, load: u32, literal: bool, untagged: bool) -> bool {
         let _ = literal;
-        self.commpage_fix();
+        self.commpage_fix_known(untagged);
         let load = load != 0;
         if v {
             match (kind, load) {
@@ -3693,6 +4177,16 @@ impl<'a> E<'a> {
         // x86's "real indefinite" NaN has the sign bit set; ARM's default NaN does not.
         let indefinite = self.vconstant(if double { 0xFFF8_0000_0000_0000 } else { 0xFFC0_0000_FFC0_0000 });
         let default = self.vconstant(if double { 0x7FF8_0000_0000_0000 } else { 0x7FC0_0000_7FC0_0000 });
+        if self.u.avx512_nan {
+            if double {
+                a!(self, vpcmpeqq(k1, xmm0, indefinite));
+                a!(self, vmovdqu64(xmm0.k1(), default));
+            } else {
+                a!(self, vpcmpeqd(k1, xmm0, indefinite));
+                a!(self, vmovdqu32(xmm0.k1(), default));
+            }
+            return;
+        }
         a!(self, movdqa(xmm3, xmm0));
         if double { pool_op!(self, pcmpeqq, vpcmpeqq, xmm3, indefinite, xmm2); } else { pool_op!(self, pcmpeqd, vpcmpeqd, xmm3, indefinite, xmm2); }
         a!(self, movdqa(xmm5, xmm3));
@@ -3705,6 +4199,22 @@ impl<'a> E<'a> {
     /// Overlay a quieted NaN source onto xmm0, using xmm3-xmm5 only. Sources
     /// are visited in reverse priority; a second pass selects signalling NaNs.
     fn select_nan(&mut self, double: bool, src: AsmRegisterXmm, signalling: bool) {
+        if self.u.avx512_nan {
+            // VFPCLASS: bit 0 = qNaN, bit 7 = sNaN. VFIXUPIMM response
+            // 2 quiets the source (including sign/payload); other categories
+            // preserve DEST. imm8=0 requests no extra host exception flags.
+            // Keep the ARM reverse-priority qNaN pass, then the sNaN pass.
+            let table = self.vconstant(if double { 0x22 } else { 0x0000_0022_0000_0022 });
+            let classes = if signalling { 0x80 } else { 0x81 };
+            if double {
+                a!(self, vfpclasspd(k1, src, classes));
+                a!(self, vfixupimmpd(xmm0.k1(), src, table, 0));
+            } else {
+                a!(self, vfpclassps(k1, src, classes));
+                a!(self, vfixupimmps(xmm0.k1(), src, table, 0));
+            }
+            return;
+        }
         a!(self, movdqa(xmm3, src));
         if double { a!(self, cmppd(xmm3, xmm3, 3)); } else { a!(self, cmpps(xmm3, xmm3, 3)); }
         let quiet = self.vconstant(if double { 0x0008_0000_0000_0000 } else { 0x0040_0000_0040_0000 });
@@ -3801,8 +4311,8 @@ impl<'a> E<'a> {
         self.cold_path(cold, move |e| {
             e.vfix_default_nan(double);
             match src.cached {
-                Some(c) if q => a!(e, movdqa(xmm6, c)),
-                Some(c) => a!(e, movq(xmm6, c)),
+                Some(c) if q => e.cache_copy(xmm6, c),
+                Some(c) => e.cache_low64(xmm6, c),
                 None if q => a!(e, movdqu(xmm6, xmmword_ptr(r15 + src.offset))),
                 None => a!(e, movq(xmm6, qword_ptr(r15 + src.offset))),
             }
@@ -3880,6 +4390,28 @@ impl<'a> E<'a> {
     /// propagate the first NaN, quietened; a signalling NaN always wins (FPProcessNaNs: sNaN a, sNaN b,
     /// then the quiet ones), quietened. Exact for every input. Uses xmm2-xmm7.
     fn fp_maxmin(&mut self, double: bool, max: bool, nm: bool, scalar: bool, q: bool) {
+        if self.u.avx512_nan {
+            // VRANGE min/max (imm[1:0]=0/1), sign from the selected result
+            // (imm[3:2]=1). Unlike MIN/MAX it handles opposite-signed zero
+            // ties correctly, flushes inputs under DAZ, and implements ARM's
+            // NM NaN priorities. Propagating variants still need ARM qNaNs.
+            if !nm { a!(self, movdqa(xmm6, xmm0)); }
+            if double { a!(self, vrangepd(xmm0, xmm0, xmm1, 4 | max as i32)); }
+            else { a!(self, vrangeps(xmm0, xmm0, xmm1, 4 | max as i32)); }
+            if !nm {
+                let cold = self.u.a.create_label();
+                if double { a!(self, vcmppd(k1, xmm6, xmm1, 3)); }
+                else { a!(self, vcmpps(k1, xmm6, xmm1, 3)); }
+                a!(self, kortestw(k1, k1));
+                a!(self, jnz(cold));
+                self.cold_path(cold, move |e| {
+                    for signalling in [false, true] {
+                        for src in [xmm1, xmm6] { e.select_nan(double, src, signalling); }
+                    }
+                });
+            }
+            return;
+        }
         let cold = self.u.a.create_label();
         if scalar {
             if double { a!(self, ucomisd(xmm0, xmm1)); } else { a!(self, ucomiss(xmm0, xmm1)); }
@@ -4533,7 +5065,18 @@ impl<'a> E<'a> {
             let double = ftype == 1;
             let cm = self.scalar_source(rm).cached;
             self.fld_scalar(xmm0, rn, double);
-            if double {
+            if let Some(c) = cm.filter(|&c| high_xmm(c)) {
+                match (double, opcode) {
+                    (true, 0) => evex!(self, vmulsd(xmm0, xmm0, c)),
+                    (true, 1) => evex!(self, vdivsd(xmm0, xmm0, c)),
+                    (true, 2) => evex!(self, vaddsd(xmm0, xmm0, c)),
+                    (true, _) => evex!(self, vsubsd(xmm0, xmm0, c)),
+                    (false, 0) => evex!(self, vmulss(xmm0, xmm0, c)),
+                    (false, 1) => evex!(self, vdivss(xmm0, xmm0, c)),
+                    (false, 2) => evex!(self, vaddss(xmm0, xmm0, c)),
+                    (false, _) => evex!(self, vsubss(xmm0, xmm0, c)),
+                }
+            } else if double {
                 if let Some(c) = cm {
                     match opcode {
                         0 => a!(self, mulsd(xmm0, c)),
@@ -7038,8 +7581,9 @@ mod cache_nextuse_tests {
         u.cache_uses = cache_next_uses(&u.look);
         let mut e = E { u: &mut u, pc: 0, fuse_in: None, scalar_inputs: None };
         assert_eq!(e.rc_alloc(9), 1); // oldest dead slot (X1), not live X0
-        e.u.vc.reg = [0, 1, 2, 3, 4, 5, 6, 7];
-        e.u.vc.stamp = [1, 2, 3, 4, 5, 6, 7, 8];
+        e.u.avx512 = false;
+        e.u.vc.reg = [0xff; NVREGS]; e.u.vc.reg[..8].copy_from_slice(&[0, 1, 2, 3, 4, 5, 6, 7]);
+        e.u.vc.stamp[..8].copy_from_slice(&[1, 2, 3, 4, 5, 6, 7, 8]);
         e.u.look = vec![0x1e622820]; // V1/V2 read now, V0 written
         e.u.cache_uses = cache_next_uses(&e.u.look);
         assert_eq!(e.vc_alloc(9), 0); // old V0 is killed; bank-local decision
@@ -7048,8 +7592,9 @@ mod cache_nextuse_tests {
         e.u.look = vec![0x8b01000a, 0x8b03004b, 0x8b05008c];
         e.u.cache_uses = cache_next_uses(&e.u.look);
         assert_eq!(e.rc_alloc(9), 4); // newest slot, but used furthest away
-        e.u.vc.reg = [0, 1, 2, 3, 4, 5, 6, 7];
-        e.u.vc.stamp = [1, 2, 3, 4, 5, 6, 7, 8];
+        e.u.avx512 = false;
+        e.u.vc.reg = [0xff; NVREGS]; e.u.vc.reg[..8].copy_from_slice(&[0, 1, 2, 3, 4, 5, 6, 7]);
+        e.u.vc.stamp[..8].copy_from_slice(&[1, 2, 3, 4, 5, 6, 7, 8]);
         e.u.look = (0..8).map(|r| 0x1e60281f | (r << 5) | (r << 16)).collect();
         e.u.cache_uses = cache_next_uses(&e.u.look);
         assert_eq!(e.vc_alloc(9), 7);
@@ -7582,7 +8127,8 @@ mod fp_cold_tests {
                 let block = [0xf9400083, word, 0xd4001001]; // ldr x3,[x4]; FP; svc
                 emit_block(&mut u, PC, &|p| block.get(((p - PC) / 4) as usize).copied());
                 assert_eq!(u.insns_fallback, 0, "word={word:08x}");
-                assert_eq!(u.cold_ranges.len(), 1, "word={word:08x}");
+                assert!(u.cold_ranges.len() == 1 || (u.avx512_nan && u.a.instructions().iter().any(|i|
+                    matches!(i.mnemonic(), iced_x86::Mnemonic::Vrangeps | iced_x86::Mnemonic::Vrangepd))), "word={word:08x}");
                 for (range, live) in &u.cold_ranges {
                     assert!(*live, "word={word:08x}");
                     check_cold_registers(&u.a.instructions()[range.clone()], *live).unwrap();
@@ -7780,6 +8326,7 @@ mod loopra_tests {
     fn unit(words: &[u32], entries: &[usize], kind: StubKind, verify: bool, commpage: bool) -> Unit {
         let mut u = Unit::new(kind, commpage);
         u.loopra = true;
+        u.loopra2 = false;
         u.regioncache = false;
         u.no_internal_jumps = verify;
         for &i in entries { let l = u.a.create_label(); u.labels.insert(PC + i as u64 * 4, l); }
@@ -7809,6 +8356,148 @@ mod loopra_tests {
 
     fn cpu() -> Box<Cpu> {
         let mut c = Cpu::new(); crate::jit::setup_cpu(&mut c); c.set_pc(PC); c
+    }
+
+    #[test]
+    fn g4_isel2_isa_alias_width_count_flags_and_regions() {
+        use iced_x86::Mnemonic;
+        let has=|k|std::env::var(k).unwrap_or_default().split(',').any(|t|t=="isel2");
+        let on=has("ATTESOR_JIT_ON")&&!has("ATTESOR_JIT_OFF");
+        let selected=crate::jit::isel2::selected();
+        assert_eq!(selected.bmi2,on&&std::is_x86_feature_detected!("bmi2"));
+        assert_eq!(selected.lzcnt,on&&std::is_x86_feature_detected!("lzcnt"));
+        assert_eq!(crate::jit::isel2::Selection{bmi2:true,lzcnt:true}.mask(),3);
+        assert_eq!(crate::jit::isel2_mask(),selected.mask());
+        eprintln!("isel2 selected: bmi2={} lzcnt={}",selected.bmi2,selected.lzcnt);
+        for sf in [false,true] {
+        for region in [false,true] {
+        for kind in [StubKind::Plain,StubKind::Patchable] {
+        for (opcode,mnemonic) in [(8,Mnemonic::Shlx),(9,Mnemonic::Shrx),(10,Mnemonic::Sarx),(4,Mnemonic::Lzcnt),(5,Mnemonic::Lzcnt)] {
+        for (rd,rn,rm) in [(0,1,2),(1,1,2),(2,1,2),(0,1,1),(31,1,2),(0,31,2),(0,1,31)] {
+            let shift=opcode>=8;
+            let w=if shift {0x1ac00000|(rm<<16)|(opcode<<10)|(rn<<5)|rd}
+                else {0x5ac00000|(opcode<<10)|(rn<<5)|rd} | ((sf as u32)<<31);
+            let words=if region {vec![w,0xd100079c,0xb5ffffdc,0xd4001001]} else {vec![w,0xd4001001]};
+            let entries=if region {vec![0,3]} else {vec![0]};
+            let mut u=Unit::new(kind,false);u.loopra=region;u.loopra2=false;u.regioncache=false;
+            for &i in &entries {let l=u.a.create_label();u.labels.insert(PC+i*4,l);}
+            let read=|p:u64|p.checked_sub(PC).and_then(|o|words.get((o/4) as usize)).copied();
+            emit_block(&mut u,PC,&read);
+            if region {assert!(u.region.is_some());}
+            let active=if shift {selected.bmi2}else{selected.lzcnt};
+            assert_eq!(u.a.instructions().iter().any(|i|i.mnemonic()==mnemonic),active,"opcode={opcode} sf={sf} region={region}");
+            for &i in entries.iter().skip(1) {emit_block(&mut u,PC+i*4,&read);}
+            let (host,_)=assemble(u,0);
+            for value in [0,1,u64::MAX,0x80000000,0x8000000000000000,0xdeadbeef01234567] {
+            for count in [0,31,32,63,64,u64::MAX] {
+                let mut c=cpu();c.x[0]=99;c.x[1]=value;c.x[2]=count;c.x[28]=2;c.set_nzcv(11);
+                let mut r=crate::jit::cpu_clone(&c);
+                for _ in 0..12 {let w=read(r.pc()).unwrap();if let Err(attesor_core::interp::Exit::Svc(_))=attesor_core::interp::exec(&mut r,w){break;}}
+                unsafe{crate::jit::attesor_jit_enter(&mut *c,host);}
+                assert_eq!(c.x,r.x,"op={opcode} rd={rd} rn={rn} rm={rm} value={value:x} count={count}");
+                assert_eq!(c.nzcv(),r.nzcv());assert_eq!(c.pc(),r.pc());assert_eq!(c.exit_reason,EXIT_SVC);
+            }}
+        }}}}}
+    }
+
+    #[test]
+    fn g4_flagreg_public_exit_matches_interpreter() {
+        let has = |k| std::env::var(k).unwrap_or_default().split(',').any(|t| t == "flagreg");
+        let enabled = has("ATTESOR_JIT_ON") && !has("ATTESOR_JIT_OFF");
+        assert_eq!(crate::jit::flagreg::enabled(), enabled);
+        for kind in [StubKind::Plain, StubKind::Patchable] {
+        for sf in [false,true] {
+        for shift in [0,1] {
+        for rn in [0,2,17] {
+        for (branch,trips) in [(0xb5ffffc2,3), (0x35ffffc2,3), (0x370fffc2,2), (0x360fffc2,3)] {
+        for value in [0,1,u64::MAX,0x80000000,0x8000000000000000,0xdeadbeef00000001] {
+            let cmp = 0x7100001f | ((sf as u32)<<31) | (shift<<22) | (1<<10) | (rn<<5);
+            let words = [0xd1000442,cmp,branch,0xd4001001]; // SUB X2,#1; CMP; CB/TB backedge
+            let u=unit(&words,&[0],kind,false,false);
+            assert_eq!(u.loop_exit_compare.is_some(),enabled,"must exercise lazy plan");
+            let (host,_)=assemble(u,0);
+            let mut c=cpu();c.x[0]=value;c.x[17]=value;c.x[2]=trips;c.set_nzcv(15);
+            let mut r=crate::jit::cpu_clone(&c);
+            let read=|p:u64| words[((p-PC)/4) as usize];
+            let mut steps=0;
+            while r.pc()!=PC+12 { let w=read(r.pc());attesor_core::interp::exec(&mut r,w).unwrap();steps+=1;assert!(steps<30); }
+            unsafe {crate::jit::attesor_jit_enter(&mut *c,host);}
+            assert_eq!(c.x,r.x);assert_eq!(c.nzcv(),r.nzcv(),"sf={sf} shift={shift} rn={rn} value={value:x}");
+            assert_eq!(c.pc(),PC+12);assert_eq!(c.exit_reason,EXIT_CONTINUE);
+        }}}}}}
+        // Verification/public labels prevent the deferred proof from being used.
+        let words=[0xd1000442,0xf100041f,0xb5ffffc2,0xd4001001];
+        assert!(unit(&words,&[0],StubKind::Plain,true,false).loop_exit_compare.is_none());
+        assert!(unit(&words,&[0,1],StubKind::Plain,false,false).loop_exit_compare.is_none());
+    }
+
+    #[test]
+    fn multi_block_private_entries_helpers_and_public_joins() {
+        // A diamond with an early exit in either arm, a helper in one arm,
+        // and FP in the other. All public entries remain canonical, including
+        // AOT entries in the middle of the private clone.
+        let words = [
+            0x91000400, // add x0,x0,#1
+            0x360000c2, // tbz w2,#0,+24 -> other arm (7)
+            0x8b000021, // add x1,x1,x0
+            0x1ac04021, // crc32b w1,w1,w0 (helper)
+            0xb4000123, // cbz x3,+36 -> side svc (13)
+            0x14000004, // b latch (9)
+            0xd503201f, // unreachable
+            0xcb000021, // sub x1,x1,x0
+            0x1e612800, // fadd d0,d0,d1
+            0xf1000442, // subs x2,x2,#1
+            0x54fffec1, // b.ne header
+            0xd4001001, // svc normal
+            0xd503201f,
+            0xd4001021, // svc side
+        ];
+        for kind in [StubKind::Plain, StubKind::Patchable] {
+        for commpage in [false, true] {
+        for entry in [0,2,7,9] {
+        for trips in [1,2,7] {
+        for side in [0,1] {
+            let entries = [0,2,5,7,9,11,13];
+            let mut u = Unit::new(kind, commpage); u.loopra = true; u.loopra2 = true;
+            for &i in &entries { let l = u.a.create_label(); u.labels.insert(PC+i*4,l); }
+            let read = |p: u64| p.checked_sub(PC).and_then(|o| words.get((o/4) as usize)).copied();
+            for &i in &entries { emit_block(&mut u, PC+i*4, &read); }
+            assert_eq!(u.labels.len(), entries.len());
+            assert!(u.extra_guest_range.is_some());
+            assert_eq!(u.region_exits[0].dirty, u32::MAX);
+            assert!(u.region_labels.is_empty());
+            let (host,_) = assemble(u, entry as usize);
+            let mut c = cpu(); c.set_pc(PC+entry*4); c.x[0]=11; c.x[1]=17; c.x[2]=trips; c.x[3]=side;
+            c.v[0]=[1f64.to_bits(),0]; c.v[1]=[2f64.to_bits(),0]; c.set_nzcv(11);
+            let mut r = crate::jit::cpu_clone(&c);
+            for _ in 0..1000 {
+                let w=read(r.pc()).unwrap();
+                if let Err(attesor_core::interp::Exit::Svc(_))=attesor_core::interp::exec(&mut r,w) { break; }
+            }
+            unsafe { crate::jit::attesor_jit_enter(&mut *c,host); }
+            assert_eq!(c.x,r.x,"entry={entry} trips={trips} side={side}");
+            assert_eq!(c.v,r.v); assert_eq!(c.nzcv(),r.nzcv()); assert_eq!(c.pc(),r.pc());
+            assert_eq!(c.exit_reason,EXIT_SVC);
+        }}}}}
+    }
+
+    #[test]
+    fn multi_block_verification_and_fpcr_guard_are_canonical() {
+        let words = [0x91000400,0x36000042,0xd503201f,0x1e612800,0xf1000442,0x54ffff61,0xd4001001];
+        for verify in [false,true] {
+            let mut u=Unit::new(StubKind::Plain,false);u.loopra2=true;u.loopra=true;u.no_internal_jumps=verify;
+            let l=u.a.create_label();u.labels.insert(PC,l);
+            emit_block(&mut u,PC,&|p| p.checked_sub(PC).and_then(|o| words.get((o/4) as usize)).copied());
+            assert_eq!(u.extra_guest_range.is_some(),!verify);
+            if verify { continue; }
+            let (host,_)=assemble(u,0);
+            let mut c=cpu();c.x[0]=41;c.x[2]=2;c.fpcr=1<<25;
+            unsafe {crate::jit::attesor_jit_enter(&mut *c,host);}
+            assert_eq!(c.exit_reason,EXIT_INTERP);
+            // The header's integer write must be visible when the private FP
+            // block hands off, even though it was not emitted in that block.
+            assert_eq!(c.x[0],42);assert_eq!(c.x[2],2);assert_eq!(c.pc(),PC+12);
+        }
     }
 
     #[test]
@@ -8270,6 +8959,416 @@ mod vdead_tests {
                     assert_eq!(memory, expected); assert_eq!(c.exit_reason, EXIT_SVC);
                 }
             }
+        }
+    }
+}
+
+#[cfg(test)]
+mod avx512_tests {
+    use super::*;
+    use attesor_core::{cpu::Cpu, interp};
+    use iced_x86::{EncodingKind, Register};
+    const PC: u64 = 0x2800_0000;
+
+    #[test]
+    fn macos_detection_uses_kernel_policy_not_eager_xcr0() {
+        let required = (1 << 16) | (1 << 31) | (1 << 30) | (1 << 17);
+        // No XCR0 input: lazy state (0x7) must not veto kernel-approved hardware.
+        assert!(avx512_macos_policy(required, [true; 4]));
+        for i in [16, 31, 30, 17] {
+            assert!(!avx512_macos_policy(required & !(1 << i), [true; 4]));
+        }
+        for i in 0..4 {
+            let mut os = [true; 4]; os[i] = false;
+            assert!(!avx512_macos_policy(required, os));
+        }
+        eprintln!("AVX512 runtime detection: {}", has_avx512());
+    }
+
+    // Test-only execution authorization, not a product feature override. Set only
+    // after an independent EVEX probe succeeds on this host. Some sandboxes deny
+    // sysctl queries even though the kernel correctly promotes AVX-512 threads.
+    pub(super) fn execution_available() -> bool {
+        has_avx512() || (std::env::var("ATTESOR_TEST_AVX512").as_deref() == Ok("1")
+            && avx512_macos_policy(std::arch::x86_64::__cpuid_count(7, 0).ebx, [true; 4]))
+    }
+
+    fn compile(words: &[u32], extended: bool, kind: StubKind) -> Unit {
+        compile_features(words, extended, false, kind)
+    }
+
+    fn compile_features(words: &[u32], extended: bool, nan: bool, kind: StubKind) -> Unit {
+        let mut u = Unit::new(kind, false);
+        // Encoder-only tests may select the new bank even on unsupported hosts.
+        // Execution tests below must separately check has_avx512(). No user-facing
+        // override can bypass the host/OS detector.
+        u.avx512 = extended;
+        u.avx512_nan = nan;
+        u.no_internal_jumps = true;
+        let l = u.a.create_label(); u.labels.insert(PC, l);
+        emit_block(&mut u, PC, &|p| words.get(((p-PC)/4) as usize).copied());
+        u.finish();
+        u
+    }
+
+    fn assert_xmm_only(u: &Unit) {
+        for i in u.a.instructions() {
+            for op in 0..i.op_count() {
+                let r = i.op_register(op);
+                assert!(!r.is_ymm() && !r.is_zmm(), "wider-than-128-bit operand: {i:?}");
+            }
+        }
+        for (range, live) in &u.cold_ranges {
+            check_cold_registers(&u.a.instructions()[range.clone()], *live).unwrap();
+        }
+    }
+
+    fn pressure_words(single: bool, op: u32, aliases: bool) -> Vec<u32> {
+        // 28 dirty values exceed *both* cache sizes, so xmm31 and dirty
+        // eviction are mandatory. The second wave reads old values and leaves
+        // its results observable in Cpu (do not overwrite them with constants).
+        let ty = if single { 0 } else { 1 << 22 };
+        let mut words: Vec<u32> = (0..28).map(|d| 0x1e20_2800 | ty | (31 << 16) | (d << 5) | d).collect();
+        for d in 0..28 {
+            let m = if aliases { d } else { (d+1)%28 };
+            words.push(0x1e20_0800 | ty | (op << 12) | (m << 16) | (d << 5) | d);
+        }
+        words.push(0xd400_1001);
+        words
+    }
+
+    #[test]
+    fn all_high_register_transfers_encode_without_wide_vectors() {
+        let mut u = Unit::new(StubKind::Plain, false); u.avx512 = true;
+        let mut e = E { u: &mut u, pc: PC, fuse_in: None, scalar_inputs: None };
+        for r in VREGS.into_iter().skip(BASE_NVREGS) {
+            e.cache_copy(r, xmm0);
+            e.cache_copy(xmm6, r);
+            e.cache_low64(xmm0, r);
+            e.fld_source(xmm1, FpSource { cached: Some(r), offset: 0 }, false);
+        }
+        assert_xmm_only(&u);
+        let evex = u.a.instructions().iter().filter(|i| i.encoding() == EncodingKind::EVEX).count();
+        assert_eq!(evex, 16*4);
+        u.a.assemble(0x1000).unwrap(); // Invalid high-register legacy forms fail here.
+    }
+
+    #[test]
+    fn pressure_uses_every_high_slot_and_fallback_uses_none() {
+        for single in [false, true] { for op in 0..4 { for aliases in [false, true] {
+            for kind in [StubKind::Plain, StubKind::Patchable] {
+                let words = pressure_words(single, op, aliases);
+                for extended in [false, true] {
+                    let mut u = compile(&words, extended, kind);
+                    assert_xmm_only(&u);
+                    let mut high = [false; 16];
+                    for i in u.a.instructions() {
+                        for op in 0..i.op_count() {
+                            let r = i.op_register(op);
+                            if r.is_xmm() && r.number() >= 16 {
+                                high[r.number()-16] = true;
+                                assert_eq!(i.encoding(), EncodingKind::EVEX);
+                            }
+                        }
+                    }
+                    assert_eq!(high, [extended; 16]);
+                    if extended {
+                        assert!(u.a.instructions().iter().any(|i| i.mnemonic() == iced_x86::Mnemonic::Vmovdqu64
+                            && i.op0_kind() == iced_x86::OpKind::Memory), "missing dirty high-bank spill");
+                    }
+                    u.a.assemble(0x1000).unwrap();
+                }
+            }
+        }}}
+    }
+
+    #[test]
+    fn cold_contract_protects_all_extended_cache_registers() {
+        for reg in VREGS.into_iter().skip(BASE_NVREGS) {
+            let mut a = CodeAssembler::new(64).unwrap();
+            a.vmovdqa64(xmm7, reg).unwrap();
+            assert!(check_cold_registers(a.instructions(), true).is_ok());
+            a.vmovdqa64(reg, xmm7).unwrap();
+            assert!(check_cold_registers(a.instructions(), true).is_err());
+        }
+    }
+
+    #[test]
+    fn pressure_results_match_interpreter_with_sensitivity_mutant() {
+        if !execution_available() {
+            eprintln!("AVX512_EXECUTION_UNAVAILABLE: high-bank differential and execution sensitivity NOT RUN (fallback pressure still tested)");
+        }
+        // Keep the deliberately broken code confined to this test's private
+        // assembler: corrupt the xmm31 cache copy. Correct and mutant runs must
+        // respectively match and disagree with the *same* interpreter oracle.
+        for single in [false, true] { for op in 0..4 { for aliases in [false, true] {
+            for kind in [StubKind::Plain, StubKind::Patchable] {
+                let words = pressure_words(single, op, aliases);
+                for extended in [false, true].into_iter().filter(|&extended| !extended || execution_available()) {
+                let mut mutant_mismatches = 0;
+                for mutant in [false, true].into_iter().filter(|&mutant| !mutant || extended) {
+                    let mut u = compile(&words, extended, kind);
+                    if mutant {
+                        let mut insns = u.a.instructions().to_vec();
+                        let copy = insns.iter_mut().find(|i| i.op0_register() == Register::XMM31
+                            && i.mnemonic() == iced_x86::Mnemonic::Vmovdqa64).unwrap();
+                        copy.set_op1_register(Register::XMM5);
+                        // Preserve labels and constant-pool relocations by changing
+                        // only the encoded operand after normal assembly below.
+                        let host = crate::jit::code_cache().alloc(65536);
+                        let result = u.a.assemble_options(host, iced_x86::BlockEncoderOptions::RETURN_NEW_INSTRUCTION_OFFSETS).unwrap();
+                        let idx = u.a.instructions().iter().position(|i| i.op0_register() == Register::XMM31
+                            && i.mnemonic() == iced_x86::Mnemonic::Vmovdqa64).unwrap();
+                        let offset = result.inner.new_instruction_offsets[idx] as usize;
+                        let mut encoder = iced_x86::Encoder::new(64);
+                        encoder.encode(copy, host+offset as u64).unwrap();
+                        let broken = encoder.take_buffer();
+                        let mut bytes = result.inner.code_buffer;
+                        bytes[offset..offset+broken.len()].copy_from_slice(&broken);
+                        unsafe { std::ptr::copy_nonoverlapping(bytes.as_ptr(),host as *mut u8,bytes.len()); }
+                        mutant_mismatches += execute_cases(host, &words, single, true);
+                    } else {
+                        let host = crate::jit::code_cache().alloc(65536);
+                        let bytes = u.a.assemble(host).unwrap();
+                        assert!(bytes.len()<65536);
+                        unsafe { std::ptr::copy_nonoverlapping(bytes.as_ptr(),host as *mut u8,bytes.len()); }
+                        assert_eq!(execute_cases(host, &words, single, false), 0);
+                    }
+                }
+                if extended {
+                    assert!(mutant_mismatches > 0, "insensitive pressure oracle");
+                    eprintln!("AVX512 sensitivity: single={single} op={op} aliases={aliases} mismatch={mutant_mismatches}");
+                }
+                }
+            }
+        }}}
+    }
+
+    #[test]
+    fn nan_templates_encode_xmm_only_and_preserve_cold_registers() {
+        for double in [false, true] {
+            let ty = if double { 1 << 22 } else { 0 };
+            for (name, word) in [("add", 0x1e222820), ("max", 0x1e224820),
+                                 ("maxnm", 0x1e226820), ("fma", 0x1f020c20)] {
+                if name == "fma" && !has_fma() { continue; }
+                let words = [word | ty, 0xd4001001];
+                let mut before = compile_features(&words, false, false, StubKind::Plain);
+                let mut after = compile_features(&words, false, true, StubKind::Plain);
+                assert_xmm_only(&after);
+                let cold_count = |u: &Unit| u.cold_ranges.iter().map(|(r,_)| r.len()).sum::<usize>();
+                eprintln!("AVX512 static fixup: double={double} template={name} cold_instructions={} -> {}",
+                    cold_count(&before), cold_count(&after));
+                assert!(cold_count(&after) < cold_count(&before));
+                assert!(after.a.instructions().iter().any(|i| i.encoding() == EncodingKind::EVEX));
+                before.a.assemble(0).unwrap(); after.a.assemble(0).unwrap();
+            }
+        }
+        // k1 is scratch only; no other opmask is admitted by the cold ABI.
+        let mut a = CodeAssembler::new(64).unwrap();
+        a.kmovw(k1, eax).unwrap();
+        assert!(check_cold_registers(a.instructions(), true).is_ok());
+        a.kmovw(k2, eax).unwrap();
+        assert!(check_cold_registers(a.instructions(), true).is_err());
+    }
+
+    #[test]
+    fn native_feature_selftest_matrix() {
+        if !execution_available() {
+            eprintln!("AVX512_EXECUTION_UNAVAILABLE: native feature matrix NOT RUN");
+            return;
+        }
+        struct Reset;
+        impl Drop for Reset { fn drop(&mut self) { TEST_AVX512_FEATURES.with(|f| f.set(None)); } }
+        let _reset = Reset;
+        for features in [(true, false), (false, true), (true, true)] {
+            TEST_AVX512_FEATURES.with(|f| f.set(Some(features)));
+            eprintln!("AVX512 native selftest features={features:?} seed=1 count=20000");
+            for class in ["fpblocks", "fpnan", "0E20D400:0E20D400", "0F800000:0F800000", "1F000000:1F000000", "loops"] {
+                crate::jit::selftest::run_selftest(class, 20000, Some(1));
+            }
+        }
+    }
+
+    #[test]
+    fn nan_range_results_and_mutants_match_interpreter() {
+        if !execution_available() {
+            eprintln!("AVX512_EXECUTION_UNAVAILABLE: NaN/range differential and sensitivity NOT RUN");
+            return;
+        }
+        let mut total = 0;
+        for double in [false, true] {
+            let ty = if double { 1 << 22 } else { 0 };
+            let mut words = Vec::new();
+            for op in [0x0800, 0x1800, 0x2800, 0x3800, 0x4800, 0x5800, 0x6800, 0x7800] {
+                words.push(0x1e220020 | ty | op);
+            }
+            words.push(0x1e21c020 | ty);
+            if has_fma() {
+                for variant in 0..4 {
+                    words.push(0x1f020c20 | ty | ((variant >> 1) << 21) | ((variant & 1) << 15));
+                }
+            }
+            for q in [false, true].into_iter().filter(|&q| q || !double) {
+                let qbit = if q { 1 << 30 } else { 0 };
+                for base in [0x0e20d400, 0x0ea0d400, 0x2e20dc00, 0x2e20fc00,
+                             0x0e20f400, 0x0ea0f400, 0x0e20c400, 0x0ea0c400] {
+                    words.push(base | qbit | ty | (2 << 16) | (1 << 5));
+                }
+                if has_fma() {
+                    for base in [0x0f801000, 0x0f805000, 0x0e20cc00, 0x0ea0cc00] {
+                        words.push(base | qbit | ty | (2 << 16) | (1 << 5));
+                    }
+                }
+            }
+            // Cartesian triples plus rotated packed lanes cover both NaN passes,
+            // FMA addend priority, all signed-zero ties, payload/sign preservation,
+            // exact negative indefinite inputs, and denormals with FZ on/off.
+            let values: &[u64] = if double {
+                &[0, 0x8000000000000000, 1, 0x8000000000000001, 0x0010000000000000,
+                  0x3ff0000000000000, 0xbff0000000000000, 0x7ff0000000000000,
+                  0xfff0000000000000, 0x7ff8000000001234, 0xfff8000000005678,
+                  0xfff8000000000000, 0x7ff0000000001234, 0xfff0000000005678]
+            } else {
+                &[0, 0x80000000, 1, 0x80000001, 0x00800000, 0x3f800000, 0xbf800000,
+                  0x7f800000, 0xff800000, 0x7fc01234, 0xffc05678, 0xffc00000,
+                  0x7f801234, 0xff805678]
+            };
+            for word in words {
+                for mutant in [0, 1, 2] {
+                    let mut u = compile_features(&[word, 0xd4001001], true, true, StubKind::Plain);
+                    assert_xmm_only(&u);
+                    let target = u.a.instructions().iter().position(|i| match mutant {
+                        1 => matches!(i.mnemonic(), iced_x86::Mnemonic::Vfixupimmps | iced_x86::Mnemonic::Vfixupimmpd),
+                        2 => matches!(i.mnemonic(), iced_x86::Mnemonic::Vrangeps | iced_x86::Mnemonic::Vrangepd),
+                        _ => false,
+                    });
+                    if mutant != 0 && target.is_none() { continue; }
+                    let host = crate::jit::code_cache().alloc(16384);
+                    let res = u.a.assemble_options(host, iced_x86::BlockEncoderOptions::RETURN_NEW_INSTRUCTION_OFFSETS).unwrap();
+                    let mut bytes = res.inner.code_buffer.clone();
+                    if let Some(idx) = target {
+                        let mut broken = u.a.instructions()[idx];
+                        if mutant == 1 {
+                            broken.set_op1_register(Register::XMM0); // lose original NaN payload/priority
+                            let table = if double { 0x22 } else { 0x0000_0022_0000_0022 };
+                            let label = u.constant_pool.iter().find(|(_, v)| *v == table).unwrap().0;
+                            broken.set_memory_displacement64(res.label_ip(&label).unwrap());
+                        }
+                        else { broken.set_immediate8(broken.immediate8() ^ 1); } // invert min/max
+                        let offset = res.inner.new_instruction_offsets[idx] as usize;
+                        let mut encoder = iced_x86::Encoder::new(64);
+                        encoder.encode(&broken, host + offset as u64).unwrap();
+                        let patch = encoder.take_buffer();
+                        bytes[offset..offset+patch.len()].copy_from_slice(&patch);
+                    }
+                    unsafe { std::ptr::copy_nonoverlapping(bytes.as_ptr(), host as *mut u8, bytes.len()); }
+                    let mut mismatches = 0;
+                    for mode in [0, 1 << 24] {
+                    for ia in 0..values.len() { for ib in 0..values.len() { for ic in 0..values.len() {
+                        let mut c = Cpu::new(); crate::jit::setup_cpu(&mut c);
+                        c.set_pc(PC); c.fpcr = mode; c.set_nzcv(11);
+                        for (r, j) in [(0,ic), (1,ia), (2,ib), (3,ic)] {
+                            let at = |n: usize| values[n % values.len()];
+                            c.v[r] = if double { [at(j),at(j+3)] }
+                                else { [at(j)|(at(j+1)<<32), at(j+2)|(at(j+3)<<32)] };
+                        }
+                        let mut expected = Cpu::new(); expected.v = c.v;
+                        expected.fpcr = mode; expected.set_pc(PC); expected.set_nzcv(11);
+                        interp::sys_sync_host_fp_mode(mode);
+                        interp::exec(&mut expected, word).unwrap();
+                        interp::sys_sync_host_fp_mode(mode);
+                        unsafe { crate::jit::attesor_jit_enter(&mut *c, host); }
+                        assert_eq!(c.exit_reason, EXIT_SVC);
+                        assert_eq!(c.x, expected.x); assert_eq!(c.nzcv(), expected.nzcv());
+                        assert_eq!(c.fpcr, mode);
+                        if c.v != expected.v {
+                            mismatches += 1;
+                            assert!(mutant != 0, "word={word:08x} mode={mode:x} a={:x} b={:x} c={:x}: {:?} != {:?}",
+                                values[ia], values[ib], values[ic], c.v, expected.v);
+                        }
+                        if mutant == 0 { total += 1; }
+                    }}}}
+                    if mutant != 0 {
+                        assert!(mismatches > 0, "insensitive mutant={mutant} word={word:08x}");
+                        eprintln!("AVX512 NaN sensitivity: mutant={mutant} word={word:08x} mismatch={mismatches}");
+                    }
+                }
+            }
+        }
+        interp::sys_sync_host_fp_mode(0);
+        eprintln!("AVX512 NaN/range directed: cases={total} mismatch=0 FZ=off/on");
+    }
+
+    fn execute_cases(host: u64, words: &[u32], single: bool, mutant: bool) -> usize {
+        let values: &[u64] = if single {
+            &[0x3f800001, 0x40000001, 0x7fc01234, 0xff801234, 0x7f800000, 0, 1, 0x80000000]
+        } else {
+            &[0x3ff0000000000001, 0x4000000000000001, 0x7ff8000000001234,
+              0xfff0000000001234, 0x7ff0000000000000, 0, 1, 0x8000000000000000]
+        };
+        let mut mismatches = 0;
+        for seed in [1u64, 0x12345678, 0xfeedbeef] {
+            for a in values { for b in values {
+                let mut c = Cpu::new(); crate::jit::setup_cpu(&mut c); c.set_pc(PC);
+                // Distinct bit patterns in every guest register detect register
+                // swaps as well as corruption; identical accumulators would hide them.
+                for n in 0..32 { c.v[n] = [a.wrapping_add(n as u64 * ((seed & 15)+1)), !seed]; }
+                c.v[30] = [*a, !seed]; c.v[31] = [*b, !seed];
+                let mut reference = Cpu::new(); reference.v = c.v; reference.set_pc(PC);
+                for &w in words {
+                    match interp::exec(&mut reference, w) {
+                        Ok(()) => {}, Err(interp::Exit::Svc(_)) => break, Err(e) => panic!("{w:08x}: {e:?}"),
+                    }
+                }
+                unsafe { crate::jit::attesor_jit_enter(&mut *c, host); }
+                assert_eq!(c.exit_reason, EXIT_SVC);
+                assert_eq!(c.x, reference.x); assert_eq!(c.nzcv(), reference.nzcv());
+                assert_eq!(c.fpcr, reference.fpcr);
+                if c.v != reference.v {
+                    mismatches += 1;
+                    if !mutant { panic!("single={single} seed={seed:x} a={a:x} b={b:x}: {:?} != {:?}", c.v, reference.v); }
+                }
+            }}
+        }
+        mismatches
+    }
+}
+
+
+#[cfg(test)]
+mod acceptance_switch_tests {
+    use super::*;
+
+    #[test]
+    fn on_off_precedence_in_fresh_processes() {
+        const CHILD: &str = "ATTESOR_ACCEPT_SWITCH_CHILD";
+        if let Ok(expected) = std::env::var(CHILD) {
+            let mut u = Unit::new(StubKind::Plain, false);
+            let actual = format!("{}{}", u.regioncache as u8, u.loopra as u8);
+            assert_eq!(actual, expected, "ON={:?} OFF={:?}", std::env::var("ATTESOR_JIT_ON"), std::env::var("ATTESOR_JIT_OFF"));
+            let pc = 0x1000;
+            let words = [0x9100_0400, 0xf100_079c, 0x54ff_ffc1, 0xd400_1001];
+            let label = u.a.create_label(); u.labels.insert(pc, label);
+            emit_block(&mut u, pc, &|p| p.checked_sub(pc).and_then(|n| words.get((n/4) as usize)).copied());
+            assert_eq!(u.region.is_some(), u.loopra);
+            assert_eq!(u.loop_cache.is_some(), !u.loopra && u.regioncache);
+            return;
+        }
+        let exe = std::env::current_exe().unwrap();
+        for (on, off, expected) in [
+            ("", "", "00"), ("regioncache", "", "10"), ("loopra", "", "01"),
+            ("regioncache,loopra", "", "11"),
+            ("regioncache,loopra", "regioncache,loopra", "00"),
+            ("regioncache", "loopra", "10"), ("regioncache", "loopra,regioncache", "00"),
+            ("xregioncache,xloopra", "", "00"),
+            ("regioncache,loopra", "regioncache", "01"),
+            ("regioncache,loopra", "loopra", "10"),
+        ] {
+            let result = std::process::Command::new(&exe)
+                .args(["--exact", "jit::emit::acceptance_switch_tests::on_off_precedence_in_fresh_processes", "--nocapture"])
+                .env(CHILD, expected).env("ATTESOR_JIT_ON", on).env("ATTESOR_JIT_OFF", off)
+                .env_remove("ATTESOR_JIT_DISABLE").output().unwrap();
+            assert!(result.status.success(), "ON={on} OFF={off}: {}{}", String::from_utf8_lossy(&result.stdout), String::from_utf8_lossy(&result.stderr));
         }
     }
 }

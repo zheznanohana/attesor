@@ -110,7 +110,7 @@
         "arm64",
         "-O2",
         "-ffp-contract=off",
-        "/Users/zhez/attesor/tests/attesor/nextuse-pressure.c",
+        "/Users/USER/attesor/tests/attesor/nextuse-pressure.c",
         "-o",
         "/private/tmp/attesor-perf/round2-serial/fixtures/pressure-arm64"
       ],
@@ -124,7 +124,7 @@
         "x86_64",
         "-O2",
         "-ffp-contract=off",
-        "/Users/zhez/attesor/tests/attesor/nextuse-pressure.c",
+        "/Users/USER/attesor/tests/attesor/nextuse-pressure.c",
         "-o",
         "/private/tmp/attesor-perf/round2-serial/fixtures/pressure-x86_64"
       ],
@@ -138,7 +138,7 @@
         "arm64",
         "-O2",
         "-ffp-contract=off",
-        "/Users/zhez/attesor/tests/attesor/aot-prewarm-probe.c",
+        "/Users/USER/attesor/tests/attesor/aot-prewarm-probe.c",
         "-o",
         "/private/tmp/attesor-perf/round2-serial/fixtures/short-arm64"
       ],
@@ -152,7 +152,7 @@
         "x86_64",
         "-O2",
         "-ffp-contract=off",
-        "/Users/zhez/attesor/tests/attesor/aot-prewarm-probe.c",
+        "/Users/USER/attesor/tests/attesor/aot-prewarm-probe.c",
         "-o",
         "/private/tmp/attesor-perf/round2-serial/fixtures/short-x86_64"
       ],
@@ -166,7 +166,7 @@
         "arm64",
         "-O2",
         "-ffp-contract=off",
-        "/Users/zhez/attesor/bench/native-ratio/kernels.c",
+        "/Users/USER/attesor/bench/native-ratio/kernels.c",
         "-o",
         "/private/tmp/attesor-perf/round2-serial/fixtures/mixed-arm64"
       ],
@@ -180,7 +180,7 @@
         "x86_64",
         "-O2",
         "-ffp-contract=off",
-        "/Users/zhez/attesor/bench/native-ratio/kernels.c",
+        "/Users/USER/attesor/bench/native-ratio/kernels.c",
         "-o",
         "/private/tmp/attesor-perf/round2-serial/fixtures/mixed-x86_64"
       ],
@@ -194,7 +194,7 @@
         "arm64",
         "-O2",
         "-ffp-contract=off",
-        "/Users/zhez/attesor/tests/attesor/direct-branch.c",
+        "/Users/USER/attesor/tests/attesor/direct-branch.c",
         "-o",
         "/private/tmp/attesor-perf/round2-serial/fixtures/directbranch-arm64"
       ],
@@ -208,7 +208,7 @@
         "x86_64",
         "-O2",
         "-ffp-contract=off",
-        "/Users/zhez/attesor/tests/attesor/direct-branch.c",
+        "/Users/USER/attesor/tests/attesor/direct-branch.c",
         "-o",
         "/private/tmp/attesor-perf/round2-serial/fixtures/directbranch-x86_64"
       ],
@@ -222,7 +222,7 @@
         "arm64",
         "-O2",
         "-ffp-contract=off",
-        "/Users/zhez/attesor/tests/attesor/tbi-chain.c",
+        "/Users/USER/attesor/tests/attesor/tbi-chain.c",
         "-o",
         "/private/tmp/attesor-perf/round2-serial/fixtures/tbimask-arm64"
       ],
@@ -236,7 +236,7 @@
         "x86_64",
         "-O2",
         "-ffp-contract=off",
-        "/Users/zhez/attesor/tests/attesor/tbi-chain.c",
+        "/Users/USER/attesor/tests/attesor/tbi-chain.c",
         "-o",
         "/private/tmp/attesor-perf/round2-serial/fixtures/tbimask-x86_64"
       ],
@@ -250,7 +250,7 @@
         "arm64",
         "-O2",
         "-ffp-contract=off",
-        "/Users/zhez/attesor/tests/attesor/regioncache.c",
+        "/Users/USER/attesor/tests/attesor/regioncache.c",
         "-o",
         "/private/tmp/attesor-perf/round2-serial/fixtures/regioncache-arm64"
       ],
@@ -264,7 +264,7 @@
         "x86_64",
         "-O2",
         "-ffp-contract=off",
-        "/Users/zhez/attesor/tests/attesor/regioncache.c",
+        "/Users/USER/attesor/tests/attesor/regioncache.c",
         "-o",
         "/private/tmp/attesor-perf/round2-serial/fixtures/regioncache-x86_64"
       ],
@@ -274,7 +274,7 @@
       "label": "nextuse-pressure",
       "command": [
         "/Library/Developer/CommandLineTools/usr/bin/python3",
-        "/Users/zhez/attesor/bench/compare-cpu.py",
+        "/Users/USER/attesor/bench/compare-cpu.py",
         "--before",
         "/private/tmp/attesor-final-target/release/attesor",
         "--after",
@@ -299,7 +299,7 @@
       "label": "nextuse-short",
       "command": [
         "/Library/Developer/CommandLineTools/usr/bin/python3",
-        "/Users/zhez/attesor/bench/compare-cpu.py",
+        "/Users/USER/attesor/bench/compare-cpu.py",
         "--before",
         "/private/tmp/attesor-final-target/release/attesor",
         "--after",
@@ -323,7 +323,7 @@
       "label": "nextuse-mixed",
       "command": [
         "/Library/Developer/CommandLineTools/usr/bin/python3",
-        "/Users/zhez/attesor/bench/compare-cpu.py",
+        "/Users/USER/attesor/bench/compare-cpu.py",
         "--before",
         "/private/tmp/attesor-final-target/release/attesor",
         "--after",
@@ -347,7 +347,7 @@
       "label": "directbranch",
       "command": [
         "/Library/Developer/CommandLineTools/usr/bin/python3",
-        "/Users/zhez/attesor/bench/compare-cpu.py",
+        "/Users/USER/attesor/bench/compare-cpu.py",
         "--before",
         "/private/tmp/attesor-final-target/release/attesor",
         "--after",
@@ -373,7 +373,7 @@
       "label": "tbimask",
       "command": [
         "/Library/Developer/CommandLineTools/usr/bin/python3",
-        "/Users/zhez/attesor/bench/compare-cpu.py",
+        "/Users/USER/attesor/bench/compare-cpu.py",
         "--before",
         "/private/tmp/attesor-final-target/release/attesor",
         "--after",
@@ -398,7 +398,7 @@
       "label": "regioncache",
       "command": [
         "/Library/Developer/CommandLineTools/usr/bin/python3",
-        "/Users/zhez/attesor/bench/compare-cpu.py",
+        "/Users/USER/attesor/bench/compare-cpu.py",
         "--before",
         "/private/tmp/attesor-final-target/release/attesor",
         "--after",
@@ -423,7 +423,7 @@
       "label": "short-prewarm",
       "command": [
         "/Library/Developer/CommandLineTools/usr/bin/python3",
-        "/Users/zhez/attesor/bench/prewarm-startup.py",
+        "/Users/USER/attesor/bench/prewarm-startup.py",
         "--attesor",
         "/private/tmp/attesor-final-target/release/attesor",
         "--runs",

@@ -11,7 +11,7 @@
         "-ffp-contract=off",
         "-arch",
         "x86_64",
-        "/Users/zhez/attesor/tests/attesor/fpalias.c",
+        "/Users/USER/attesor/tests/attesor/fpalias.c",
         "-o",
         "/var/folders/b4/tnjkjcm52s5g4n894r8xrcfh0000gn/T/attesor-accept-f5wkrlv4/fpalias-x86_64"
       ],
@@ -44,7 +44,7 @@
         "-ffp-contract=off",
         "-arch",
         "arm64",
-        "/Users/zhez/attesor/tests/attesor/fpalias.c",
+        "/Users/USER/attesor/tests/attesor/fpalias.c",
         "-o",
         "/var/folders/b4/tnjkjcm52s5g4n894r8xrcfh0000gn/T/attesor-accept-f5wkrlv4/fpalias-arm64"
       ],
@@ -87,7 +87,7 @@
         "-ffp-contract=off",
         "-arch",
         "x86_64",
-        "/Users/zhez/attesor/tests/attesor/crypto.c",
+        "/Users/USER/attesor/tests/attesor/crypto.c",
         "-o",
         "/var/folders/b4/tnjkjcm52s5g4n894r8xrcfh0000gn/T/attesor-accept-f5wkrlv4/crypto-x86_64"
       ],
@@ -120,7 +120,7 @@
         "-ffp-contract=off",
         "-arch",
         "arm64",
-        "/Users/zhez/attesor/tests/attesor/crypto.c",
+        "/Users/USER/attesor/tests/attesor/crypto.c",
         "-o",
         "/var/folders/b4/tnjkjcm52s5g4n894r8xrcfh0000gn/T/attesor-accept-f5wkrlv4/crypto-arm64"
       ],

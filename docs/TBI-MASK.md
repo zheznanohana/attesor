@@ -12,6 +12,43 @@ that example. A single-access block has a larger mask portion (13 versus 8
 bytes), so whole-workload timing is still required; static instruction savings
 are not a general speedup claim.
 
+## Conservative opt-in omission (feature #6)
+
+`ATTESOR_JIT_ON=notbi` enables a separate block-local exact-value proof.
+`ATTESOR_JIT_OFF=notbi` wins when both contain the exact token. The default
+continues to strip every address as before; `tbimask` still independently chooses
+mask reuse versus shifts for accesses without a proof.
+
+The proof domain knows only MOVZ, ADR/ADRP, and checked ADD/SUB immediate
+results (including W-register zero extension). Exact values are degenerate
+ranges; no speculative or inferred heap/stack range is assumed. Only ordinary
+scalar unsigned-immediate and unscaled-immediate accesses without writeback can
+consume a proof. Both the base and the full signed/unsigned offset arithmetic
+are checked, with no overflow/underflow; the final byte must also stay below
+`1 << 56`. A tagged known base is never accepted merely because adding an
+offset could wrap it into an untagged address.
+
+Unknown instructions clear facts. Loads discard their destination facts;
+partial writes, writeback, SP, pair/SIMD, register-offset, atomics, prefetch and
+other unsupported forms retain their original address stripping. Each block
+starts empty, labels freeze/clear facts, fused successors and all emitted calls
+clear facts, and interpreter fallback clears facts. There are no propagated
+cross-entry or loop-backedge assumptions. The actual address-emission path
+passes the proof explicitly to the scalar access emitter; this is not merely a
+statistic and never unconditionally removes AND.
+
+Commpage-redirection units disable this proof entirely: guest-to-host address
+translation and helper checks are unchanged. Guest Cpu writes, signal/fault
+contracts and dispatch are unchanged. There is no SIGSEGV fault-and-fix.
+`TRANSLATOR_VERSION` is 63 after the G3 integration; the existing AOT identity also hashes ON/OFF/DISABLE
+settings, separating opt-in, opt-out and default blobs of the same binary.
+
+The original isolated patch was compile-only. The G3 port adds directed native
+execution, proof-boundary and emitted-mask checks plus a failing final-byte
+mutation control. See `PORT-G3-REPORT.md` and `tests/attesor/port-g3-check.py`.
+Historical measurements below concern mask reuse, not `notbi` performance; the
+port makes no performance claim.
+
 ## Correctness boundaries
 
 - The operation retains exactly bits 55:0, matching the old logical shifts.

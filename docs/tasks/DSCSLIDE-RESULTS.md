@@ -1,6 +1,6 @@
 # DSCSLIDE（stage 2c）实施报告
 
-工作树：`/Users/zhez/attesor-dsc`；分支：`dscslide`。未提交、未推送。
+工作树：`/Users/USER/attesor-dsc`；分支：`dscslide`。未提交、未推送。
 实现仅修改本工作树；所有运行使用独立 `ATTESOR_CACHE`，没有使用用户的 Attesor 缓存，
 没有启动用户应用、终止无关进程或清空系统页缓存。
 

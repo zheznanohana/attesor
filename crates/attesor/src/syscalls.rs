@@ -26,6 +26,7 @@ const SYS_MPROTECT: u64 = 74;
 const SYS_SIGRETURN: u64 = 184;
 const SYS_MMAP: u64 = 197;
 const SYS_MUNMAP: u64 = 73;
+const SYS_MADVISE: u64 = 75;
 const SYS_SYSCTL: u64 = 202;
 const SYS_SYSCTLBYNAME: u64 = 274;
 const SYS_SHARED_REGION_CHECK_NP: u64 = 294;
@@ -262,6 +263,12 @@ fn bsd(cpu: &mut Cpu, n: u64, mut args: [u64; 8]) {
 }
 
 fn bsd_inner(cpu: &mut Cpu, n: u64, mut args: [u64; 8]) {
+    if matches!(n, SYS_MUNMAP | SYS_MPROTECT | SYS_MADVISE) && page16k_enabled() {
+        if let Err(errno) = page16k_range(n, &mut args) {
+            set_err(cpu, errno);
+            return;
+        }
+    }
     match n {
         crate::gpu::SYS_MCL_HOSTCALL => crate::gpu::hostcall(cpu),
         crate::native::SYS_NATIVE_CALL => crate::native::hostcall(cpu),
@@ -308,6 +315,9 @@ fn bsd_inner(cpu: &mut Cpu, n: u64, mut args: [u64; 8]) {
             args[2] &= !PROT_EXEC;
             args[3] &= !MAP_JIT;
             let r = mmap_16k(&args);
+            if !r.carry && args[3] & 0x10 != 0 && crate::jit::precise_invalidation_enabled() {
+                crate::jit::invalidate_for(r.rax, args[1], "mmap-fixed");
+            }
             // dyld maps a library's __TEXT (file offset 0, executable) at its final address:
             // register it with the AOT cache so translations persist across runs.
             if !r.carry && was_exec && args[5] == 0 && (args[4] as i64) >= 0 && args[1] >= 0x1000 {
@@ -321,7 +331,16 @@ fn bsd_inner(cpu: &mut Cpu, n: u64, mut args: [u64; 8]) {
             args[2] &= !PROT_EXEC;
             let r = hostsys::unix(n, &args);
             if !r.carry && exec {
-                crate::engine::invalidate_range(args[0], args[1]);
+                crate::jit::invalidate_for(args[0], args[1], "mprotect-exec");
+            } else if !r.carry && crate::jit::precise_invalidation_enabled() {
+                crate::jit::invalidate_for(args[0], args[1], "mprotect");
+            }
+            set_res(cpu, r);
+        }
+        SYS_MUNMAP => {
+            let r = hostsys::unix(n, &args);
+            if !r.carry && crate::jit::precise_invalidation_enabled() {
+                crate::jit::invalidate_for(args[0], args[1], "munmap");
             }
             set_res(cpu, r);
         }
@@ -343,6 +362,13 @@ fn bsd_inner(cpu: &mut Cpu, n: u64, mut args: [u64; 8]) {
             let mib = unsafe { std::slice::from_raw_parts(args[0] as *const i32, (args[1] as usize).min(8)) };
             if args[1] == 2 && mib == [6, 1] {
                 write_sysctl_str(cpu, args[2], args[3], "arm64");
+                return;
+            }
+            // getpagesize()/sysconf() use the numeric CTL_HW/HW_PAGESIZE
+            // query, not sysctlbyname's name2oid path below. Keep it coherent
+            // with the opt-in commpage and syscall alignment requirements.
+            if page16k_enabled() && args[1] == 2 && mib == [6, 7] {
+                write_sysctl_int(cpu, args[2], args[3], 16384);
                 return;
             }
             // libc's sysctlbyname() resolves the name first (name2oid, mib {0,3}) and then queries the
@@ -483,6 +509,40 @@ fn bsd_inner(cpu: &mut Cpu, n: u64, mut args: [u64; 8]) {
             set_res(cpu, r);
         }
     }
+}
+
+/// Experimental syscall range semantics, not a translator/code-generation flag.
+/// Reuse the inherited comma-separated switches; exact OFF tokens win over ON.
+pub(crate) fn page16k_enabled() -> bool {
+    static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *ON.get_or_init(|| {
+        let has = |name| std::env::var(name).unwrap_or_default()
+            .split(',').any(|token| token == "page16k");
+        !has("ATTESOR_JIT_OFF") && has("ATTESOR_JIT_ON")
+    })
+}
+
+/// Cover the guest pages, not just the host's 4 KiB subpages. XNU's
+/// kern_mman.c checks munmap/mprotect alignment; vm_user.c rounds their end
+/// and both ends of madvise to the map page size (see docs/PAGE16K.md).
+/// Leave zero lengths and unrepresentable ranges to the original host path:
+/// their raw-Darwin errors/compatibility rules are deliberately not emulated.
+fn page16k_range(n: u64, args: &mut [u64; 8]) -> Result<(), u64> {
+    const MASK: u64 = 0x3fff;
+    let (addr, len) = (args[0], args[1]);
+    if len == 0 {
+        return Ok(());
+    }
+    let Some(end) = addr.checked_add(len).and_then(|end| end.checked_add(MASK)) else {
+        return Ok(());
+    };
+    if matches!(n, SYS_MUNMAP | SYS_MPROTECT) && addr & MASK != 0 {
+        return Err(libc::EINVAL as u64);
+    }
+    let start = addr & !MASK;
+    args[0] = start;
+    args[1] = (end & !MASK) - start;
+    Ok(())
 }
 
 /// arm64 macOS has 16 KiB pages; the Intel host has 4 KiB. Guest allocators (V8,
@@ -1265,3 +1325,73 @@ mod profile_state_tests {
 #[cfg(all(test, target_os = "macos", target_arch = "x86_64"))]
 #[path = "syscalls/mmap_tests.rs"]
 mod mmap_tests;
+
+#[cfg(test)]
+mod page16k_port_tests {
+    use super::*;
+    fn enabled() -> bool {
+        let has=|k|std::env::var(k).unwrap_or_default().split(',').any(|t|t=="page16k");
+        has("ATTESOR_JIT_ON")&&!has("ATTESOR_JIT_OFF")
+    }
+    #[test]
+    fn g4_page16k_numeric_pagesize_matches_policy() {
+        let mib = [6i32, 7]; // CTL_HW / HW_PAGESIZE, used by getpagesize().
+        let mut value = 0i32;
+        let mut size = std::mem::size_of_val(&value) as u64;
+        let mut c = Cpu::new();
+        bsd_inner(&mut c, SYS_SYSCTL, [mib.as_ptr() as u64, 2, &mut value as *mut _ as u64,
+            &mut size as *mut _ as u64, 0, 0, 0, 0]);
+        assert_eq!(c.cf, 0);
+        assert_eq!(size, 4);
+        assert_eq!(value, if enabled() { 16384 } else { unsafe { libc::sysconf(libc::_SC_PAGESIZE) as i32 } });
+    }
+    #[test]
+    fn g4_page16k_ranges_errors_zero_and_overflow() {
+        assert_eq!(page16k_enabled(),enabled());
+        for n in [SYS_MUNMAP,SYS_MPROTECT,SYS_MADVISE] {
+            for len in [1,4095,4096,4097,16383,16384,16385] {
+                let mut a=[0x8000,len,7,8,9,10,11,12];let old=a;
+                page16k_range(n,&mut a).unwrap();
+                assert_eq!(a[0],0x8000);assert_eq!(a[1],(len+0x3fff)&!0x3fff);assert_eq!(&a[2..],&old[2..]);
+            }
+            for (addr,len) in [(0x9000,0),(u64::MAX,1),(u64::MAX-0x4000,0x3fff)] {
+                let mut a=[addr,len,0,0,0,0,0,0];let old=a;
+                page16k_range(n,&mut a).unwrap();assert_eq!(a,old);
+            }
+            let mut a=[0x9001,0x4000,0,0,0,0,0,0];let old=a;
+            if n==SYS_MADVISE {page16k_range(n,&mut a).unwrap();assert_eq!(&a[..2],&[0x8000,0x8000]);}
+            else {assert_eq!(page16k_range(n,&mut a),Err(libc::EINVAL as u64));assert_eq!(a,old);}
+        }
+    }
+    struct Arena(*mut libc::c_void,u64);
+    impl Arena {
+        fn new()->Self {
+            let p=unsafe{libc::mmap(std::ptr::null_mut(),0x10000,3,libc::MAP_ANON|libc::MAP_PRIVATE,-1,0)};
+            assert_ne!(p,libc::MAP_FAILED);Self(p,(p as u64+0x3fff)&!0x3fff)
+        }
+    }
+    impl Drop for Arena {fn drop(&mut self){unsafe{libc::munmap(self.0,0x10000);}}}
+    fn protection(at:u64)->Option<i32> {
+        extern "C" {fn mach_vm_region(task:u32,addr:*mut u64,size:*mut u64,flavor:i32,info:*mut i32,count:*mut u32,object:*mut u32)->i32;fn mach_port_deallocate(task:u32,name:u32)->i32;}
+        let (mut base,mut size,mut count,mut object)=(at,0,16,0);let mut info=[0i32;16];
+        let task=unsafe{libc::mach_task_self()};
+        let rc=unsafe{mach_vm_region(task,&mut base,&mut size,9,info.as_mut_ptr(),&mut count,&mut object)};
+        if object!=0 {unsafe{mach_port_deallocate(task,object);}}
+        (rc==0&&base<=at&&base+size>at&&count>=9).then_some(info[0])
+    }
+    #[test]
+    fn g4_page16k_real_host_tail_and_neighbor() {
+        let on=enabled();let a=Arena::new();let mut c=Cpu::new();
+        bsd_inner(&mut c,SYS_MPROTECT,[a.1,1,libc::PROT_READ as u64|PROT_EXEC,0,0,0,0,0]);
+        assert_eq!(c.cf,0);assert_eq!(protection(a.1),Some(libc::PROT_READ)); // guest EXEC stripped
+        assert_eq!(protection(a.1+0x3000),Some(if on {libc::PROT_READ}else{3}));
+        assert_eq!(protection(a.1+0x4000),Some(3));
+        bsd_inner(&mut c,SYS_MPROTECT,[a.1+0x5000,4096,libc::PROT_READ as u64,0,0,0,0,0]);
+        assert_eq!(c.cf,on as u8);
+        if on {assert_eq!(c.x[0],libc::EINVAL as u64);}
+        bsd_inner(&mut c,SYS_MUNMAP,[a.1,1,0,0,0,0,0,0]);
+        assert_eq!(c.cf,0);assert_eq!(protection(a.1),None);
+        assert_eq!(protection(a.1+0x3000),if on {None}else{Some(3)});
+        assert_eq!(protection(a.1+0x4000),Some(3));
+    }
+}

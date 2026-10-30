@@ -26,7 +26,7 @@ starved the renderers; flags: `--use-angle=metal --use-gl=angle --enable-gpu --i
   (`setVertexBytes`, `getBytes`, `MTLBuffer.contents`) just work.
 - `gpu/mclproto.h`: wire format shared by both sides.
 - Transport: `svc #0x80` with x16 = `0x4D43` (`SYS_MCL_HOSTCALL`), x0=op x1=request ptr x2=len → x0=reply ptr x1=len.
-  Ops: 1 legacy plist RPC, 2 free reply, 3 wait for host event (completion handlers), 4 **batch**, 5 define selector.
+  Ops: 1 legacy plist RPC, 2 free reply, 3 wait for host event (completion handlers), 4 **batch**, 5 define selector, 6 capabilities, 7 opt-in VT plist RPC.
 
 **Fast path (op 4).** The first message to a proxy for a selector still goes through `forwardInvocation:` (the
 signature comes from the host), but `methodSignatureForSelector:` then builds a *plan* (register classification
@@ -101,3 +101,22 @@ caching across launches is left to Metal's own on-disk shader cache (measured: w
 per call versus ~90 ms cold, ANGLE's big library ~2.7 s once) — a `MTLBinaryArchive` layer was not needed.
 Presentation: steady-state per-frame traffic contains no readbacks/uploads (`getBytes`/`replaceRegion` never appear,
 only two small buffer-to-buffer blits per frame); output goes to IOSurface-backed textures, i.e. no frame-sized copy.
+
+
+### Round 2: version 2 wire / VT opt-in
+
+See [gpu/ROUND2.md](../gpu/ROUND2.md). New shims require a v2 host via op 6
+(capabilities); the host still accepts v1 Metal batches. Async CREATE records now
+actually stay queued. Large input-pointer arguments use v2 shared-address records:
+queued void calls own a snapshot until acknowledgement, synchronous calls borrow
+the caller bytes until return. Texture `replaceRegion` retains the conservative
+synchronous legacy path (no inferred texture/compressed-format byte counts).
+
+`--gpu` plus **`ATTESOR_GPU_VT=1`** interposes the callback-based H.264/HEVC
+compression/decompression APIs. Host sessions require hardware rather than silently
+falling back. IOSurface IDs carry pixel buffers; compressed samples carry bytes,
+parameter sets, NAL length, timing and attachments. Guest CF objects and callbacks
+never enter host VT. Callbacks arrive on the existing guest event-pump thread; CompleteFrames /
+WaitForAsynchronousFrames fence guest callback delivery as well as host work.
+This is a bounded API subset, not general VideoToolbox virtualization; details and
+hardware acceptance gates are in the handoff. No translator code/version changed.
