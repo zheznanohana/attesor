@@ -16,7 +16,7 @@ Attesor 是一个"反向 Rosetta"。它加载 arm64 的 Mach-O 程序，连同�
 
 | 程序 | 状态 |
 |---|---|
-| DeepSeek Harness（Electron） | 可用，日常使用的主力测试应用；v2 冷启动约 35 秒就绪 |
+| DeepSeek Harness（Electron） | 可用，日常使用的主力测试应用，冷启动约 35 秒就绪 |
 | VS Code 1.139 arm64（Electron） | 可用，打字延迟约 40 ms，V8 JIT 开启 |
 | Chromium 157 arm64 | 可用，**GPU 硬件加速**（ANGLE/Metal），canvas 60 fps |
 | balenaEtcher 2.1.7 arm64 | 能启动 |
@@ -33,26 +33,56 @@ Attesor 是一个"反向 Rosetta"。它加载 arm64 的 Mach-O 程序，连同�
 
 ## 性能
 
-在 Intel 主机上，用同一份 C 源码分别编出 arm64 版（经 Attesor 翻译运行）和 x86-64 原生版对比，9 轮交替测量取中位数：
+以下都是在同一台 Intel Mac 上实测的结果。"原生速度"指同一份源码编译成 x86-64 后直接运行的速度。
 
-| 内核 | 达到原生速度 |
+### CPU 内核
+
+同一份 C 源码分别编译成 arm64 版（在 Attesor 里运行）和 x86-64 原生版，交替测量 9 轮取中位数：
+
+| 内核 | 类型 | 达到原生速度 |
+|---|---|---|
+| list | 链表遍历 | 115% |
+| memcpy | 内存复制 | 104% |
+| int-hash | 整数哈希 | 101% |
+| crc32 | 位运算 | 81% |
+| memops | 内存操作 | 76% |
+| sieve | 筛法 | 63% |
+| branchy | 分支密集 | 63% |
+| qsort | 排序（大量函数调用） | 49% |
+| matmul | 浮点矩阵乘 | 31% |
+| fib(36) | 递归调用 | 24% |
+| fp-nbody | 浮点 n 体模拟 | 21% |
+| **几何平均** | | **57%** |
+
+整数、内存和位运算代码跑到原生速度的 75% 到 115%；浮点运算和深度递归调用目前在原生速度的 20% 到 50% 之间。
+
+### 微基准
+
+| 项目 | 相对原生的耗时 |
 |---|---|
-| int-hash | 101% |
-| memcpy | 104% |
-| list | 115% |
-| crc32 | 81% |
-| memops | 76% |
-| sieve | 63% |
-| branchy | 63% |
-| qsort | 49% |
-| matmul | 31% |
-| fib(36) | 24% |
-| fp-nbody | 21% |
-| **几何平均** | **57%**（不开优化时 49%） |
+| 整数循环（3 亿次） | 1.04 倍 |
+| 系统调用（10 万次） | 1.0 倍 |
+| 浮点循环（5 千万次） | 1.37 倍 |
+| memcpy 带宽 | 1.6 倍 |
+| 混合套件 | 约 1.5 倍 |
+| JavaScript（V8） | 约 5 倍 |
 
-整数和内存密集的代码基本跑到原生速度；浮点和调用密集的代码还有很大差距。DeepSeek Harness 的启动时间从 77 秒降到 67 秒（同一台机器、同一负载下对比）。
+系统调用直接交给主机内核执行，几乎没有额外开销。
 
-测量脚本和 guest 源码在 [`bench/`](bench/)（`bench.c`、`native-ratio/kernels.c`），DSH 启动测量用 [`bench/app-startup.sh`](bench/app-startup.sh)。
+### 应用
+
+| 场景 | 耗时 |
+|---|---|
+| DeepSeek Harness 冷启动到界面就绪 | 约 35 秒 |
+| 用 DSH 内置 Electron 运行 `dsh --version`（缓存已生成） | 约 3 秒 |
+| `node --version`（arm64 Node） | 约 5 秒 |
+| 命令行 hello world | 约 0.9 秒 |
+| VS Code 打字延迟 | 约 40 ms |
+| Chromium canvas 动画（GPU 加速） | 60 fps |
+
+首次运行一个应用时需要翻译代码，会明显慢一些；正常退出后翻译结果会保存到缓存，之后的启动直接加载。
+
+测量脚本和 guest 源码在 [`bench/`](bench/)（`bench.c`、`native-ratio/kernels.c`），应用启动测量用 [`bench/app-startup.sh`](bench/app-startup.sh)。
 
 ## 快速开始
 
@@ -184,7 +214,7 @@ attesor [选项] ./arm64-程序 [参数...]
 
 | 开关 | 作用 |
 |---|---|
-| `loopra` | 循环内整数寄存器常驻宿主寄存器，branchy 快 2 倍、int-hash 快 1.4 倍 |
+| `loopra` | 循环内的整数寄存器常驻宿主寄存器，循环和分支密集代码的主要加速来源 |
 | `flagreg` | 循环回边上的 NZCV 标志保存在寄存器里，延迟物化 |
 | `isel2` | 用 BMI2 变量移位和 LZCNT 生成更短的指令 |
 | `notbi` | 能证明地址高字节为零时省掉 TBI 掩码 |
@@ -291,7 +321,7 @@ bench/app-startup.sh --runs 3 'dsh web: http' "<应用可执行文件>" --no-san
 
 ## 来源与许可
 
-Attesor 基于 linuxkid473 的 [maclator](https://github.com/linuxkid473/maclator)（MIT），在其基础上新增了循环寄存器分配、离线 AOT 优化、原生 dyld 重定位、应用包装器、调试器、采样 profiler、原生库桥接、音频/沙盒/SwiftUI/MetalFX 支持等，源码规模约为上游的 3 倍。
+Attesor 基于 linuxkid473 的 [maclator](https://github.com/linuxkid473/maclator)（MIT），在其基础上新增了循环寄存器分配、离线 AOT 优化、原生 dyld 重定位、应用包装器、调试器、采样 profiler、原生库桥接，以及音频、沙盒、SwiftUI、MetalFX 等支持。
 
 仓库不包含任何苹果的二进制文件。arm64 用户态由你自己从苹果的更新服务器下载，保存在本机。`ref/` 中的苹果开源代码保留原有许可证头（APSL 2.0 / Apache 2.0）。详见 [NOTICE](NOTICE)。
 
