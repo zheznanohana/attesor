@@ -765,3 +765,32 @@ guard, so they did not fairly isolate raw vs packed snapshots. Next bounded
 variant: raw8 captures again but WITH native remainder handling, avoiding the
 packing/unpacking overhead. One new screen only, no encoding/frequency claims.
 Full same-config60% goal remains incomplete; installed production unchanged.
+
+
+## Codegen96: raw captures with the corrected native remainder, negative
+
+Retest8 separate immutable raw captures WITH95's native remainder handling,
+removing packed snapshot shuffle/unpack work while preserving strict state.
+Existing4-iteration replay and the scalar1..3 remainder remain source ordered,
+separately rounded, exact-width, no data reread/FMA/algorithm substitution.
+High AVX512 registers are used as in the original raw design; no unsupported
+frequency or encoding claim.8 focused tests pass,409600 new full-state cases
+(all starts0..7, both NaN repair implementations),16384 guaranteed finite zero
+batch replays and448 pre-effect rejections, plus earlier related cases.
+
+One original fixture screen: native21.509ms, control35.924ms, raw-tail38.627ms
+(+7.52%,55.68% native). All7 checksums match, no repeat, NOT selected. Neither
+packed95's flat result nor this negative result supports unroll profitability.
+Stop batch variants pending measured new reasons. No cross-build/batch sum or
+claim of a new60% result. Source is published as experimental/defaultOFF only;
+production and selected profile remain unchanged.
+
+Next prepared direction: a proved full-EA bounded untagged FAST loop with folded
+loads, and an original native TBI-masked SLOW loop for tagged/unusual inputs,
+not interpreter rejection or normalization of architectural GPRs. It would
+reuse the original strict per-iteration FP pair, avoiding snapshot/unroll costs.
+Requires checked range/trip proofs, identical fixed maps, private labels, exact
+NV canonicalization and actual path coverage. UNIMPLEMENTED and no gain claimed.
+If that provides no gain, rotate to other named deficient categories or collect
+PC/profile evidence, not more blind micro-variants. Full six-category/common
+configuration60% including both qsort sizes remains active and incomplete.

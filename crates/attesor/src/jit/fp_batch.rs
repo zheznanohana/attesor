@@ -4,7 +4,7 @@ use super::*;
 #[derive(Clone,Copy)]
 pub(super) struct Plan {
     base:u32,index:u32,ptr:u32,step:u32,stride:u32,bound:u32,scale:u32,offset:u32,
-    t:u32,m:u32,d:u32,double:bool,product_first:bool,words:[u32;4],temps:[AsmRegisterXmm;7],
+    t:u32,m:u32,d:u32,double:bool,product_first:bool,words:[u32;4],temps:[AsmRegisterXmm;10],
 }
 fn add_self(w:u32,n:u32)->Option<u32> {
     (w&0xff800000==0x91000000&&w&31==n&&bits(w,9,5)==n).then(||bits(w,21,10)<<if bit(w,22)!=0 {12}else {0})
@@ -24,8 +24,7 @@ pub(super) fn plan(u:&Unit,pc:u64,fp:fp_flags::Plan,r:LoopRa,read:&dyn Fn(u64)->
     let step=add_self(w[4],index)?;let stride=add_self(w[5],ptr)?;let bound=fp.imm as u32;
     let chunk=step.checked_mul(4)?;if !step.is_power_of_two()||bound<chunk||bound%chunk!=0 {return None;}
     for n in [base,index,ptr] {r.slot(n)?;}for n in [t,m,d] {if high_xmm(VREGS[r.vslot(n)?]) {return None;}}
-    let free:Vec<_>=r.vreg.iter().enumerate().filter(|(_,n)|**n==0xff).map(|(i,_)|VREGS[i]).take(7).collect();
-    if free.len()!=7||free[..4].iter().any(|&v|high_xmm(v)) {return None;}
+    let free:Vec<_>=r.vreg.iter().enumerate().filter(|(_,n)|**n==0xff).map(|(i,_)|VREGS[i]).take(10).collect();
     let temps=free.try_into().ok()?;
     Some(Plan{base,index,ptr,step,stride,bound,scale:if bit(w[0],12)!=0 {w[0]>>30}else {0},offset:bits(w[1],21,10)<<(w[1]>>30),t,m,d,double,product_first:an==t,words:[w[0],w[1],w[2],w[3]],temps})
 }
@@ -39,12 +38,7 @@ fn load(e:&mut E<'_>,dst:AsmRegisterXmm,double:bool) {
     if high_xmm(dst) {if double {e.u.a.evex().vmovq(dst,qword_ptr(rax)).unwrap();}else {e.u.a.evex().vmovd(dst,dword_ptr(rax)).unwrap();}}
     else if double {e.u.a.vmovq(dst,qword_ptr(rax)).unwrap();}else {e.u.a.vmovd(dst,dword_ptr(rax)).unwrap();}
 }
-fn unpack_b(e:&mut E<'_>,p:Plan,packed:AsmRegisterXmm) {
-    if p.double {
-        e.u.a.vmovhlps(xmm2,xmm2,packed).unwrap();e.u.a.vmovq(xmm2,xmm2).unwrap();
-    }else {e.u.a.vpsrldq(xmm2,packed,4).unwrap();}
-}
-/// Cold replay writes only scratch0..7 and the three reserved cold work locations.
+/// Cold replay writes only scratch0..7 and the two reserved cold numeric work locations.
 /// Captures/original V stay immutable; all memory reads are Cpu or RIP constants.
 fn check_cold(u:&Unit,start:usize,p:Plan) {
     use iced_x86::{InstructionInfoFactory,Register,OpAccess};let mut f=InstructionInfoFactory::new();
@@ -52,7 +46,7 @@ fn check_cold(u:&Unit,start:usize,p:Plan) {
         let info=f.info(insn);
         for reg in info.used_registers() {
             if !matches!(reg.access(),OpAccess::Write|OpAccess::CondWrite|OpAccess::ReadWrite|OpAccess::ReadCondWrite) {continue;}
-            let r=reg.register();let allowed=if r.is_vector_register(){r.number()<8||[p.temps[4],p.temps[5],p.temps[6]].iter().any(|&v|iced_x86::Register::from(v).number()==r.number())}
+            let r=reg.register();let allowed=if r.is_vector_register(){r.number()<8||[p.temps[8],p.temps[9]].iter().any(|&v|iced_x86::Register::from(v).number()==r.number())}
                 else {matches!(r.full_register(),Register::RAX|Register::RCX|Register::RDX|Register::K1)};
             assert!(allowed,"vbatch cold clobber {r:?}");
         }
@@ -60,7 +54,6 @@ fn check_cold(u:&Unit,start:usize,p:Plan) {
     }
 }
 pub(super) fn emit(u:&mut Unit,pc:u64,p:Plan) {
-    let hot_start=u.a.instructions().len();
     let r=u.region.unwrap();let index=LOOPREGS[r.slot(p.index).unwrap()];let base=LOOPREGS[r.slot(p.base).unwrap()];let ptr=LOOPREGS[r.slot(p.ptr).unwrap()];
     let old=source(VREGS[r.vslot(p.d).unwrap()]);let mut e=E{u,pc,fuse_in:None,scalar_inputs:None};
     let mut scalar=e.u.a.create_label();
@@ -70,10 +63,9 @@ pub(super) fn emit(u:&mut Unit,pc:u64,p:Plan) {
     // Every public/private entry to this batch establishes the original mask.
     if !e.u.tbi_mask_live {e.u.a.mov(r11,0x00ff_ffff_ffff_ffffu64).unwrap();e.u.tbi_mask_live=true;}
     for i in 0..4usize {
-        e.u.a.lea(rax,qword_ptr(base+index*(1i32<<p.scale)+(i as u32*p.step*(1<<p.scale))as i32)).unwrap();e.u.a.and(rax,r11).unwrap();load(&mut e,xmm2,p.double);
-        e.u.a.lea(rax,qword_ptr(ptr+(p.offset+i as u32*p.stride)as i32)).unwrap();e.u.a.and(rax,r11).unwrap();load(&mut e,xmm3,p.double);
-        if p.double {e.u.a.vunpcklpd(p.temps[i],xmm2,xmm3).unwrap();}else {e.u.a.vpunpckldq(p.temps[i],xmm2,xmm3).unwrap();}
-        e.fp_register(0,p.double,xmm0,xmm2,xmm3);
+        e.u.a.lea(rax,qword_ptr(base+index*(1i32<<p.scale)+(i as u32*p.step*(1<<p.scale))as i32)).unwrap();e.u.a.and(rax,r11).unwrap();load(&mut e,p.temps[2*i],p.double);
+        e.u.a.lea(rax,qword_ptr(ptr+(p.offset+i as u32*p.stride)as i32)).unwrap();e.u.a.and(rax,r11).unwrap();load(&mut e,p.temps[2*i+1],p.double);
+        e.fp_register(0,p.double,xmm0,p.temps[2*i],p.temps[2*i+1]);
         e.fp_register(2,p.double,xmm1,xmm0,if i==0 {old.cached.unwrap()}else {xmm1});
     }
     let mut cold=e.u.a.create_label();let mut resume=e.u.a.create_label();
@@ -84,18 +76,16 @@ pub(super) fn emit(u:&mut Unit,pc:u64,p:Plan) {
         let start=u.a.instructions().len();
         let mut e=E{u,pc,fuse_in:None,scalar_inputs:None};
         for i in 0..4 {
-            unpack_b(&mut e,p,p.temps[i]);e.cache_copy(p.temps[6],xmm2);
-            let a=source(p.temps[i]);let b=source(p.temps[6]);
-            e.fld_source(xmm0,a,p.double);e.fld_source(xmm2,b,p.double);e.fp_register(0,p.double,xmm0,xmm0,xmm2);e.scalar_nan(p.double,a,Some(b));e.cache_copy(p.temps[4],xmm0);
-            let acc=if i==0 {old}else {source(p.temps[5])};let product=source(p.temps[4]);
+            let a=source(p.temps[2*i]);let b=source(p.temps[2*i+1]);
+            e.fld_source(xmm0,a,p.double);e.fld_source(xmm2,b,p.double);e.fp_register(0,p.double,xmm0,xmm0,xmm2);e.scalar_nan(p.double,a,Some(b));e.cache_copy(p.temps[8],xmm0);
+            let acc=if i==0 {old}else {source(p.temps[9])};let product=source(p.temps[8]);
             let(n,m)=if p.product_first {(product,acc)}else {(acc,product)};
-            e.fld_source(xmm0,n,p.double);e.fld_source(xmm2,m,p.double);e.fp_register(2,p.double,xmm0,xmm0,xmm2);e.scalar_nan(p.double,n,Some(m));e.cache_copy(p.temps[5],xmm0);
+            e.fld_source(xmm0,n,p.double);e.fld_source(xmm2,m,p.double);e.fp_register(2,p.double,xmm0,xmm0,xmm2);e.scalar_nan(p.double,n,Some(m));e.cache_copy(p.temps[9],xmm0);
         }
-        e.cache_copy(xmm0,p.temps[4]);e.cache_copy(xmm1,p.temps[5]);
+        e.cache_copy(xmm0,p.temps[8]);e.cache_copy(xmm1,p.temps[9]);
         check_cold(e.u,start,p);e.u.a.jmp(resume).unwrap();
     }));
-    unpack_b(&mut e,p,p.temps[3]);
-    for (guest,src) in [(p.t,xmm0),(p.d,xmm1),(p.m,xmm2)] {
+    for (guest,src) in [(p.t,xmm0),(p.d,xmm1),(p.m,p.temps[7])] {
         let dst=VREGS[r.vslot(guest).unwrap()];
         if high_xmm(dst)||high_xmm(src) {e.u.a.vmovdqa64(dst,src).unwrap();}else {e.u.a.vmovdqa(dst,src).unwrap();}
         e.scalar_zero(guest,p.double);
@@ -103,7 +93,6 @@ pub(super) fn emit(u:&mut Unit,pc:u64,p:Plan) {
     e.u.a.add(index,(4*p.step)as i32).unwrap();e.stx(p.index,index,false);e.u.a.add(ptr,(4*p.stride)as i32).unwrap();e.stx(p.ptr,ptr,false);
     e.u.a.cmp(index,p.bound as i32).unwrap();e.u.loop_exit_flags=Some(FuseKind::Sub);e.u.loop_exit_compare=None;e.u.dead_flags=false;
     e.flags_branch(pc,pc+32,Cc::E);
-    assert!(e.u.a.instructions()[hot_start..].iter().all(|i|i.code().encoding()!=iced_x86::EncodingKind::EVEX),"vbatch hot high-bank instruction");
     e.u.a.set_label(&mut scalar).unwrap();
     // Last1..3 iterations use the existing strict two-op emitter. No speculative
     // extra load is executed when fewer than4 original iterations remain.
