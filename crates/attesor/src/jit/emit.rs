@@ -106,6 +106,9 @@ pub struct Unit {
     funflags: bool,
     regflags: bool,
     cfgflags: bool,
+    xspill: bool,
+    fmovra: bool,
+    vpair: bool,
     selectra: bool,
     function_entry: Option<u64>,
     // Private clones only: never published in the JIT registry or AOT index.
@@ -229,6 +232,13 @@ const LOOKAHEAD: usize = 10;
 #[derive(Clone, Copy, Default)]
 struct CacheAccess { xr: u32, xw: u32, vr: u32, vw: u32 }
 fn reg_bit(r: u32, allow_sp: bool) -> u32 { if r == 31 && !allow_sp { 0 } else { 1u32 << r } }
+fn gpr_to_fp_access(w:u32)->Option<CacheAccess> {
+    let ty=bits(w,23,22);let wide=bit(w,31)!=0;
+    if w&0x7f3efc00==0x1e260000 && bit(w,16)!=0 && bits(w,20,19)==0
+        && ((wide&&ty==1)||(!wide&&ty==0)) {
+        Some(CacheAccess{xr:reg_bit(bits(w,9,5),false),vw:1<<(w&31),..CacheAccess::default()})
+    }else {None}
+}
 fn cache_access(w: u32) -> CacheAccess {
     let (d, n, m, a) = (w & 31, (w >> 5) & 31, (w >> 16) & 31, (w >> 10) & 31);
     let mut x = CacheAccess::default();
@@ -337,6 +347,9 @@ struct LoopRa {
     // Experimental fixed V locations on a proven single-block FP loop.
     // Scratch xmm0..7 remain separate; all public exits materialize Cpu.
     vreg: [u8; NVREGS],
+    // Pure-GPR CFG only: otherwise-unused XMM slots retain overflow GPRs.
+    // Disjoint from reg and vreg; all slots synchronize at observations.
+    xreg: [u8; NVREGS],
     // Optional unused GPR holding compact CMP flags: SF15/ZF14/borrow8/OF0.
     // CMP-only private CFGs. Public-edge writeback also changes host CF.
     flags: u8,
@@ -352,6 +365,7 @@ impl LoopRa {
     fn slot(self, n: u32) -> Option<usize> {
         self.reg.iter().position(|&r| r as u32 == n)
     }
+    fn xslot(self,n:u32)->Option<usize> {self.xreg.iter().position(|&r|r as u32==n)}
     fn writeback(self, a: &mut CodeAssembler) {
         for (s, n) in self.reg.into_iter().enumerate() {
             if n != 0xff && self.dirty & (1 << n) != 0 {
@@ -364,6 +378,10 @@ impl LoopRa {
                 else { a.movdqu(xmmword_ptr(r15 + voff(n as u32)), VREGS[s]).unwrap(); }
             }
         }
+        for(s,n)in self.xreg.into_iter().enumerate() {if n!=0xff {
+            if high_xmm(VREGS[s]) {a.evex().vmovq(qword_ptr(r15+xoff(n as u32)),VREGS[s]).unwrap();}
+            else {a.movq(qword_ptr(r15+xoff(n as u32)),VREGS[s]).unwrap();}
+        }}
         if let Some(f)=self.packed_flags() {
             a.bt(f,15).unwrap();a.setc(byte_ptr(r15+off::NF)).unwrap();
             a.bt(f,14).unwrap();a.setc(byte_ptr(r15+off::ZF)).unwrap();
@@ -381,6 +399,10 @@ impl LoopRa {
                 else { a.movdqu(VREGS[s], xmmword_ptr(r15 + voff(n as u32))).unwrap(); }
             }
         }
+        for(s,n)in self.xreg.into_iter().enumerate() {if n!=0xff {
+            if high_xmm(VREGS[s]) {a.evex().vmovq(VREGS[s],qword_ptr(r15+xoff(n as u32))).unwrap();}
+            else {a.movq(VREGS[s],qword_ptr(r15+xoff(n as u32))).unwrap();}
+        }}
         if let Some(f)=self.packed_flags() {
             let d=LOOPREGS32[self.flags as usize];
             // Do not clobber EAX: interpreter helpers return status there.
@@ -498,6 +520,9 @@ impl Unit {
             funflags: funflags_enabled(),
             regflags: regflags_enabled(),
             cfgflags: cfgflags_enabled(),
+            xspill: xspill_enabled(),
+            fmovra: fmovra_enabled(),
+            vpair: vpair_enabled(),
             selectra: selectra_enabled(),
             function_entry: None,
             region_labels: HashMap::new(),
@@ -1246,6 +1271,56 @@ impl<'a> E<'a> {
         self.u.skip_next=true;self.u.insns_translated+=1;
         true
     }
+    /// A two-node scalar dataflow slice. The second operation consumes the
+    /// first result, so NaNs propagate to its guard. Keep mapped originals
+    /// intact until both strict NaN selections have been repaired on cold exit.
+    fn scalar_pair(&mut self,insn:u32)->bool {
+        if !self.u.vpair||!self.u.vchain||!has_avx()||disabled_classes()!=0 {return false;}
+        let Some(next)=self.u.look.first().copied() else {return false;};
+        if self.u.labels.contains_key(&(self.pc+4)) {return false;}
+        let decode=|w:u32| {
+            let ty=bits(w,23,22);if ty>1 {return None;}
+            let op=if w&0xff200c00==0x1e200800&&bits(w,15,12)<=3 {bits(w,15,12)}
+                else if w&0xff3ffc00==0x1e21c000 {4}else {return None;};
+            Some((ty,op,w&31,bits(w,9,5),(op!=4).then(||bits(w,20,16))))
+        };
+        let Some((ty,a,t,n,m))=decode(insn) else {return false;};
+        let Some((ty2,b,d,p,q))=decode(next) else {return false;};
+        if ty!=ty2||(p!=t&&q!=Some(t)) {return false;}
+        // Keep the existing specially tuned MUL->ADD path where applicable.
+        if a==0&&b==2&&t!=d&&((p==t)^(q==Some(t))) {return false;}
+        let Some(region)=self.u.region else {return false;};
+        if [Some(t),Some(d),Some(n),m,Some(p),q].into_iter().flatten().any(|r|region.vslot(r).is_none()) {return false;}
+        let double=ty==1;let known=self.u.vzero[double as usize];
+        let ns=self.scalar_source(n);let ms=m.map(|r|self.scalar_source(r));
+        let ps=self.scalar_source(p);let qs=q.map(|r|self.scalar_source(r));
+        let nr=ns.cached.unwrap();let mr=ms.and_then(|s|s.cached).unwrap_or(nr);
+        if known&(1<<n)!=0 {self.fp_register(a,double,xmm0,nr,mr);}
+        else if matches!(a,0|2)&&m.is_some_and(|r|known&(1<<r)!=0) {self.fp_register(a,double,xmm0,mr,nr);}
+        else {self.fld_source(xmm2,ns,double);self.fp_register(a,double,xmm0,xmm2,if a==4 {xmm2}else {mr});}
+        let pr=if p==t {xmm0}else {ps.cached.unwrap()};
+        let qr=if q==Some(t) {xmm0}else {qs.and_then(|s|s.cached).unwrap_or(pr)};
+        if p==t||known&(1<<p)!=0 {self.fp_register(b,double,xmm1,pr,qr);}
+        else if matches!(b,0|2)&&q.is_some_and(|r|r==t||known&(1<<r)!=0) {self.fp_register(b,double,xmm1,qr,pr);}
+        else {self.fld_source(xmm2,ps,double);self.fp_register(b,double,xmm1,xmm2,qr);}
+        let cold=self.u.a.create_label();
+        if double {a!(self,ucomisd(xmm1,xmm1));}else {a!(self,ucomiss(xmm1,xmm1));}
+        a!(self,jp(cold));
+        self.cold_path(cold,move|e| {
+            e.scalar_nan(double,ns,ms);
+            a!(e,movdqu(xmmword_ptr(r15+voff(t)),xmm0));
+            let product=FpSource{cached:None,offset:voff(t)};
+            let n2=if p==t {product}else {ps};let m2=q.map(|r|if r==t {product}else {qs.unwrap()});
+            e.fld_source(xmm0,n2,double);
+            if let Some(src)=m2 {e.fld_source(xmm2,src,double);e.fp_register(b,double,xmm0,xmm0,xmm2);}
+            else {e.fp_register(4,double,xmm0,xmm0,xmm0);}
+            e.scalar_nan(double,n2,m2);a!(e,movdqa(xmm1,xmm0));
+            if t!=d {e.fld_source(xmm0,product,double);}
+        });
+        if t!=d {self.store_v(t,xmm0);self.scalar_zero(t,double);}
+        self.store_v(d,xmm1);self.scalar_zero(d,double);
+        self.u.skip_next=true;self.u.insns_translated+=1;true
+    }
     /// One branch for two adjacent plain selects sharing live flags. Unlike a
     /// chain of CMOVs this permits prediction to remove condition dependencies.
     /// Each path retains guest instruction order, aliases and W zero-extension.
@@ -1358,6 +1433,9 @@ impl<'a> E<'a> {
     fn ldx_nf(&mut self, r: R64, n: u32) {
         if let Some(s) = self.region_slot(n) {
             a!(self, mov(r, LOOPREGS[s]));
+        } else if let Some(s)=self.u.region.and_then(|region|region.xslot(n)) {
+            if high_xmm(VREGS[s]) {evex!(self,vmovq(r,VREGS[s]));}
+            else {a!(self,movq(r,VREGS[s]));}
         } else if let Some(s) = self.rc_find(n) {
             self.rc_touch(s);
             a!(self, mov(r, CREGS[s]));
@@ -1380,6 +1458,9 @@ impl<'a> E<'a> {
     fn ldw_nf(&mut self, r: R64, n: u32) {
         if let Some(s) = self.region_slot(n) {
             a!(self, mov(r32_of(r), LOOPREGS32[s]));
+        } else if let Some(s)=self.u.region.and_then(|region|region.xslot(n)) {
+            if high_xmm(VREGS[s]) {evex!(self,vmovd(r32_of(r),VREGS[s]));}
+            else {a!(self,movd(r32_of(r),VREGS[s]));}
         } else if let Some(s) = self.rc_find(n) {
             self.rc_touch(s);
             a!(self, mov(r32_of(r), CREGS32[s]));
@@ -1406,6 +1487,9 @@ impl<'a> E<'a> {
         if let Some(s) = self.region_slot(n) {
             self.dirty_region(1 << n);
             if LOOPREGS[s] != r { a!(self, mov(LOOPREGS[s], r)); }
+        } else if let Some(s)=self.u.region.and_then(|region|region.xslot(n)) {
+            if high_xmm(VREGS[s]) {evex!(self,vmovq(VREGS[s],r));}
+            else {a!(self,movq(VREGS[s],r));}
         } else {
             a!(self, mov(qword_ptr(r15 + xoff(n)), r));
             self.rc_wrote(n, r);
@@ -1430,6 +1514,10 @@ impl<'a> E<'a> {
             // MOV preserves a preceding flag producer, including immediate zero.
             a!(self, mov(LOOPREGS[s], v));
             return;
+        }
+        if self.u.region.is_some_and(|region|region.xslot(n).is_some()) {
+            // Same scratch contract as the old large-immediate store path.
+            self.u.tbi_mask_live=false;a!(self,mov(r11,v));self.stx(n,r11,false);return;
         }
         self.rc_inval(n);
         if v as i64 >= i32::MIN as i64 && v as i64 <= i32::MAX as i64 {
@@ -2158,6 +2246,43 @@ fn cfgflags_enabled() -> bool {
     *ON.get_or_init(|| !jit_off("cfgflags") && std::env::var("ATTESOR_JIT_ON").unwrap_or_default().split(',').any(|t|t=="cfgflags"))
 }
 
+fn xspill_enabled() -> bool {
+    static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *ON.get_or_init(||!jit_off("xspill")&&std::env::var("ATTESOR_JIT_ON").unwrap_or_default().split(',').any(|t|t=="xspill"))
+}
+
+fn fmovra_enabled() -> bool {
+    static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *ON.get_or_init(||!jit_off("fmovra")&&std::env::var("ATTESOR_JIT_ON").unwrap_or_default().split(',').any(|t|t=="fmovra"))
+}
+
+fn vpair_enabled() -> bool {
+    static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *ON.get_or_init(||!jit_off("vpair")&&std::env::var("ATTESOR_JIT_ON").unwrap_or_default().split(',').any(|t|t=="vpair"))
+}
+
+fn xspill_layout(u:&Unit,l:&super::loops::Loop,reg:&[u8;NLOOPREGS])->[u8;NVREGS] {
+    let mut layout=[0xff;NVREGS];
+    if !u.xspill||u.function_entry.is_some()||u.quick||u.no_internal_jumps||u.commpage_checks||disabled_classes()!=0 {return layout;}
+    if !l.words.values().all(|&w| {
+        // No architectural V use, including SIMD/FP memory. No calls/system
+        // state, atomics or special scratch templates. Unknowns are barriers.
+        (w>>25)&7!=7 && !((w>>25)&5==4&&bit(w,26)!=0)
+        &&(flags_safe_passthrough(w)||flags_safe_writer(w)||w&0x3fe00800==0x1a800000
+            ||w&0xfc000000==0x14000000||w&0xff000010==0x54000000
+            ||w&0x7e000000==0x34000000||w&0x7e000000==0x36000000)
+    }) {return layout;}
+    let mut counts=[0u32;32];
+    for &w in l.words.values() {let a=cache_access(w);if a.xr!=u32::MAX {
+        for n in 0..32 {counts[n]+=((a.xr>>n)&1)*2+((a.xw>>n)&1);}
+    }}
+    let mut remaining:Vec<usize>=(0..32).filter(|&n|counts[n]!=0&&!reg.contains(&(n as u8))).collect();
+    remaining.sort_by_key(|&n|(std::cmp::Reverse(counts[n]),n));
+    let cap=if u.avx512 {NVREGS}else {BASE_NVREGS};
+    for(s,n)in remaining.into_iter().take(cap).enumerate() {layout[s]=n as u8;}
+    layout
+}
+
 /// Experimental write-through natural-loop region; public entries remain canonical.
 fn regioncache_enabled() -> bool {
     static F: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
@@ -2178,7 +2303,7 @@ fn loop_layout<const N: usize>(u: &Unit, pc: u64, read: &dyn Fn(u64) -> Option<u
         if N == NLOOPREGS && (w & 0x3fa0_7c00 == 0x08a0_7c00
             || w & 0x3f20_0c00 == 0x3820_0000
             || w & 0xffe0_ec00 == 0x5e00_4000) { return None; }
-        let a = cache_access(w);
+        let a = if u.fmovra {gpr_to_fp_access(w).unwrap_or_else(||cache_access(w))}else {cache_access(w)};
         // Unknown decodings advertise every read conservatively. They must not
         // dominate the layout; correctness never depends on this ranking.
         if a.xr != u32::MAX {
@@ -2370,7 +2495,7 @@ pub(super) fn prepare_bgtrans() {
         loopra_enabled(), regioncache_enabled(), has_avx(), has_fma(),
         has_aes(), has_pclmul(), has_sha(), has_f16c(), loopra2_enabled(),
         has_avx512(), avx512_enabled(), avx512_nan_enabled(), super::fastenc_enabled(),
-        super::loops::census_enabled(), super::cost::probes(), vloop_enabled(), vloop2_enabled(), vchain_enabled(), vscalar_enabled(), funra_enabled(), funflags_enabled(), selectra_enabled(), regflags_enabled(), cfgflags_enabled());
+        super::loops::census_enabled(), super::cost::probes(), vloop_enabled(), vloop2_enabled(), vchain_enabled(), vscalar_enabled(), funra_enabled(), funflags_enabled(), selectra_enabled(), regflags_enabled(), cfgflags_enabled(), xspill_enabled(), fmovra_enabled(), vpair_enabled());
 }
 
 /// Translate one basic block starting at `pc` into `u`. The caller must have
@@ -2442,7 +2567,7 @@ fn emit_multi_region(u: &mut Unit, l: &super::loops::Loop, read: &dyn Fn(u64) ->
     }
     let mut counts = [0u32; 32];
     for &w in l.words.values() {
-        let a = cache_access(w);
+        let a = if u.fmovra {gpr_to_fp_access(w).unwrap_or_else(||cache_access(w))}else {cache_access(w)};
         if a.xr != u32::MAX {
             for n in 0..32 { counts[n] += ((a.xr >> n) & 1) * 2 + ((a.xw >> n) & 1); }
         }
@@ -2452,6 +2577,8 @@ fn emit_multi_region(u: &mut Unit, l: &super::loops::Loop, read: &dyn Fn(u64) ->
     let mut reg = [0xff; NLOOPREGS];
     for (s, n) in regs.into_iter().take(NLOOPREGS).enumerate() { reg[s] = n as u8; }
     let vreg=if u.function_entry.is_none(){vregion_layout(u,l)}else {[0xff;NVREGS]};
+    let xreg=xspill_layout(u,l,&reg);
+    debug_assert!(xreg[0]==0xff||vreg[0]==0xff);
     // Do not treat "not a known GPR writer" as proof of flag transparency:
     // FCMP/FCCMP, MSR NZCV and ADC/SBC have separate native flag paths.
     let proven_flags=u.function_entry.is_some() || vreg[0]!=0xff || l.words.values().all(|&w|
@@ -2466,7 +2593,7 @@ fn emit_multi_region(u: &mut Unit, l: &super::loops::Loop, read: &dyn Fn(u64) ->
     let region = LoopRa { pc: l.header, fast: u.a.create_label(), exit: u.a.create_label(), reg,
         // Every predecessor/iteration can have written any assigned slot.
         // A compile-order dirtiness mask is NOT a dataflow solution at joins.
-        dirty: u32::MAX, vreg,flags };
+        dirty: u32::MAX, vreg,xreg,flags };
     u.region_exits.push(region);
     let mut saved = Vec::new();
     for &p in &l.starts {
@@ -2534,7 +2661,7 @@ fn emit_block_inner(u: &mut Unit, pc: u64, read: &dyn Fn(u64) -> Option<u32>, mu
             // feature before implementing resumable guest faults.
             assert!(GUEST_FAULTS_FATAL);
             let vreg = if multi.is_none() { vloop_layout(u, pc, read) } else { [0xff; NVREGS] };
-            let region = multi.unwrap_or_else(|| LoopRa { pc, fast: u.a.create_label(), exit: u.a.create_label(), reg, dirty: 0, vreg,flags:0xff });
+            let region = multi.unwrap_or_else(|| LoopRa { pc, fast: u.a.create_label(), exit: u.a.create_label(), reg, dirty: 0, vreg,xreg:[0xff;NVREGS],flags:0xff });
             let fast = region.fast;
             // JIT-only instrumentation: absolute host addresses must never enter
             // an AOT blob. Count executed public entries, not translations.
@@ -2727,9 +2854,10 @@ fn emit_block_inner(u: &mut Unit, pc: u64, read: &dyn Fn(u64) -> Option<u32>, mu
         let mut e = E { u, pc: cur, fuse_in, scalar_inputs };
         let term = is_terminator(insn);
         e.u.insns_translated += 1;
-        let vchain = count+1<MAX_BLOCK_INSNS && e.vchain_pair(insn);
-        let selectpair = !vchain && count+1<MAX_BLOCK_INSNS && e.selectra_pair(insn);
-        let translated = vchain || selectpair || e.translate(insn);
+        let vpair=count+1<MAX_BLOCK_INSNS&&e.scalar_pair(insn);
+        let vchain = !vpair && count+1<MAX_BLOCK_INSNS && e.vchain_pair(insn);
+        let selectpair = !vpair && !vchain && count+1<MAX_BLOCK_INSNS && e.selectra_pair(insn);
+        let translated = vpair || vchain || selectpair || e.translate(insn);
         e.u.dead_flags = false;
         e.u.dead_v = 0;
         e.u.vc_dest = [0xff; 2];
@@ -2738,7 +2866,7 @@ fn emit_block_inner(u: &mut Unit, pc: u64, read: &dyn Fn(u64) -> Option<u32>, mu
             e.u.vc = VCache::new(); // fused pair (writes the next one's Vd too) or helper call (clobbers caller-saved V cache)
             // The audited scalar pair never writes r11, even on its cold path.
             // Other fusions retain their old conservative contract.
-            if called || !(vchain||selectpair) {e.u.tbi_mask_live = false;}
+            if called || !(vpair||vchain||selectpair) {e.u.tbi_mask_live = false;}
         }
         if !translated {
             if term {
@@ -5508,6 +5636,15 @@ impl<'a> E<'a> {
                 return false;
             }
             if to_fp {
+                if self.u.fmovra&&rn!=31 {
+                    if let (Some(g),Some(v))=(self.region_slot(rn),self.u.region.and_then(|r|r.vslot(rd))) {
+                        let dst=VREGS[v];let source=LOOPREGS[g];
+                        if high_xmm(dst) {
+                            if sf {evex!(self,vmovq(dst,source));}else {evex!(self,vmovd(dst,r32_of(source)));}
+                        }else if sf {a!(self,movq(dst,source));}else {a!(self,movd(dst,r32_of(source)));}
+                        self.scalar_zero(rd,sf);return true;
+                    }
+                }
                 self.ld(rax, rn, false, sf);
                 self.vst_rax(rd, false);
                 self.scalar_zero(rd,ftype==1);
@@ -8884,6 +9021,229 @@ mod loopra_tests {
     }
 
     #[test]
+    fn vpair_rejects_boundaries_missing_inputs_and_nonpropagating_shapes() {
+        if !has_avx()||disabled_classes()!=0 {return;}
+        for reject in 0..9 {
+            let mut u=Unit::new(StubKind::Plain,false);u.vchain=true;u.vpair=reject!=1;
+            let mut vreg=[0xff;NVREGS];vreg[..4].copy_from_slice(&[0,1,2,3]);
+            if reject==5 {vreg[3]=0xff;}
+            let r=LoopRa{pc:PC,fast:u.a.create_label(),exit:u.a.create_label(),reg:[0xff;NLOOPREGS],dirty:0,vreg,xreg:[0xff;NVREGS],flags:0xff};u.region=Some(r);
+            u.look=vec![0x1e621862]; // DIV D2,D3,D2 consumes MUL D2,D0,D1
+            if reject==2 {let l=u.a.create_label();u.labels.insert(PC+4,l);}
+            if reject==3 {u.look[0]^=1<<22;}
+            if reject==4 {u.look[0]=0x1e612803;}
+            if reject==6 {u.region=None;}
+            if reject==8 {u.look[0]=0x1e626862;}
+            let first=if reject==7 {0x9e670002}else {0x1e610802};
+            let mut e=E{u:&mut u,pc:PC,fuse_in:None,scalar_inputs:None};
+            assert_eq!(e.scalar_pair(first),reject==0,"reject={reject}");
+        }
+    }
+
+    #[test]
+    fn vpair_all_scalar_operations_aliases_nan_width_and_high_bank() {
+        if !has_avx()||disabled_classes()!=0 {return;}
+        let mut checked=0;
+        for wide in [false,true] {
+        let values:Vec<u64>=if wide {vec![0,0x8000000000000000,1,1f64.to_bits(),(-1f64).to_bits(),0x7fefffffffffffff,
+            0x7ff0000000000000,0xfff0000000000000,0x7ff8000000000042,0x7ff0000000000073,0xfff0000000000084]}
+            else {vec![0,0x80000000,1,1f32.to_bits()as u64,(-1f32).to_bits()as u64,0x7f7fffff,0x7f800000,0xff800000,0x7fc00042,0x7f800073,0xff800084]};
+        for high in [false,true].into_iter().filter(|&h|!h||has_avx512()) {
+        for nan512 in [false,true].into_iter().filter(|&h|!h||has_avx512()) {
+        for kind in [StubKind::Plain,StubKind::Patchable] {
+        for a in 0..5 {for b in 0..5 {
+        for(t,d,n,m,p,q)in[(2,3,0,1,2,3),(0,0,0,1,0,1),(2,3,0,1,0,2),(2,2,0,1,2,2)] {
+            if b==4&&p!=t {continue;}
+            if a==0&&b==2&&t!=d&&((p==t)^(q==t)) {continue;}
+            let shift=if high {22}else {0};let(t,d,n,m,p,q)=(t+shift,d+shift,n+shift,m+shift,p+shift,q+shift);
+            let ty=(wide as u32)<<22;
+            let op=|code:u32,d:u32,n:u32,m:u32|if code==4 {0x1e21c000|ty|(n<<5)|d}
+                else {0x1e200800|ty|(code<<12)|(m<<16)|(n<<5)|d};
+            let mut words=Vec::new();if high {for r in 0..8 {words.push((if wide {0xfd400040}else {0xbd400040})|r);}}
+            words.extend([op(a,t,n,m),op(b,d,p,q),0xf100054a]);
+            words.push(0x54000001|((((-(words.len()as i32))as u32)&0x7ffff)<<5));
+            let exit=PC+words.len()as u64*4;words.push(0xd4001001);
+            let read=|p:u64|p.checked_sub(PC).and_then(|v|words.get((v/4)as usize)).copied();
+            let mut u=Unit::new(kind,false);u.loopra=true;u.loopra2=false;u.vloop=true;u.vchain=true;u.vpair=true;u.avx512=high;u.avx512_nan=nan512;
+            for p in [PC,exit] {let l=u.a.create_label();u.labels.insert(p,l);}
+            emit_block(&mut u,PC,&read);emit_block(&mut u,exit,&read);
+            assert_eq!(u.cold_ranges.len(),1,"ops={a},{b}");
+            for(range,live)in &u.cold_ranges {check_cold_registers(&u.a.instructions()[range.clone()],*live).unwrap();}
+            let(host,_)=assemble(u,0);
+            for(ia,&va)in values.iter().enumerate() {for(ib,&vb)in values.iter().enumerate() {
+                let mut c=cpu();for r in 0..32 {c.v[r]=[0xdeadbeef00000000+r as u64,0xfeedbeef00000000+r as u64];}
+                c.v[n as usize][0]=if wide {va}else {0xabc0000000000000|va};
+                c.v[m as usize][0]=if wide {vb}else {0xabc0000000000000|vb};
+                if d!=n&&d!=m {let v=values[(ia+ib)%values.len()];c.v[d as usize][0]=if wide {v}else {0x1234000000000000|v};}
+                let pad=if wide {1.25f64.to_bits()}else {1.25f32.to_bits()as u64};c.x[2]=&pad as *const _ as u64;c.x[10]=1+((ia+ib)%2)as u64;
+                let mut reference=cpu();reference.x=c.x;reference.v=c.v;interp::sys_sync_host_fp_mode(0);
+                for _ in 0..64 {let p=reference.pc();let w=read(p).unwrap();
+                    if matches!(interp::exec(&mut reference,w),Err(interp::Exit::Svc(_))) {break;}
+                    if reference.pc()==p {reference.set_pc(p+4);}}
+                interp::sys_sync_host_fp_mode(0);unsafe {crate::jit::attesor_jit_enter(&mut *c,host);}
+                assert_eq!(c.v,reference.v,"wide={wide} high={high} nan512={nan512} ops={a},{b} tdpq={t},{d},{p},{q} ab={va:x},{vb:x}");
+                assert_eq!(c.x,reference.x);assert_eq!(c.nzcv(),reference.nzcv());checked+=1;
+            }}
+        }}}}}}}
+        interp::sys_sync_host_fp_mode(0);eprintln!("general scalar pair cases={checked}");
+    }
+
+    #[test]
+    fn fmovra_typed_ranking_direct_bits_width_xzr_and_high_bank() {
+        if disabled_classes()!=0 {return;}
+        for invalid in [0x1e260000,0x9e660000,0x9e270000,0x1e670000,0x9ee70000] {
+            assert!(gpr_to_fp_access(invalid).is_none(),"{invalid:08x}");
+        }
+        let mut checked=0;
+        for high in [false,true].into_iter().filter(|&h|!h||has_avx512()) {
+        for wide in [false,true] {for zero in [false,true] {for on in [false,true] {
+        for kind in [StubKind::Plain,StubKind::Patchable] {
+            let d=if high {24}else {4};let acc=if high {25}else {0};let rn=if zero {31}else {5};
+            let transfer=(if wide {0x9e670000}else {0x1e270000})|(rn<<5)|d;
+            let a=gpr_to_fp_access(transfer).unwrap();assert_eq!(a.xr,if zero {0}else {1<<5});assert_eq!(a.vw,1<<d);
+            let load=|r:u32|(if wide {0xfd400040}else {0xbd400040})|r;
+            let mut words=vec![0xf100087f,0];
+            if high {for r in 0..8 {words.push(load(r));}}
+            words.extend([0x910003e6,0x910003ff,transfer,0x1e202800|((wide as u32)<<22)|(d<<16)|(acc<<5)|acc]);
+            let join=words.len();words[1]=0x54000000|(((join-1)as u32)<<5);
+            words.push(0xf1000463);words.push(0x54000001|((((-(words.len()as i32))as u32)&0x7ffff)<<5));
+            let exit=PC+words.len()as u64*4;words.push(0xd4001001);
+            let read=|p:u64|p.checked_sub(PC).and_then(|v|words.get((v/4)as usize)).copied();
+            let mut u=Unit::new(kind,false);u.loopra=true;u.loopra2=true;u.vloop=true;u.vloop2=true;u.vchain=true;u.vscalar=true;u.fmovra=on;u.avx512=high;
+            for p in [PC,exit] {let l=u.a.create_label();u.labels.insert(p,l);}
+            emit_block(&mut u,PC,&read);emit_block(&mut u,exit,&read);
+            let region=u.region_exits[0];assert!(region.slot(31).is_some());
+            if !zero {assert_eq!(region.slot(5).is_some(),on);}
+            if on&&!zero {
+                let dest=iced_x86::Register::from(VREGS[region.vslot(d).unwrap()]);
+                let g=region.slot(5).unwrap();let src=if wide {iced_x86::Register::from(LOOPREGS[g])}else {iced_x86::Register::from(LOOPREGS32[g])};
+                assert!(u.a.instructions().iter().any(|i|i.op0_register()==dest&&i.op1_register()==src));
+            }
+            let(host,_)=assemble(u,0);
+            let values=if wide {vec![0,0x8000000000000000,1,1.25f64.to_bits(),0x7ff0000000000000,0x7ff0000000000042,0xfff8000000000031,u64::MAX]}
+                else {vec![0,0x80000000,1,1.25f32.to_bits()as u64,0x7f800000,0x7f800042,0xffc00031,u32::MAX as u64]};
+            for value in values {
+                let pad=if wide {1f64.to_bits()}else {1f32.to_bits()as u64};let mut c=cpu();
+                for r in 0..32 {c.v[r]=[r as u64*13,0xfeedbeef00000000+r as u64];}
+                c.v[acc as usize][0]=if wide {0.5f64.to_bits()}else {0x1234000000000000|0.5f32.to_bits()as u64};
+                c.x[2]=(&pad as *const _ as u64)|0xab00000000000000;c.x[3]=3;c.x[5]=if wide {value}else {0xdeadbeef00000000|value};c.x[31]=0xab12345676543210;
+                let mut reference=cpu();reference.x=c.x;reference.v=c.v;interp::sys_sync_host_fp_mode(0);
+                for _ in 0..100 {let p=reference.pc();let w=read(p).unwrap();
+                    if matches!(interp::exec(&mut reference,w),Err(interp::Exit::Svc(_))) {break;}
+                    if reference.pc()==p {reference.set_pc(p+4);}}
+                interp::sys_sync_host_fp_mode(0);unsafe {crate::jit::attesor_jit_enter(&mut *c,host);}
+                assert_eq!(c.x,reference.x);assert_eq!(c.v,reference.v,"high={high} WIDE={wide} zero={zero} on={on} value={value:x}");assert_eq!(c.nzcv(),reference.nzcv());checked+=1;
+            }
+        }}}}}
+        interp::sys_sync_host_fp_mode(0);eprintln!("typed GP-FP direct cases={checked}");
+    }
+
+    #[test]
+    fn xspill_pressure_diamond_width_alias_sp_memory_and_public_exit() {
+        if disabled_classes()!=0 {return;}
+        let mut checked=0;
+        for high in [false,true].into_iter().filter(|&h|!h||has_avx512()) {
+        for kind in [StubKind::Plain,StubKind::Patchable] {for lazy in [false,true] {
+            let mut words=vec![0xf1000b9f,0]; // CMP X28,#2; B.EQ join
+            for n in 0..24u32 {
+                let m=(n+1)%24;
+                words.push(0x0b000000|(((n%2)as u32)<<31)|(m<<16)|(n<<5)|n);
+            }
+            words.extend([0xf2a00014|(0x8123<<5),0x52800015|(0x4321<<5),
+                0xf84087fa,0xd10023ff,0xf90007f4,0xaa0003e0]);
+            let join=words.len();words[1]=0x54000000|(((join-1)as u32)<<5);
+            words.push(0xf100079c); // SUBS X28,#1
+            words.push(0x54000001|((((-(words.len()as i32))as u32)&0x7ffff)<<5));
+            let exit=PC+words.len()as u64*4;words.push(0xd4001001);
+            let read=|p:u64|p.checked_sub(PC).and_then(|v|words.get((v/4)as usize)).copied();
+            let mut u=Unit::new(kind,false);u.loopra=true;u.loopra2=true;u.xspill=true;u.cfgflags=lazy;u.regflags=false;u.avx512=high;
+            for p in [PC,exit] {let l=u.a.create_label();u.labels.insert(p,l);}
+            emit_block(&mut u,PC,&read);emit_block(&mut u,exit,&read);
+            let r=u.region_exits[0];let count=r.xreg.iter().filter(|&&n|n!=0xff).count();
+            assert!(count>=8);assert_eq!(r.vreg,[0xff;NVREGS]);
+            assert!(r.xreg.iter().filter(|&&n|n!=0xff).all(|n|!r.reg.contains(n)));
+            if high {assert!(count>8);}else {assert_eq!(count,8);}
+            assert_eq!(u.insns_fallback,0);
+            let(host,_)=assemble(u,0);
+            for seed in 0..64u64 {
+                let original=[seed.wrapping_mul(7919),0x123456789abcdef0];let mut mem=original;
+                let mut c=cpu();for n in 0..32 {c.x[n]=(0xfedcba9876543210u64^seed.wrapping_mul(192847)).wrapping_add(n as u64*7919);c.v[n]=[n as u64*31,0xfeed0000+n as u64];}
+                c.x[28]=3;c.x[31]=(&mut mem as *mut _ as u64)|if seed&1!=0 {0xab00000000000000}else {0};c.set_nzcv(9);
+                let mut reference=cpu();reference.x=c.x;reference.v=c.v;reference.set_nzcv(9);
+                let mut done=false;
+                for _ in 0..200 {let p=reference.pc();let w=read(p).unwrap();
+                    if matches!(interp::exec(&mut reference,w),Err(interp::Exit::Svc(_))) {done=true;break;}
+                    if reference.pc()==p {reference.set_pc(p+4);}}
+                assert!(done);let expected=mem;mem=original;
+                unsafe {crate::jit::attesor_jit_enter(&mut *c,host);}
+                assert_eq!(c.x,reference.x,"high={high} lazy={lazy} seed={seed}");
+                assert_eq!(c.v,reference.v);assert_eq!(c.nzcv(),reference.nzcv());assert_eq!(mem,expected);checked+=1;
+            }
+        }}}
+        eprintln!("XMM GPR spill directed cases={checked}");
+    }
+
+    #[target_feature(enable="avx512f")]
+    unsafe fn xspill_clobber_high() {
+        std::arch::asm!("vpxord zmm16,zmm16,zmm16","vpxord zmm17,zmm17,zmm17", "vpxord zmm18,zmm18,zmm18","vpxord zmm19,zmm19,zmm19",
+            "vpxord zmm20,zmm20,zmm20","vpxord zmm21,zmm21,zmm21","vpxord zmm22,zmm22,zmm22","vpxord zmm23,zmm23,zmm23",
+            "vpxord zmm24,zmm24,zmm24","vpxord zmm25,zmm25,zmm25","vpxord zmm26,zmm26,zmm26","vpxord zmm27,zmm27,zmm27",
+            "vpxord zmm28,zmm28,zmm28","vpxord zmm29,zmm29,zmm29","vpxord zmm30,zmm30,zmm30","vpxord zmm31,zmm31,zmm31",
+            out("zmm16") _,out("zmm17") _,out("zmm18") _,out("zmm19") _,out("zmm20") _,out("zmm21") _,out("zmm22") _,out("zmm23") _,
+            out("zmm24") _,out("zmm25") _,out("zmm26") _,out("zmm27") _,out("zmm28") _,out("zmm29") _,out("zmm30") _,out("zmm31") _, options(nostack));
+    }
+
+    extern "C" fn xspill_observer(c:*mut Cpu,insn:u32,_pc:u64)->u64 {
+        let c=unsafe {&mut *c};c.x[30]=(c.x[20]==0x123456789abcdef0&&c.x[31]==0xab00000000001234)as u64;
+        for n in 0..23 {c.x[n]=c.x[n].wrapping_add(77);}
+        c.x[31]=c.x[31].wrapping_add(8);c.set_nzcv(9);
+        unsafe {std::arch::asm!("pxor xmm8,xmm8","pxor xmm9,xmm9","pxor xmm10,xmm10","pxor xmm11,xmm11",
+            "pxor xmm12,xmm12","pxor xmm13,xmm13","pxor xmm14,xmm14","pxor xmm15,xmm15",
+            out("xmm8") _,out("xmm9") _,out("xmm10") _,out("xmm11") _,out("xmm12") _,out("xmm13") _,out("xmm14") _,out("xmm15") _, options(nostack));
+            if has_avx512() {xspill_clobber_high();}}
+        (insn&1)as u64
+    }
+
+    #[test]
+    fn xspill_helper_canonicalization_clobber_reload_and_status() {
+        for high in [false,true].into_iter().filter(|&h|!h||has_avx512()) {for status in [0,1] {
+            let mut u=Unit::new(StubKind::Plain,false);let mut entry=u.a.create_label();u.a.set_label(&mut entry).unwrap();u.labels.insert(PC,entry);
+            let mut xreg=[0xff;NVREGS];let count=if high {24}else {8};
+            for n in 0..count {xreg[n]=n as u8;}xreg[count-2]=20;xreg[count-1]=31;
+            // No duplicate guest locations (high bank already includes X20).
+            if high {xreg[20]=22;}
+            assert_eq!(xreg.iter().filter(|&&n|n==20).count(),1);
+            let r=LoopRa{pc:PC,fast:u.a.create_label(),exit:u.a.create_label(),reg:[0xff;NLOOPREGS],dirty:u32::MAX,vreg:[0xff;NVREGS],xreg,flags:0xff};
+            u.region=Some(r);u.region_exits.push(r);r.reload(&mut u.a);
+            let mut e=E{u:&mut u,pc:PC,fuse_in:None,scalar_inputs:None};
+            e.st_imm(20,0x123456789abcdef0);e.mov_imm(rax,0xab00000000001234);e.stx(31,rax,true);
+            e.fallback(status);e.ldx_nf(rax,20);e.stx(25,rax,false);e.st_pc_and_exit(PC+4);
+            let(host,_)=assemble(u,0);let mut c=cpu();for n in 0..32 {c.x[n]=n as u64*1234;c.v[n]=[n as u64,0xfeed+n as u64];}let before=c.v;
+            c.helpers[HELPER_INTERP]=xspill_observer as *const () as u64;c.x[25]=42;
+            let mut expected=c.x;expected[20]=0x123456789abcdef0;expected[31]=0xab00000000001234;
+            for n in 0..23 {expected[n]=expected[n].wrapping_add(77);}expected[31]+=8;expected[30]=1;
+            if status==0 {expected[25]=expected[20];}
+            unsafe {crate::jit::attesor_jit_enter(&mut *c,host);}
+            assert_eq!(c.x[30],1);assert_eq!(c.x[20],0x123456789abcdef0+77);assert_eq!(c.x[31],0xab0000000000123c);
+            assert_eq!(c.x[25],if status==0 {c.x[20]}else {42});assert_eq!(c.v,before);assert_eq!(c.nzcv(),9);
+            assert_eq!(c.x,expected);
+        }}
+    }
+
+    #[test]
+    fn xspill_v_bank_and_observer_eligibility_barriers() {
+        use std::collections::{BTreeMap,BTreeSet};
+        let base:Vec<u32>=(0..24).map(|n|0x8b000000|(((n+1)%24)<<16)|(n<<5)|n).collect();
+        let mut u=Unit::new(StubKind::Plain,false);u.xspill=true;u.loopra=true;
+        for extra in [0xd503201f,0x1e612800,0xfd400001,0x3dc00000,0x94000000,0xd51b4200,0xc85f7c01] {
+            let words:BTreeMap<_,_>=base.iter().copied().chain([extra]).enumerate().map(|(n,w)|(PC+n as u64*4,w)).collect();
+            let l=super::super::loops::Loop{header:PC,words,starts:BTreeSet::from([PC]),backedges:vec![]};
+            let mut reg=[0xff;NLOOPREGS];for(n,r)in reg.iter_mut().enumerate(){*r=n as u8;}
+            assert_eq!(xspill_layout(&u,&l,&reg)[0]!=0xff,extra==0xd503201f,"{extra:08x}");
+        }
+    }
+
+    #[test]
     fn cfgflags_edge_sink_conditions_private_diamonds_and_public_state() {
         use iced_x86::Mnemonic;
         if disabled_classes()!=0 {return;}
@@ -9072,7 +9432,7 @@ mod loopra_tests {
             let mut u=Unit::new(StubKind::Plain,false);u.avx512=high;
             let mut entry=u.a.create_label();u.a.set_label(&mut entry).unwrap();u.labels.insert(PC,entry);
             let mut vreg=[0xff;NVREGS];vreg[if high {9}else {0}]=20;
-            let region=LoopRa{pc:PC,fast:u.a.create_label(),exit:u.a.create_label(),reg:[0xff;NLOOPREGS],dirty:0,vreg,flags:0xff};
+            let region=LoopRa{pc:PC,fast:u.a.create_label(),exit:u.a.create_label(),reg:[0xff;NLOOPREGS],dirty:0,vreg,xreg:[0xff;NVREGS],flags:0xff};
             u.region=Some(region);u.region_exits.push(region);
             let mut e=E{u:&mut u,pc:PC,fuse_in:None,scalar_inputs:None};
             e.mov_imm(rax,value);e.vst_rax(20,duplicate);e.st_pc_and_exit(PC+4);
@@ -9122,7 +9482,7 @@ mod loopra_tests {
             let mut u=Unit::new(StubKind::Plain,false);
             let mut entry=u.a.create_label();u.a.set_label(&mut entry).unwrap();u.labels.insert(PC,entry);
             let region=LoopRa{pc:PC,fast:u.a.create_label(),exit:u.a.create_label(),reg:[0xff;NLOOPREGS],
-                dirty:0,vreg:[0xff;NVREGS],flags:7};
+                dirty:0,vreg:[0xff;NVREGS],xreg:[0xff;NVREGS],flags:7};
             u.region=Some(region);u.region_exits.push(region);region.reload(&mut u.a);
             let mut e=E{u:&mut u,pc:PC,fuse_in:None,scalar_inputs:None};
             e.cond_to_al(cond);a!(e,movzx(eax,al));e.stx(0,rax,false);e.st_pc_and_exit(PC+4);
@@ -9191,7 +9551,7 @@ mod loopra_tests {
             let mut vreg=[0xff;NVREGS];vreg[..4].copy_from_slice(&[0,1,2,3]);
             if reject==6 {vreg[0]=0xff;}
             u.region=Some(LoopRa{pc:PC,fast:u.a.create_label(),exit:u.a.create_label(),
-                reg:[0xff;NLOOPREGS],dirty:0,vreg,flags:0xff});
+                reg:[0xff;NLOOPREGS],dirty:0,vreg,xreg:[0xff;NVREGS],flags:0xff});
             u.look=vec![0x1e622863]; // FADD D3,D3,D2
             if reject==2 {let l=u.a.create_label();u.labels.insert(PC+4,l);}
             if reject==3 {u.look[0]^=1<<22;} // mixed S/D

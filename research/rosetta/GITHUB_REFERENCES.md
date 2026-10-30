@@ -191,3 +191,63 @@ No repeated full configuration matrix. The remaining targets and both qsort
 sizes still require one common configuration and final correctness/performance
 acceptance. New-contract disk AOT, invalidation/concurrency and full regression
 remain pending before production promotion. All experimental flags remain OFF.
+
+
+## Codegen77: pressure experiments and dependent scalar pairs
+
+All three new switches below are exact-token, default OFF, with OFF precedence.
+Production/defaults remain unchanged; cache version is77 plus build UUID/options.
+
+* `xspill` uses otherwise-unused XMM slots for overflow GPR values in proven
+  pure-GPR private loop CFGs. Architectural V use (including V memory), calls,
+  system/atomic/unproven shapes and recursive-function regions are barriers.
+  Assignments are disjoint from native GPR and V assignments. Read W without
+  destroying X, preserve SP/XZR distinctions, and synchronize/reload at public
+  and helper boundaries. Capacity8 or24 reuses the existing bank, not another
+  cache expansion. This first version still bridges scalar operations through
+  native GPRs; more capacity does not imply a faster instruction schedule.
+* `fmovra` adds a typed GP-to-FP read set for allocation ranking only; the generic
+  conservative next-use decoder remains unchanged. Valid W->S/X->D raw transfers
+  can go directly between assigned GPR and V registers. XZR is never mistaken
+  for an assigned SP; S clears upper V bits without clearing upper source X.
+* `vpair` generalizes dependent scalar pairing to MUL/DIV/ADD/SUB/SQRT, including
+  overwritten intermediate destinations. Only same-width adjacent instructions
+  in an audited fixed-V region are admitted, with no public label/cut between
+  them. The second operation must consume the first result, ensuring NaN
+  propagation to a single hot guard. Preserve originals until cold repair of
+  both architectural NaN selections; commit both live outputs, or just the final
+  output if the intermediate is overwritten. Arithmetic remains two separately
+  rounded instructions, never FMA/reciprocal/approximation. Retain the existing
+  tuned MUL->ADD specialization where it already applies. Unsupported shapes,
+  missing V slots and non-propagating operations stay on the old path.
+
+Related checks only, no new full workspace/configuration matrix:
+
+* xspill: three directed tests,512 pressure/diamond/alias/W-X/memory/public-state
+  cases, tagged SP and low/high banks; explicit low/high-XMM clobbering helper,
+  canonical observer state, all-GPR reload and helper status/early exit; eligibility
+  rejects V bank use and unsupported observers.
+* fmovra: one test,256 raw-bit/ranking/direct-transfer cases, dirty upper X/V,
+  S/D, NaN payloads, signed zero, high XMM, aliases and XZR despite mapped SP.
+* vpair: two tests,180,048 interpreter differential cases over all admitted
+  operation pairs, aliases, S/D, low/high banks, SSE/AVX512 NaN repair, zeros,
+  subnormals, infinities, NaN payloads and backedges; explicit label/type/missing
+  input/dependency/non-propagating-shape rejection. Strict cold register/TBI
+  contracts remain checked. Existing FPCR entry guards are unchanged.
+
+Same-host one-round screens, each a different recorded build/batch, NOT additive:
+
+| Switch | Target control -> candidate | Outcome |
+|---|---|---|
+| xspill | sieve270.681 ->301.406ms | +11.35% time; do not enable or repeat |
+| fmovra | N-body60.8 ->60.6ms | -0.33%; no meaningful gain; do not enable/repeat |
+| vpair | N-body64.3 ->56.7ms | -11.82% time; native21.9ms,38.62% native |
+
+The positive vpair sample excludes xspill/fmovra and retains the earlier vscalar,
+V-residency and CFG flag experiments. All incidental fixture metrics/checksums
+are retained, including regressions. Do not attribute the cross-batch control
+changes to these switches or claim a stable combined/native60% result. The final
+release emitter preceded only a small test-only barrier addition; final related
+checks ran against the same emitter implementation. New-contract disk AOT,
+concurrency/invalidation and full-application regression remain pending before
+promotion. The six-target milestone and both qsort scales are still incomplete.
