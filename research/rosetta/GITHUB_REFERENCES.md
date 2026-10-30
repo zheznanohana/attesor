@@ -686,3 +686,27 @@ establish a128-bit Tiger Lake explanation:
 https://www.intel.com/content/dam/develop/external/us/en/documents/11mc12-avoiding-2bavx-sse-2btransition-2bpenalties-2brh-2bfinal-809104.pdf
 
 No selected-profile change or60% acceptance. Goal active/incomplete.
+
+
+## Codegen93: normalized VEX/EVEX hot batch, still negative
+
+Use VEX low-bank loads/commits/unordered test instead of legacy SSE, retaining
+EVEX only for high registers. Same128-bit guest semantics. Expand target cases
+from32768 to51200;2048 are guaranteed finite inputs/accumulator and assert ZERO
+NaN replays using a test-only Cpu-relative internal counter (absent in release).
+All8 focused tests pass, including224 pre-effect rejections and related strict
+state/FPCR proofs. Thus the finite hot path is directly checked, not inferred
+from mixed inputs that might all replay. All original7 fixture checksums match.
+
+Single screen: native21.527ms, control39.791ms, vbatch72.855ms (+83.09%),29.55%
+native. Negative, no repeat, not selected. Prior92 measured73.926ms is a separate
+source/batch, not a controlled encoding-only timing comparison. This does not
+support a claim that SSE/VEX transitions caused the92 slowdown. AVX512 frequency,
+register/port pressure, code layout and other causes remain unmeasured.
+
+Next unimplemented variant:4 packed raw A/B pairs instead of8 separate capture
+registers. Keep captures in low bank,2 cold numeric work registers plus a cold
+raw-B extraction register; no high-register operations in the hot batch. Replay
+from packed captures only, preserving every raw bit, exact memory width, original
+NaN order and state. Additional unpack work could itself lose; no gain claimed.
+Production/profile unchanged; goal remains active/incomplete.

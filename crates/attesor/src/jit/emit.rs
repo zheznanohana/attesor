@@ -9476,18 +9476,22 @@ mod loopra_tests {
             emit_block(&mut u,PC,&read);emit_block(&mut u,exit,&read);assert_eq!(u.vbatch_emissions,1);assert_eq!(u.insns_fallback,0);let(host,_)=assemble(u,0);
             let vals:Vec<u64>=if double {vec![0,0x8000000000000000,1,0x7ff0000000000000,0xfff0000000000000,0x7ff8000000000042,0x7ff0000000000073,1.25f64.to_bits()]}
                 else {vec![0,0x80000000,1,0x7f800000,0xff800000,0x7fc00042,0x7f800073,1.25f32.to_bits()as u64]};
-            for a in 0..8 {for b in 0..8 {for start in [0,4*step as u64] {for mode in 0..4 {for fz in [false,true] {
+            for a in 0..10 {for b in 0..10 {for start in [0,4*step as u64] {for mode in 0..4 {for fz in [false,true] {
                 let mut left=[0u64;8];let mut right=[0u64;40];
-                for i in 0..8 {let x=vals[(a+i)%8];let y=vals[(b+3*i)%8];if double {left[i]=x;right[i*5]=y;}else {let ptr=left.as_mut_ptr()as *mut u32;unsafe {*ptr.add(i)=x as u32;*(right.as_mut_ptr()as *mut u32).add(i*5)=y as u32;}}}
+                for i in 0..8 {let x=if a<8 {vals[(a+i)%8]}else {let v=if a==8 {0.0}else {(i+1)as f64*0.1};if double {v.to_bits()}else {(v as f32).to_bits()as u64}};
+                    let y=if b<8 {vals[(b+3*i)%8]}else {let v=if b==8 {0.0}else {1.0+(i+1)as f64*0.125};if double {v.to_bits()}else {(v as f32).to_bits()as u64}};if double {left[i]=x;right[i*5]=y;}else {let ptr=left.as_mut_ptr()as *mut u32;unsafe {*ptr.add(i)=x as u32;*(right.as_mut_ptr()as *mut u32).add(i*5)=y as u32;}}}
                 let mut c=cpu();for r in 0..32 {c.x[r]=0xfeed000000000000+r as u64;c.v[r]=[0xface000000000000+r as u64,0xdeadbeef00000000+r as u64];}
                 c.x[0]=left.as_ptr()as u64|0xab00000000000000;c.x[1]=right.as_ptr()as u64|0xff00000000000000;c.x[10]=start;
                 // A nonzero valid start means the source pointer is already advanced.
                 c.x[1]=c.x[1].wrapping_add((start/step as u64)*stride as u64);
-                c.v[d as usize][0]=if double {vals[(a+b)%8]}else {0xface000000000000|vals[(a+b)%8]};c.fpcr=(mode<<22)|if fz {1<<24}else {0};c.set_nzcv(15);
+                let acc=if a>=8&&b>=8 {if double {0.125f64.to_bits()}else {0.125f32.to_bits()as u64}}else {vals[(a+b)%8]};
+                c.v[d as usize][0]=if double {acc}else {0xface000000000000|acc};c.fpcr=(mode<<22)|if fz {1<<24}else {0};c.set_nzcv(15);
                 let mut r=cpu();r.x=c.x;r.v=c.v;r.fpcr=c.fpcr;r.set_nzcv(15);interp::sys_sync_host_fp_mode(r.fpcr);let mut steps=0;
                 loop {let p=r.pc();if p==exit {break;}interp::exec(&mut r,read(p).unwrap()).unwrap();if r.pc()==p {r.set_pc(p+4);}steps+=1;assert!(steps<=64);}
                 interp::sys_sync_host_fp_mode(c.fpcr);unsafe {crate::jit::attesor_jit_enter(&mut *c,host);}
-                assert_eq!(c.x,r.x,"D={double} scaled={shifted} names={high_names} first={product_first} a={a} b={b} start={start} mode={mode} FZ={fz}");assert_eq!(c.v,r.v);assert_eq!(c.nzcv(),r.nzcv());assert_eq!(c.fpcr,r.fpcr);assert_eq!(c.exit_reason,EXIT_SVC);checked+=1;
+                assert_eq!(c.x,r.x,"D={double} scaled={shifted} names={high_names} first={product_first} a={a} b={b} start={start} mode={mode} FZ={fz}");assert_eq!(c.v,r.v);assert_eq!(c.nzcv(),r.nzcv());assert_eq!(c.fpcr,r.fpcr);assert_eq!(c.exit_reason,EXIT_SVC);
+                if a>=8&&b>=8 {assert_eq!(c.aot_loop_regions,if kind==StubKind::Plain&&super::super::stats_enabled(){1}else{0},"finite hot path unexpectedly replayed");}
+                checked+=1;
             }}}}}
             for (start,mode) in [(1,0),(bound as u64,0),(bound as u64-step as u64,0),(u64::MAX,0),(0,1<<25),(0,1<<26),(0,1<<19)] {
                 let mut c=cpu();for r in 0..32 {c.x[r]=0xab00000000001000+r as u64;c.v[r]=[r as u64,0xdeadface];}c.x[10]=start;c.fpcr=mode;c.set_nzcv(15);let(x,v)=(c.x,c.v);

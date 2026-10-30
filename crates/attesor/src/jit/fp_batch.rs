@@ -36,7 +36,7 @@ pub(super) fn enter(u:&mut Unit,p:Plan,r:LoopRa) {
 fn source(r:AsmRegisterXmm)->FpSource {FpSource{cached:Some(r),offset:0}}
 fn load(e:&mut E<'_>,dst:AsmRegisterXmm,double:bool) {
     if high_xmm(dst) {if double {e.u.a.evex().vmovq(dst,qword_ptr(rax)).unwrap();}else {e.u.a.evex().vmovd(dst,dword_ptr(rax)).unwrap();}}
-    else if double {e.u.a.movq(dst,qword_ptr(rax)).unwrap();}else {e.u.a.movd(dst,dword_ptr(rax)).unwrap();}
+    else if double {e.u.a.vmovq(dst,qword_ptr(rax)).unwrap();}else {e.u.a.vmovd(dst,dword_ptr(rax)).unwrap();}
 }
 /// Cold replay writes only scratch0..7 and the two reserved work locations.
 /// Captures/original V stay immutable; all memory reads are Cpu or RIP constants.
@@ -65,9 +65,11 @@ pub(super) fn emit(u:&mut Unit,pc:u64,p:Plan) {
         e.fp_register(2,p.double,xmm1,xmm0,if i==0 {old.cached.unwrap()}else {xmm1});
     }
     let mut cold=e.u.a.create_label();let mut resume=e.u.a.create_label();
-    if p.double {e.u.a.ucomisd(xmm1,xmm1).unwrap();}else {e.u.a.ucomiss(xmm1,xmm1).unwrap();}e.u.a.jp(cold).unwrap();e.u.a.set_label(&mut resume).unwrap();
+    if p.double {e.u.a.vucomisd(xmm1,xmm1).unwrap();}else {e.u.a.vucomiss(xmm1,xmm1).unwrap();}e.u.a.jp(cold).unwrap();e.u.a.set_label(&mut resume).unwrap();
     e.u.cold_paths.push(Box::new(move|u| {
-        u.a.set_label(&mut cold).unwrap();let start=u.a.instructions().len();
+        u.a.set_label(&mut cold).unwrap();
+        #[cfg(test)] u.a.inc(qword_ptr(r15+off::AOT_LOOP_REGIONS)).unwrap();
+        let start=u.a.instructions().len();
         let mut e=E{u,pc,fuse_in:None,scalar_inputs:None};
         for i in 0..4 {
             let a=source(p.temps[2*i]);let b=source(p.temps[2*i+1]);
@@ -79,7 +81,11 @@ pub(super) fn emit(u:&mut Unit,pc:u64,p:Plan) {
         e.cache_copy(xmm0,p.temps[8]);e.cache_copy(xmm1,p.temps[9]);
         check_cold(e.u,start,p);e.u.a.jmp(resume).unwrap();
     }));
-    e.store_v(p.t,xmm0);e.store_v(p.d,xmm1);e.store_v(p.m,p.temps[7]);for n in [p.t,p.d,p.m] {e.scalar_zero(n,p.double);}
+    for (guest,src) in [(p.t,xmm0),(p.d,xmm1),(p.m,p.temps[7])] {
+        let dst=VREGS[r.vslot(guest).unwrap()];
+        if high_xmm(dst)||high_xmm(src) {e.u.a.vmovdqa64(dst,src).unwrap();}else {e.u.a.vmovdqa(dst,src).unwrap();}
+        e.scalar_zero(guest,p.double);
+    }
     e.u.a.add(index,(4*p.step)as i32).unwrap();e.stx(p.index,index,false);e.u.a.add(ptr,(4*p.stride)as i32).unwrap();e.stx(p.ptr,ptr,false);
     e.u.a.cmp(index,p.bound as i32).unwrap();e.u.loop_exit_flags=Some(FuseKind::Sub);e.u.loop_exit_compare=None;e.u.dead_flags=false;
     e.flags_branch(pc,pc+32,Cc::E);e.u.insns_translated+=8;e.u.vbatch_emissions+=1;
