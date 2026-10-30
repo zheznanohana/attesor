@@ -169,6 +169,11 @@ struct BlockRegistry {
     /// Populated only with preciseinvalidate. Shares the existing publication
     /// lock instead of changing every default-path map value or adding a lock.
     external: FastMap<u64, ExternalBlock>,
+    /// Every image range that has ever had `external` entries, and whether any entry without an
+    /// image was inserted since the last full scan. A superset of what `external` can match, so an
+    /// invalidation outside all of them (V8 heap munmap/mprotect) skips the O(entries) scan.
+    external_images: Vec<(u64, u64)>,
+    external_legacy: bool,
     // Bounded tombstones also protect a late/concurrent disk loader. Only
     // preciseinvalidate populates these; no additional default-path work.
     external_invalidations: Vec<(u64, u64)>,
@@ -182,6 +187,26 @@ struct ExternalBlock {
 }
 
 impl BlockRegistry {
+    fn add_external(&mut self, pc: u64, host: u64, image: Option<(u64, u64)>) {
+        self.external.insert(pc, ExternalBlock { host, image });
+        match image {
+            Some(r) => if !self.external_images.contains(&r) { self.external_images.push(r); },
+            None => self.external_legacy = true,
+        }
+    }
+    /// Revoke the external entries an invalidation of [addr, end) reaches: image-less ones always,
+    /// image-bound ones when their image overlaps. Skips the scan when no recorded image overlaps.
+    fn retire_external(&mut self, addr: u64, end: u64, retired: &mut Vec<(u64, u64)>) {
+        if !self.external_legacy && !self.external_images.iter().any(|&(lo, hi)| lo < end && hi > addr) {
+            return;
+        }
+        self.external.retain(|&pc, external| {
+            let revoke = external.image.is_none_or(|(lo, hi)| lo < end && hi > addr);
+            if revoke { retired.push((pc, external.host)); }
+            !revoke
+        });
+        self.external_legacy = false; // every image-less entry was just revoked
+    }
     fn note_external_invalidation(&mut self, mut lo: u64, mut hi: u64) {
         self.external_invalidations.retain(|&(a, b)| {
             if a <= hi && b >= lo { lo = lo.min(a); hi = hi.max(b); false } else { true }
@@ -364,7 +389,7 @@ pub(crate) fn register_aot_block(pc: u64, host: u64, image: Option<(u64, u64)>) 
     }
     if let std::collections::hash_map::Entry::Vacant(entry) = registry.entries.entry(pc) {
         entry.insert(host);
-        if precise { registry.external.insert(pc, ExternalBlock { host, image }); }
+        if precise { registry.add_external(pc, host, image); }
         return true;
     }
     false
@@ -880,13 +905,14 @@ pub fn bgtrans_after_fork_child() {
 pub fn invalidate_range(addr: u64, len: u64) { invalidate_for(addr, len, "other"); }
 
 pub fn invalidate_for(addr: u64, len: u64, source: &'static str) {
-    // Metric keys are a closed set; syscall sources such as "munmap" are accounted under "other".
-    let source = if matches!(source, "ic-ivau" | "mprotect-exec") { source } else { "other" };
+    // Metric keys are a closed set; other sources (munmap, mprotect, ...) are counted as "other".
+    // Only the metric name is folded: `source` itself still selects page-granular invalidation below.
+    let metric = if matches!(source, "ic-ivau" | "mprotect-exec") { source } else { "other" };
     let _profile = crate::profile::enter(crate::profile::State::Invalidate);
     let _timer = cost::Timer::new("invalidate.ns");
     if cost::enabled() {
-        cost::add(&format!("invalidate.{source}.calls"), 1);
-        cost::add(&format!("invalidate.{source}.requested-bytes"), len);
+        cost::add(&format!("invalidate.{metric}.calls"), 1);
+        cost::add(&format!("invalidate.{metric}.requested-bytes"), len);
     }
     let _g = TRANSLATE.lock().unwrap();
     // Even no-victim/early-return invalidations retire speculative snapshots.
@@ -944,7 +970,7 @@ pub fn invalidate_for(addr: u64, len: u64, source: &'static str) {
     }
     victims.sort_unstable();
     victims.dedup();
-    if cost::enabled() { cost::add(&format!("invalidate.{source}.units"), victims.len() as u64); }
+    if cost::enabled() { cost::add(&format!("invalidate.{metric}.units"), victims.len() as u64); }
     // Revoke every target before withdrawing public entries or publishing EPOCH.
     for &id in &victims {
         if let Some(alive) = &ix.units[id as usize].alive_guard { alive.store(0, Ordering::SeqCst); }
@@ -958,11 +984,7 @@ pub fn invalidate_for(addr: u64, len: u64, source: &'static str) {
         EXTERNAL_INVALIDATED.store(true, Ordering::Relaxed);
         let registry = blocks.get_or_insert_with(BlockRegistry::default);
         registry.note_external_invalidation(addr, end);
-        registry.external.retain(|&pc, external| {
-            let revoke = external.image.is_none_or(|(lo, hi)| lo < end && hi > addr);
-            if revoke { retired.push((pc, external.host)); }
-            !revoke
-        });
+        registry.retire_external(addr, end, &mut retired);
     }
     if victims.is_empty() && retired.is_empty() { return; }
     if std::env::var_os("ATTESOR_TRACE").is_some() {
@@ -1813,5 +1835,49 @@ mod acceptance_diagnostic_switch_tests {
                 .env(CHILD, expected).env("ATTESOR_JIT_ON", on).env("ATTESOR_JIT_OFF", off).output().unwrap();
             assert!(result.status.success(), "ON={on} OFF={off}: {}{}", String::from_utf8_lossy(&result.stdout), String::from_utf8_lossy(&result.stderr));
         }
+    }
+}
+
+#[cfg(test)]
+mod external_retire_tests {
+    use super::*;
+
+    #[test]
+    fn invalidation_outside_every_image_keeps_entries_and_skips_the_scan() {
+        let mut r = BlockRegistry::default();
+        r.add_external(0x1000, 0xa, Some((0x1000, 0x2000)));
+        r.add_external(0x5000, 0xb, Some((0x5000, 0x6000)));
+        let mut retired = Vec::new();
+        r.retire_external(0x9000, 0xa000, &mut retired); // e.g. a V8 heap munmap
+        assert!(retired.is_empty());
+        assert_eq!(r.external.len(), 2);
+    }
+
+    #[test]
+    fn invalidation_overlapping_an_image_retires_exactly_that_image() {
+        let mut r = BlockRegistry::default();
+        r.add_external(0x1000, 0xa, Some((0x1000, 0x2000)));
+        r.add_external(0x1800, 0xc, Some((0x1000, 0x2000)));
+        r.add_external(0x5000, 0xb, Some((0x5000, 0x6000)));
+        let mut retired = Vec::new();
+        r.retire_external(0x1ff0, 0x2100, &mut retired); // touches only the last bytes of image 1
+        retired.sort_unstable();
+        assert_eq!(retired, vec![(0x1000, 0xa), (0x1800, 0xc)]);
+        assert_eq!(r.external.keys().copied().collect::<Vec<_>>(), vec![0x5000]);
+    }
+
+    #[test]
+    fn image_less_entries_are_retired_by_any_invalidation() {
+        let mut r = BlockRegistry::default();
+        r.add_external(0x1000, 0xa, Some((0x1000, 0x2000)));
+        r.add_external(0x7000, 0xd, None);
+        let mut retired = Vec::new();
+        r.retire_external(0x9000, 0xa000, &mut retired);
+        assert_eq!(retired, vec![(0x7000, 0xd)]);
+        assert_eq!(r.external.len(), 1);
+        // The legacy flag is cleared once they are gone, so the next unrelated invalidation is free.
+        r.retire_external(0x9000, 0xa000, &mut retired);
+        assert_eq!(retired.len(), 1);
+        assert!(!r.external_legacy);
     }
 }
