@@ -93,6 +93,7 @@ pub struct Unit {
     regioncache: bool,
     loopra: bool,
     loopra2: bool,
+    vloop: bool,
     // Private clones only: never published in the JIT registry or AOT index.
     region_labels: HashMap<u64, CodeLabel>,
     pub extra_guest_range: Option<(u64, u64)>,
@@ -317,9 +318,15 @@ struct LoopRa {
     // Union of guest writes emitted for this loop, including unknown helper
     // writes. finish emits cold tails only after this mask is complete.
     dirty: u32,
+    // Experimental fixed V locations on a proven single-block FP loop.
+    // Scratch xmm0..7 remain separate; all public exits materialize Cpu.
+    vreg: [u8; NVREGS],
 }
 
 impl LoopRa {
+    fn vslot(self, n: u32) -> Option<usize> {
+        self.vreg.iter().position(|&r| r as u32 == n)
+    }
     fn slot(self, n: u32) -> Option<usize> {
         self.reg.iter().position(|&r| r as u32 == n)
     }
@@ -329,10 +336,22 @@ impl LoopRa {
                 a.mov(qword_ptr(r15 + xoff(n as u32)), LOOPREGS[s]).unwrap();
             }
         }
+        for (s, n) in self.vreg.into_iter().enumerate() {
+            if n != 0xff {
+                if high_xmm(VREGS[s]) { a.vmovdqu64(xmmword_ptr(r15 + voff(n as u32)), VREGS[s]).unwrap(); }
+                else { a.movdqu(xmmword_ptr(r15 + voff(n as u32)), VREGS[s]).unwrap(); }
+            }
+        }
     }
     fn reload(self, a: &mut CodeAssembler) {
         for (s, n) in self.reg.into_iter().enumerate() {
             if n != 0xff { a.mov(LOOPREGS[s], qword_ptr(r15 + xoff(n as u32))).unwrap(); }
+        }
+        for (s, n) in self.vreg.into_iter().enumerate() {
+            if n != 0xff {
+                if high_xmm(VREGS[s]) { a.vmovdqu64(VREGS[s], xmmword_ptr(r15 + voff(n as u32))).unwrap(); }
+                else { a.movdqu(VREGS[s], xmmword_ptr(r15 + voff(n as u32))).unwrap(); }
+            }
         }
     }
 }
@@ -431,6 +450,7 @@ impl Unit {
             regioncache: regioncache_enabled(),
             loopra: loopra_enabled(),
             loopra2: loopra2_enabled(),
+            vloop: vloop_enabled(),
             region_labels: HashMap::new(),
             extra_guest_range: None,
             region: None,
@@ -961,6 +981,12 @@ impl<'a> E<'a> {
         self.u.vc.stamp[s] = self.u.vc.tick;
     }
     fn vc_alloc(&mut self, n: u32) -> usize {
+        if let Some(s) = self.u.region.and_then(|r| r.vslot(n)) {
+            self.u.vc.reg[s] = n as u8;
+            self.u.vc.dirty[s] = false;
+            self.vc_touch(s);
+            return s;
+        }
         let vc = &self.u.vc;
         let slots = if self.u.avx512 { NVREGS } else { BASE_NVREGS };
         let s = (0..slots).find(|&i| vc.reg[i] == 0xff).unwrap_or_else(|| {
@@ -983,6 +1009,9 @@ impl<'a> E<'a> {
     /// results (`vfill`), never by loading: a 16-byte load right after the two 8-byte stores of an
     /// LDR Dt or FMOV Dd, Xn cannot be store-forwarded and stalls longer than the load it saves.
     fn vsrc(&mut self, n: u32) -> Option<AsmRegisterXmm> {
+        if let Some(s) = self.u.region.and_then(|r| r.vslot(n)) {
+            return Some(VREGS[s]);
+        }
         if self.u.vc_dest.contains(&(n as u8)) {
             return None;
         }
@@ -991,6 +1020,10 @@ impl<'a> E<'a> {
         Some(VREGS[s])
     }
     fn store_v(&mut self, d: u32, x: AsmRegisterXmm) {
+        if let Some(s) = self.u.region.and_then(|r| r.vslot(d)) {
+            self.cache_copy(VREGS[s], x);
+            return;
+        }
         if self.u.dead_v & (1 << d) == 0 {
             a!(self, movdqu(xmmword_ptr(r15 + voff(d)), x));
             self.vfill(d, x);
@@ -1832,6 +1865,11 @@ fn loopra2_enabled() -> bool {
         && std::env::var("ATTESOR_JIT_ON").unwrap_or_default().split(',').any(|g| g == "loopra2"))
 }
 
+fn vloop_enabled() -> bool {
+    static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *ON.get_or_init(|| !jit_off("vloop") && std::env::var("ATTESOR_JIT_ON").unwrap_or_default().split(',').any(|t| t=="vloop"))
+}
+
 /// Experimental write-through natural-loop region; public entries remain canonical.
 fn regioncache_enabled() -> bool {
     static F: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
@@ -1875,6 +1913,44 @@ fn loop_layout<const N: usize>(u: &Unit, pc: u64, read: &dyn Fn(u64) -> Option<u
         }
     }
     None
+}
+
+/// Bounded single-block V write-back contract. Only scalar binary/sqrt and
+/// ordinary single S/D loads/stores can touch V. No vector lanes, conversions,
+/// calls, FPCR writes or extra public entries. Unsupported shapes use baseline.
+fn vloop_layout(u: &Unit, pc: u64, read: &dyn Fn(u64) -> Option<u32>) -> [u8; NVREGS] {
+    let empty = [0xff; NVREGS];
+    if !u.vloop
+        || u.quick || u.no_internal_jumps || u.commpage_checks || disabled_classes() != 0 { return empty; }
+    let mut mask = 0u32;
+    let mut fp = false;
+    for i in 0..MAX_BLOCK_INSNS {
+        let p = pc + i as u64 * 4;
+        if i != 0 && u.labels.contains_key(&p) { return empty; }
+        let Some(w) = read(p) else { return empty; };
+        if is_terminator(w) {
+            // Caller already proved the natural self backedge using loop_layout.
+            let slots = if u.avx512 { NVREGS } else { BASE_NVREGS };
+            if !fp || mask.count_ones() as usize > slots { return empty; }
+            let mut regs = empty;
+            for (s, n) in (0..32).filter(|&n| mask & (1 << n) != 0).enumerate() { regs[s] = n as u8; }
+            return regs;
+        }
+        let scalar_binary = w & 0xff20_0c00 == 0x1e20_0800 && bits(w,23,22) <= 1 && bits(w,15,12) <= 3;
+        let sqrt = w & 0xff3f_fc00 == 0x1e21_c000 && bits(w,23,22) <= 1;
+        if scalar_binary || sqrt {
+            fp = true;
+            mask |= (1 << (w & 31)) | (1 << bits(w,9,5));
+            if scalar_binary { mask |= 1 << bits(w,20,16); }
+        } else if (w >> 25) & 5 == 4 && bit(w,26) != 0 {
+            let single = w & 0x3b00_0000 == 0x3900_0000
+                || w & 0x3b20_0000 == 0x3800_0000
+                || w & 0x3b20_0c00 == 0x3820_0800;
+            if !single || bits(w,31,30) < 2 || bits(w,23,22) > 1 || !flags_safe_passthrough(w) { return empty; }
+            mask |= 1 << (w & 31);
+        } else if !flags_safe_passthrough(w) && !flags_safe_writer(w) { return empty; }
+    }
+    empty
 }
 
 /// AVX permits unaligned 128-bit arithmetic memory operands (without AVX2).
@@ -1971,7 +2047,7 @@ pub(super) fn prepare_bgtrans() {
         loopra_enabled(), regioncache_enabled(), has_avx(), has_fma(),
         has_aes(), has_pclmul(), has_sha(), has_f16c(), loopra2_enabled(),
         has_avx512(), avx512_enabled(), avx512_nan_enabled(), super::fastenc_enabled(),
-        super::loops::census_enabled(), super::cost::probes());
+        super::loops::census_enabled(), super::cost::probes(), vloop_enabled());
 }
 
 /// Translate one basic block starting at `pc` into `u`. The caller must have
@@ -1998,7 +2074,16 @@ pub fn emit_block(u: &mut Unit, pc: u64, read: &dyn Fn(u64) -> Option<u32>) -> u
                 if l.starts.contains(&p) || n == MAX_BLOCK_INSNS { l.starts.insert(p); n = 0; }
                 n += 1;
             }
-            if safe && l.starts.len() <= 32 && l.words.len() <= 256 && l.reducible() && loopra_bisect(pc) {
+            // A GPR-only outer clone otherwise captures an inner V-resident
+            // loop and silently replaces its stronger backedge contract.
+            // Prefer the proven scalar inner loop; do not infer an assignment
+            // across joins or select paths by executable/benchmark identity.
+            let inner_vloop = u.vloop && l.starts.iter().any(|&p| {
+                let snapshot = |at| l.words.get(&at).copied();
+                p != pc && loop_layout::<NLOOPREGS>(u, p, &snapshot).is_some()
+                    && vloop_layout(u, p, &snapshot)[0] != 0xff
+            });
+            if safe && !inner_vloop && l.starts.len() <= 32 && l.words.len() <= 256 && l.reducible() && loopra_bisect(pc) {
                 return emit_multi_region(u, &l, read);
             }
         }
@@ -2025,7 +2110,7 @@ fn emit_multi_region(u: &mut Unit, l: &super::loops::Loop, read: &dyn Fn(u64) ->
     let region = LoopRa { pc: l.header, fast: u.a.create_label(), exit: u.a.create_label(), reg,
         // Every predecessor/iteration can have written any assigned slot.
         // A compile-order dirtiness mask is NOT a dataflow solution at joins.
-        dirty: u32::MAX };
+        dirty: u32::MAX, vreg: [0xff; NVREGS] };
     u.region_exits.push(region);
     let mut saved = Vec::new();
     for &p in &l.starts {
@@ -2090,7 +2175,8 @@ fn emit_block_inner(u: &mut Unit, pc: u64, read: &dyn Fn(u64) -> Option<u32>, mu
             // state is therefore visible only in fatal crash dumps; revisit this
             // feature before implementing resumable guest faults.
             assert!(GUEST_FAULTS_FATAL);
-            let region = multi.unwrap_or_else(|| LoopRa { pc, fast: u.a.create_label(), exit: u.a.create_label(), reg, dirty: 0 });
+            let vreg = if multi.is_none() { vloop_layout(u, pc, read) } else { [0xff; NVREGS] };
+            let region = multi.unwrap_or_else(|| LoopRa { pc, fast: u.a.create_label(), exit: u.a.create_label(), reg, dirty: 0, vreg });
             let fast = region.fast;
             // JIT-only instrumentation: absolute host addresses must never enter
             // an AOT blob. Count executed public entries, not translations.
@@ -3916,6 +4002,18 @@ impl<'a> E<'a> {
                     self.store_v(rt, xmm0);
                 }
                 (2 | 3, true) => {
+                    if let Some(s) = self.u.region.and_then(|r| r.vslot(rt)) {
+                        // The architectural scalar load clears the upper lane.
+                        // Load directly into its mapped location, not xmm0 plus
+                        // a second cache copy. Never widen the memory access.
+                        let dst = VREGS[s];
+                        if high_xmm(dst) {
+                            if kind == 2 { evex!(self, vmovd(dst, dword_ptr(rax))); }
+                            else { evex!(self, vmovq(dst, qword_ptr(rax))); }
+                        } else if kind == 2 { a!(self, movd(dst, dword_ptr(rax))); }
+                        else { a!(self, movq(dst, qword_ptr(rax))); }
+                        return true;
+                    }
                     // through xmm0 (upper part zero) with one 16-byte store, so the value can stay cached
                     if kind == 2 { a!(self, movd(xmm0, dword_ptr(rax))); } else { a!(self, movq(xmm0, qword_ptr(rax))); }
                     self.store_v(rt, xmm0);
@@ -3933,6 +4031,12 @@ impl<'a> E<'a> {
                     }
                     a!(self, mov(qword_ptr(r15 + voff(rt)), rcx));
                     a!(self, mov(qword_ptr(r15 + voff(rt) + 8), 0));
+                }
+                (k @ (2 | 3), false) if self.u.region.and_then(|r| r.vslot(rt)).is_some() => {
+                    let s = self.u.region.unwrap().vslot(rt).unwrap();
+                    self.cache_low64(xmm0, VREGS[s]);
+                    if k == 2 { a!(self, movd(dword_ptr(rax), xmm0)); }
+                    else { a!(self, movq(qword_ptr(rax), xmm0)); }
                 }
                 (k, false) if k < 4 => match k {
                     0 => {
@@ -8321,6 +8425,7 @@ mod fp_pool_tests {
 mod loopra_tests {
     use super::*;
     use attesor_core::cpu::Cpu;
+    use attesor_core::interp;
     const PC: u64 = 0x2000_0000;
 
     fn unit(words: &[u32], entries: &[usize], kind: StubKind, verify: bool, commpage: bool) -> Unit {
@@ -8356,6 +8461,115 @@ mod loopra_tests {
 
     fn cpu() -> Box<Cpu> {
         let mut c = Cpu::new(); crate::jit::setup_cpu(&mut c); c.set_pc(PC); c
+    }
+
+    #[test]
+    fn vloop_mapping_capacity_and_observer_barriers() {
+        if disabled_classes()!=0 {return;}
+        let mut words=vec![0xfd400009]; // high-bank scalar load after allocation
+        for n in 1..24 {words.push(0x1e602800 | (n<<16));} // FADD D0,D0,Dn
+        words.push(0xf1000421); // SUBS X1,X1,#1
+        words.push(0x54000001 | (((-(words.len()as i32))as u32 & 0x7ffff)<<5));
+        let read=|p:u64|p.checked_sub(PC).and_then(|o|words.get((o/4)as usize)).copied();
+        let mut u=Unit::new(StubKind::Patchable,false);u.vloop=true;
+        let l=u.a.create_label();u.labels.insert(PC,l);
+        u.avx512=true;
+        let layout=vloop_layout(&u,PC,&read);
+        assert_eq!(layout,(0..24).map(|x|x as u8).collect::<Vec<_>>().as_slice());
+        assert!(high_xmm(VREGS[layout.iter().position(|&x|x==9).unwrap()]));
+        u.avx512=false;assert_eq!(vloop_layout(&u,PC,&read),[0xff;NVREGS]);
+        u.avx512=true;u.commpage_checks=true;assert_eq!(vloop_layout(&u,PC,&read),[0xff;NVREGS]);
+        u.commpage_checks=false;u.no_internal_jumps=true;assert_eq!(vloop_layout(&u,PC,&read),[0xff;NVREGS]);
+        u.no_internal_jumps=false;
+        let join=u.a.create_label();u.labels.insert(PC+8,join);
+        assert_eq!(vloop_layout(&u,PC,&read),[0xff;NVREGS]);
+        u.labels.remove(&(PC+8));
+        let original=words[1];words[1]=0xd51b4400; // MSR FPCR must reject the contract
+        assert_eq!(vloop_layout(&u,PC,&|p|p.checked_sub(PC).and_then(|o|words.get((o/4)as usize)).copied()),[0xff;NVREGS]);
+        words[1]=original;u.vloop=false;
+        assert_eq!(vloop_layout(&u,PC,&|p|p.checked_sub(PC).and_then(|o|words.get((o/4)as usize)).copied()),[0xff;NVREGS]);
+    }
+
+    #[test]
+    fn vloop_nested_scalar_contract_survives_gpr_outer_allocation() {
+        // Outer count X4; reset inner X3 each iteration. The GPR-only outer
+        // clone must not swallow the inner loop's resident V0/V1 mapping.
+        let words = [0xd2800083,0x14000001,0xfd400001,0x1e612800,
+            0xf1000463,0x54ffffa1,0xf1000484,0x54ffff21,0xfd000040,0xd4001001];
+        if disabled_classes()!=0 {return;}
+        for kind in [StubKind::Plain,StubKind::Patchable] {
+        for resident in [false,true] {
+            let mut u=Unit::new(kind,false);u.loopra=true;u.loopra2=true;u.vloop=resident;
+            for offset in [0,8,24,32] {let label=u.a.create_label();u.labels.insert(PC+offset,label);}
+            let read=|p:u64|p.checked_sub(PC).and_then(|o|words.get((o/4)as usize)).copied();
+            emit_block(&mut u,PC,&read);
+            assert_eq!(u.region_exits.len(),if resident {0}else {1});
+            for offset in [8,24,32] {emit_block(&mut u,PC+offset,&read);}
+            assert!(u.region_exits.iter().any(|r|r.pc==PC+8 && r.vslot(0).is_some()==resident));
+            let (host,_)=assemble(u,0);
+            let source=1.25f64;let mut out=0u64;let mut c=cpu();let mut r=cpu();
+            for s in [&mut c,&mut r] {
+                for i in 0..32 {s.v[i]=[i as u64*37,0xfeed+i as u64];}
+                s.v[0]=[0.5f64.to_bits(),0x1234];s.x[0]=&source as *const _ as u64;
+                s.x[2]=&mut out as *mut _ as u64;s.x[4]=3;
+            }
+            interp::sys_sync_host_fp_mode(0);
+            for _ in 0..256 {
+                let index=((r.pc()-PC)/4)as usize;
+                if matches!(interp::exec(&mut r,words[index]),Err(interp::Exit::Svc(_))) {break;}
+                if r.pc()==PC+index as u64*4 {r.set_pc(r.pc()+4);}
+            }
+            let expected=out;out=0;
+            unsafe {crate::jit::attesor_jit_enter(&mut *c,host);}
+            assert_eq!(out,expected);assert_eq!(out,15.5f64.to_bits());
+            assert_eq!(c.x,r.x);assert_eq!(c.v,r.v);assert_eq!(c.nzcv(),r.nzcv());
+        }}
+    }
+
+    #[test]
+    fn vloop_fp_recurrence_load_store_nan_public_exit_and_fpcr() {
+        // LDR D1,[X0]; LDR D2,[X1]; FMUL D1,D1,D2; FADD D0,D0,D1;
+        // ADD X0,#8; ADD X1,#8; SUBS X3,#1; B.NE header; STR D0,[X2]; SVC.
+        let words = [0xfd400001,0xfd400022,0x1e620821,0x1e612800,
+            0x91002000,0x91002021,0xf1000463,0x54ffff21,0xfd000040,0xd4001001];
+        let on = std::env::var("ATTESOR_JIT_ON").unwrap_or_default().split(',').any(|x| x=="vloop")
+            && !jit_off("vloop") && disabled_classes()==0;
+        for high in [false,true].into_iter().filter(|&h| !h || has_avx512()) {
+        for kind in [StubKind::Plain,StubKind::Patchable] {
+        for exceptional in [false,true] {
+            let mut u=Unit::new(kind,false);u.loopra=true;u.loopra2=false;u.avx512=high;
+            let label=u.a.create_label();u.labels.insert(PC,label);
+            let exit=u.a.create_label();u.labels.insert(PC+32,exit);
+            emit_block(&mut u,PC,&|p|p.checked_sub(PC).and_then(|o|words.get((o/4)as usize)).copied());
+            assert_eq!(u.region_exits[0].vslot(0).is_some(),on);
+            emit_block(&mut u,PC+32,&|p|p.checked_sub(PC).and_then(|o|words.get((o/4)as usize)).copied());
+            let (host,_)=assemble(u,0);
+            let a=[1.0,if exceptional {f64::from_bits(0x7ff0000000000042)} else {-2.0},3.0,-0.0];
+            let b=[2.0,4.0,-5.0,0.0];let mut out=0u64;
+            let mut c=cpu();let mut r=cpu();
+            for s in [&mut c,&mut r] {
+                for i in 0..32 {s.v[i]=[i as u64*7919,0x12340000+i as u64];}
+                s.v[0]=[0.5f64.to_bits(),0xfeed];
+                s.x[0]=a.as_ptr()as u64;s.x[1]=b.as_ptr()as u64;s.x[2]=&mut out as *mut _ as u64;s.x[3]=4;
+            }
+            interp::sys_sync_host_fp_mode(0);
+            for _ in 0..100 {
+                let index=((r.pc()-PC)/4)as usize;
+                if matches!(interp::exec(&mut r,words[index]),Err(interp::Exit::Svc(_))) {break;}
+                if r.pc()==PC+index as u64*4 {r.set_pc(r.pc()+4);}
+            }
+            let expected=out;out=0xdead;
+            interp::sys_sync_host_fp_mode(0);
+            unsafe {crate::jit::attesor_jit_enter(&mut *c,host);}
+            assert_eq!(out,expected,"exceptional={exceptional}");
+            assert_eq!(c.x,r.x);assert_eq!(c.v,r.v);assert_eq!(c.nzcv(),r.nzcv());
+            // A non-native FPCR must exit before modifying even the cached V bank.
+            let mut guarded=cpu();guarded.fpcr=1<<25;guarded.x[3]=1;
+            guarded.v[0]=[0x1234,0x5678];let before=guarded.v;
+            unsafe {crate::jit::attesor_jit_enter(&mut *guarded,host);}
+            assert_eq!(guarded.exit_reason,EXIT_INTERP);assert_eq!(guarded.v,before);
+        }}}
+        interp::sys_sync_host_fp_mode(0);
     }
 
     #[test]
