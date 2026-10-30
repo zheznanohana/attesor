@@ -1,0 +1,47 @@
+name: Rosetta mechanism research
+on:
+  workflow_dispatch:
+  push:
+    branches: [research/rosetta-stage1]
+    paths: ['research/rosetta/**', '.github/workflows/rosetta-research.yml']
+permissions:
+  contents: read
+concurrency:
+  group: rosetta-research-${{ github.ref }}
+  cancel-in-progress: false
+jobs:
+  survey:
+    runs-on: macos-26
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
+        with:
+          persist-credentials: false
+      - name: Native / Rosetta probes and read-only inventory
+        run: python3 research/rosetta/collect.py research-results
+      - name: Pinned Ghidra headless survey (ephemeral only)
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd "$RUNNER_TEMP"
+          curl --fail --location --retry 2 -o ghidra.zip 'https://github.com/NationalSecurityAgency/ghidra/releases/download/Ghidra_12.2_build/ghidra_12.2_PUBLIC_20261016.zip'
+          echo '2c2cd776db3c1f6a097ba418922378ac3649cadd5e844a6f5f088ae628a7be67  ghidra.zip' | shasum -a 256 -c -
+          unzip -q ghidra.zip
+          export JAVA_HOME=$(/usr/libexec/java_home -v 21)
+          mkdir -p "$RUNNER_TEMP/ghidra-projects"
+          target=/usr/libexec/rosetta/runtime
+          "$RUNNER_TEMP/ghidra_12.2_PUBLIC/support/analyzeHeadless" "$RUNNER_TEMP/ghidra-projects" RosettaRuntime \
+            -import "$target" -analysisTimeoutPerFile 240 -max-cpu 2 \
+            -scriptPath "$GITHUB_WORKSPACE/research/rosetta" \
+            -postScript Survey.java "$GITHUB_WORKSPACE/research-results/runtime-survey.txt" \
+            > "$RUNNER_TEMP/ghidra-headless.log" 2>&1
+          test -s "$GITHUB_WORKSPACE/research-results/runtime-survey.txt"
+          grep -E 'ERROR|WARN|REPORT:|Survey.java' "$RUNNER_TEMP/ghidra-headless.log" | tail -30 > "$GITHUB_WORKSPACE/research-results/ghidra-status.txt" || true
+      - name: Upload small text evidence only (one day retention)
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: rosetta-research-text
+          path: research-results/
+          retention-days: 1
+          if-no-files-found: error
