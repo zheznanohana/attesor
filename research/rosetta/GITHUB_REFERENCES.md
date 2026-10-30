@@ -135,3 +135,59 @@ The final regflags screen also regressed qsort4M (1039.1 -> 1133.5 ms)
 and branchy (429.8 -> 469.9 ms); no repeat or default promotion is justified.
 Absolute numbers across batches are not a paired comparison. The dependency
 fix preserves semantics but is not established as a performance improvement.
+
+
+## Codegen74: direct scalar outputs and private-CFG flag edge sinking
+
+Two new exact-token, default-OFF experiments. No default/production install change.
+
+`vscalar` requires `vchain`, AVX and an existing audited V-resident region.
+It uses VEX/EVEX scalar MUL/DIV/ADD/SUB/SQRT with mapped operands. A destination
+that does not alias its inputs is written directly; destructive aliases still
+use XMM0 so the original operands survive cold NaN selection. Existing S/D
+upper-zero proofs determine when a source can be used directly. The cold repair
+contract permits exactly the chosen mapped output in addition to the old scratch
+registers; unrelated cached values/GPRs and a live TBI mask remain protected.
+No FMA, approximate reciprocal, relaxed NaN policy or widened guest access.
+
+`cfgflags` follows NZCV deadness through bounded private GPR CFGs, including
+CB/TB diamonds. Missing/public successors and observers stop the proof. Fused
+setter/branch pairs keep host flags live; serialize canonical NZCV only on a
+selected public exit when every private successor kills it first. This is not
+the earlier compact-LAHF `regflags` experiment: it removes unnecessary work
+rather than storing flags in another representation. Reject packed-flag regions,
+recursive-function regions, non-native/verification/commpage modes and FP CFGs.
+An FPCR guard precedes even a block's first GPR setter, so calling that setter
+an incoming-flag kill would be unsound; a directed counterexample covers this.
+The observed Rosetta IR live-in/live-out metadata motivates doing explicit local
+liveness analysis, not claiming Apple's original algorithm was recovered.
+
+Directed checks (not full acceptance): one scalar test covers 80,000 differential
+cases: S/D, all five operations, destructive/non-destructive aliases, low/high
+XMM, SSE/AVX512 NaN repair, signed zero/subnormal/infinity/NaN payloads, dirty
+upper bits, backedges, plain/patchable exits and FPCR rejection. Two CFG tests
+cover 10,512 terminating ADD/SUB/logic, W/X and condition/diamond cases plus
+observer/budget/FPCR-entry barriers. No new full-workspace or disk-AOT claim.
+The release benchmark binary preceded only the test-case expansion; production
+emitter logic is identical. Exact binary hashes are retained with the raw screens.
+
+Performance, same-host unmodified fixtures, no concurrent build/test:
+
+* vscalar: single N-body screen73.5 ->64.5ms (-12.24% time), native21.5ms,
+  33.33% native. Useful but still far from60%; not a confirmed multi-round gain.
+* cfgflags: sieve initial272.368 ->246.743ms, native153.366ms (62.16%).
+  Only this apparent crossing received two extra confirmation rounds, per owner
+  request. Across all three, control median272.368ms, candidate median249.418ms,
+  native median153.366ms: -8.43% time, 61.49% native by median ratio.
+  Individual round ratios were62.16%,52.08%,64.47%. Preserve the slow round:
+  median crossing is evidence of progress, NOT a stable60% guarantee or completion
+  of the six-workload stage. Cause of the variability is not established.
+* A separate one-round configuration hypothesis disabled bgtrans because its
+  restricted worker cannot form private loops. Sieve255.068 ->253.466ms (-0.63%):
+  no meaningful target gain. Do not disable it by default or claim this explains
+  the variation. Incidental qsort/matmul numbers remain in the raw record.
+
+No repeated full configuration matrix. The remaining targets and both qsort
+sizes still require one common configuration and final correctness/performance
+acceptance. New-contract disk AOT, invalidation/concurrency and full regression
+remain pending before production promotion. All experimental flags remain OFF.

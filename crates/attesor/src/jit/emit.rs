@@ -98,12 +98,14 @@ pub struct Unit {
     vloop: bool,
     vloop2: bool,
     vchain: bool,
+    vscalar: bool,
     // Straight-line scalar-write proofs, S and D respectively. Never seeded
     // from a previous block/backedge: the first public entry must be correct.
     vzero: [u32; 2],
     funra: bool,
     funflags: bool,
     regflags: bool,
+    cfgflags: bool,
     selectra: bool,
     function_entry: Option<u64>,
     // Private clones only: never published in the JIT registry or AOT index.
@@ -159,6 +161,8 @@ pub struct Unit {
     avx512_nan: bool,
     #[cfg(any(debug_assertions, test))]
     cold_ranges: Vec<(std::ops::Range<usize>, bool)>,
+    #[cfg(any(debug_assertions, test))]
+    resident_cold_ranges: Vec<(std::ops::Range<usize>, bool, u32)>,
 }
 
 pub const NCREGS: usize = 5;
@@ -488,10 +492,12 @@ impl Unit {
             vloop: vloop_enabled(),
             vloop2: vloop2_enabled(),
             vchain: vchain_enabled(),
+            vscalar: vscalar_enabled(),
             vzero: [0; 2],
             funra: funra_enabled(),
             funflags: funflags_enabled(),
             regflags: regflags_enabled(),
+            cfgflags: cfgflags_enabled(),
             selectra: selectra_enabled(),
             function_entry: None,
             region_labels: HashMap::new(),
@@ -522,6 +528,8 @@ impl Unit {
             avx512_nan: features.1,
             #[cfg(any(debug_assertions, test))]
             cold_ranges: Vec::new(),
+            #[cfg(any(debug_assertions, test))]
+            resident_cold_ranges: Vec::new(),
         }
     }
 
@@ -710,6 +718,11 @@ macro_rules! pool_op {
 
 #[cfg(any(debug_assertions, test))]
 fn check_cold_registers(instructions: &[iced_x86::Instruction], tbi_mask_live: bool) -> Result<(), String> {
+    check_cold_registers_with_output(instructions,tbi_mask_live,None)
+}
+
+#[cfg(any(debug_assertions, test))]
+fn check_cold_registers_with_output(instructions: &[iced_x86::Instruction], tbi_mask_live: bool, output:Option<u32>) -> Result<(), String> {
     use iced_x86::{InstructionInfoFactory, OpAccess, Register};
     let mut info = InstructionInfoFactory::new();
     for (index, instruction) in instructions.iter().enumerate() {
@@ -719,7 +732,7 @@ fn check_cold_registers(instructions: &[iced_x86::Instruction], tbi_mask_live: b
             }
             let reg = used.register();
             let allowed = if reg.is_vector_register() {
-                reg.number() < 8
+                reg.number() < 8 || output==Some(reg.number() as u32)
             } else {
                 // k1 is a dead scratch at every guest boundary and cold resume.
                 matches!(reg.full_register(), Register::RAX | Register::RCX | Register::RDX | Register::K1)
@@ -1141,9 +1154,47 @@ impl<'a> E<'a> {
         }; }
         match (double,opcode) {
             (true,0) => op!(vmulsd), (false,0) => op!(vmulss),
+            (true,1) => op!(vdivsd), (false,1) => op!(vdivss),
             (true,2) => op!(vaddsd), (false,2) => op!(vaddss),
+            (true,3) => op!(vsubsd), (false,3) => op!(vsubss),
+            (true,4) => op!(vsqrtsd), (false,4) => op!(vsqrtss),
             _ => unreachable!(),
         }
+    }
+    /// Scalar ALU directly between a proven region's V locations. Never destroy
+    /// an original NaN operand before its fixup: aliases still use scratch XMM0.
+    fn resident_scalar(&mut self,opcode:u32,double:bool,d:u32,n:u32,m:Option<u32>)->bool {
+        if !self.u.vscalar||!self.u.vchain||!has_avx() {return false;}
+        let Some(region)=self.u.region else {return false;};
+        let Some(dest_slot)=region.vslot(d) else {return false;};
+        let ns=self.scalar_source(n);let ms=m.map(|r|self.scalar_source(r));
+        let Some(nr)=ns.cached else {return false;};
+        if ms.is_some_and(|s|s.cached.is_none()) {return false;}
+        let independent=d!=n&&m!=Some(d);
+        let dst=if independent {VREGS[dest_slot]}else {xmm0};
+        let mr=ms.and_then(|s|s.cached).unwrap_or(nr);
+        let known=self.u.vzero[double as usize];
+        if known&(1<<n)!=0 {
+            self.fp_register(opcode,double,dst,nr,mr);
+        } else if matches!(opcode,0|2)&&m.is_some_and(|r|known&(1<<r)!=0) {
+            self.fp_register(opcode,double,dst,mr,nr);
+        } else {
+            self.fld_source(xmm0,ns,double);
+            self.fp_register(opcode,double,dst,xmm0,if opcode==4 {xmm0}else {mr});
+        }
+        let cold=self.u.a.create_label();
+        if high_xmm(dst) {
+            if double {evex!(self,vucomisd(dst,dst));}else {evex!(self,vucomiss(dst,dst));}
+        } else if double {a!(self,ucomisd(dst,dst));}else {a!(self,ucomiss(dst,dst));}
+        a!(self,jp(cold));
+        self.cold_path_output(cold,independent.then_some(dst),move |e| {
+            if independent {e.cache_copy(xmm0,dst);}
+            e.scalar_nan(double,ns,ms);
+            if independent {e.cache_copy(dst,xmm0);}
+        });
+        if !independent {self.store_v(d,xmm0);}
+        self.scalar_zero(d,double);
+        true
     }
     /// Keep two separately rounded operations, not an FMA. A NaN anywhere in
     /// MUL -> ADD propagates to the final result, so one hot guard suffices.
@@ -1227,7 +1278,12 @@ impl<'a> E<'a> {
     /// Register contracts are the same as the hot FP helper: only xmm0-xmm7
     /// and rax/rcx/rdx/r11 plus dead opmask k1 may be scratched, with no cache
     /// fills or helper calls. r11 must be preserved while the TBI mask is live.
-    fn cold_path(&mut self, mut cold: CodeLabel, emit: impl FnOnce(&mut E<'_>) + 'static) {
+    fn cold_path(&mut self, cold: CodeLabel, emit: impl FnOnce(&mut E<'_>) + 'static) {
+        self.cold_path_output(cold,None,emit);
+    }
+    /// The optional output is exactly one already-assigned, non-aliasing V
+    /// destination. Other cache/GPR/TBI-mask writes remain forbidden.
+    fn cold_path_output(&mut self, mut cold: CodeLabel, output:Option<AsmRegisterXmm>, emit: impl FnOnce(&mut E<'_>) + 'static) {
         let mut resume = self.u.a.create_label();
         self.u.a.set_label(&mut resume).unwrap();
         let pc = self.pc;
@@ -1244,8 +1300,10 @@ impl<'a> E<'a> {
             {
                 let range = start..e.u.a.instructions().len();
                 #[cfg(debug_assertions)]
-                check_cold_registers(&e.u.a.instructions()[range.clone()], tbi_mask_live).unwrap();
-                e.u.cold_ranges.push((range, tbi_mask_live));
+                check_cold_registers_with_output(&e.u.a.instructions()[range.clone()], tbi_mask_live,
+                    output.map(|r|iced_x86::Register::from(r).number() as u32)).unwrap();
+                if let Some(r)=output {e.u.resident_cold_ranges.push((range,tbi_mask_live,iced_x86::Register::from(r).number() as u32));}
+                else {e.u.cold_ranges.push((range, tbi_mask_live));}
             }
         }));
     }
@@ -1849,6 +1907,28 @@ fn flags_dead_at(mut pc: u64, read: &dyn Fn(u64) -> Option<u32>) -> bool {
     false
 }
 
+/// Every private path must overwrite NZCV before observing it. The reader is
+/// the exact region snapshot: any public/missing successor is live, not a proof.
+/// CB/TB branches do not read NZCV; arbitrary helpers/FP arithmetic do observe
+/// state (including their FPCR guards), so remain barriers here.
+fn private_flags_dead_at(pc:u64,read:&dyn Fn(u64)->Option<u32>)->bool {
+    let mut pending=vec![pc];let mut seen=std::collections::BTreeSet::new();
+    while let Some(p)=pending.pop() {
+        if !seen.insert(p) {continue;}
+        if seen.len()>128 {return false;}
+        let Some(w)=read(p) else {return false;};
+        if writes_all_flags(w)&&flags_safe_writer(w) {continue;}
+        if reads_flags(w) {return false;}
+        if w&0xfc000000==0x14000000||w&0x7e000000==0x34000000||w&0x7e000000==0x36000000 {
+            pending.extend(super::loops::successors(p,w));
+        } else {
+            if is_terminator(w)||!flags_safe_passthrough(w) {return false;}
+            pending.push(p+4);
+        }
+    }
+    true
+}
+
 /// Forward proof stays within this exact public block, including AOT boundaries
 /// and the max-length cut. Unknown encodings, partial writes, helpers and exits
 /// stop it. Only audited scalar templates can consume register-only values:
@@ -2046,6 +2126,11 @@ fn vchain_enabled() -> bool {
     *ON.get_or_init(|| !jit_off("vchain") && std::env::var("ATTESOR_JIT_ON").unwrap_or_default().split(',').any(|t|t=="vchain"))
 }
 
+fn vscalar_enabled() -> bool {
+    static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *ON.get_or_init(|| !jit_off("vscalar") && std::env::var("ATTESOR_JIT_ON").unwrap_or_default().split(',').any(|t|t=="vscalar"))
+}
+
 fn funra_enabled() -> bool {
     static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
     *ON.get_or_init(|| !jit_off("funra") && std::env::var("ATTESOR_JIT_ON").unwrap_or_default().split(',').any(|t|t=="funra"))
@@ -2066,6 +2151,11 @@ fn regflags_enabled() -> bool {
     static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
     *ON.get_or_init(|| !jit_off("regflags") && std::env::var("ATTESOR_JIT_ON").unwrap_or_default().split(',').any(|t|t=="regflags")
         && unsafe {std::arch::x86_64::__cpuid(0x80000000).eax>=0x80000001 && std::arch::x86_64::__cpuid(0x80000001).ecx&1!=0})
+}
+
+fn cfgflags_enabled() -> bool {
+    static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *ON.get_or_init(|| !jit_off("cfgflags") && std::env::var("ATTESOR_JIT_ON").unwrap_or_default().split(',').any(|t|t=="cfgflags"))
 }
 
 /// Experimental write-through natural-loop region; public entries remain canonical.
@@ -2280,7 +2370,7 @@ pub(super) fn prepare_bgtrans() {
         loopra_enabled(), regioncache_enabled(), has_avx(), has_fma(),
         has_aes(), has_pclmul(), has_sha(), has_f16c(), loopra2_enabled(),
         has_avx512(), avx512_enabled(), avx512_nan_enabled(), super::fastenc_enabled(),
-        super::loops::census_enabled(), super::cost::probes(), vloop_enabled(), vloop2_enabled(), vchain_enabled(), funra_enabled(), funflags_enabled(), selectra_enabled(), regflags_enabled());
+        super::loops::census_enabled(), super::cost::probes(), vloop_enabled(), vloop2_enabled(), vchain_enabled(), vscalar_enabled(), funra_enabled(), funflags_enabled(), selectra_enabled(), regflags_enabled(), cfgflags_enabled());
 }
 
 /// Translate one basic block starting at `pc` into `u`. The caller must have
@@ -2343,6 +2433,10 @@ pub fn emit_block(u: &mut Unit, pc: u64, read: &dyn Fn(u64) -> Option<u32>) -> u
 
 fn emit_multi_region(u: &mut Unit, l: &super::loops::Loop, read: &dyn Fn(u64) -> Option<u32>) -> u64 {
     assert!(GUEST_FAULTS_FATAL); // identical fatal-fault contract to phase 1
+    // A block's FPCR entry guard precedes even its first GPR writer. Do not
+    // infer that this writer kills incoming flags before that observer.
+    let cfgflags=u.cfgflags;
+    u.cfgflags &= u.function_entry.is_none() && l.words.values().all(|&w|(w>>25)&7!=7);
     if super::loops::census_enabled() {
         eprintln!("{}-region\t{:x}\t{}\t{}",if u.function_entry.is_some(){"funra"}else{"loopra2"},l.header,l.starts.len(),l.words.len());
     }
@@ -2396,6 +2490,7 @@ fn emit_multi_region(u: &mut Unit, l: &super::loops::Loop, read: &dyn Fn(u64) ->
     }
     u.region_labels.clear();
     u.region = None;
+    u.cfgflags=cfgflags;
     end
 }
 
@@ -2564,6 +2659,17 @@ fn emit_block_inner(u: &mut Unit, pc: u64, read: &dyn Fn(u64) -> Option<u32>, mu
                         // region needs no deferred flag stores on its exit.
                         u.loop_exit_flags = None;
                         DEAD_FLAG_SKIPS.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                    }
+                    if u.cfgflags && !u.region_labels.is_empty() && !u.commpage_checks
+                        && !u.no_internal_jumps && disabled_classes()==0 && u.region.is_some_and(|r|r.packed_flags().is_none()) {
+                        let successors=[target,cur+8];
+                        // A private edge must kill the flags first. Public edges
+                        // still serialize the live producer, after JCC decided
+                        // the edge; goto() returns before serialization privately.
+                        if successors.iter().all(|p|!u.region_labels.contains_key(p)||private_flags_dead_at(*p,read)) {
+                            u.dead_flags=true;
+                            u.loop_exit_flags=successors.iter().any(|p|!u.region_labels.contains_key(p)).then_some(kind);
+                        }
                     }
                 }
             }
@@ -5477,6 +5583,7 @@ impl<'a> E<'a> {
                 return false;
             }
             let double = ftype == 1;
+            if self.resident_scalar(opcode,double,rd,rn,Some(rm)) {return true;}
             let cm = self.scalar_source(rm).cached;
             self.fld_scalar(xmm0, rn, double);
             if let Some(c) = cm.filter(|&c| high_xmm(c)) {
@@ -5529,6 +5636,7 @@ impl<'a> E<'a> {
         // FSQRT
         if insn & 0xFF3F_FC00 == 0x1E21_C000 && ftype <= 1 {
             let double = ftype == 1;
+            if self.resident_scalar(4,double,rd,rn,None) {return true;}
             self.fld_scalar(xmm0, rn, double);
             if double {
                 a!(self, sqrtsd(xmm0, xmm0));
@@ -8773,6 +8881,125 @@ mod loopra_tests {
 
     fn cpu() -> Box<Cpu> {
         let mut c = Cpu::new(); crate::jit::setup_cpu(&mut c); c.set_pc(PC); c
+    }
+
+    #[test]
+    fn cfgflags_edge_sink_conditions_private_diamonds_and_public_state() {
+        use iced_x86::Mnemonic;
+        if disabled_classes()!=0 {return;}
+        let mut checked=0;
+        for kind in [StubKind::Plain,StubKind::Patchable] {
+        for on in [false,true] {for cond in 0..14 {for wide in [false,true] {
+        for (writer,flag_kind) in [(0x6b01001fu32,FuseKind::Sub),(0x2b01001f,FuseKind::Add),(0x6a01001f,FuseKind::Logic)] {
+            // Setter; B.cond public; CBZ to join; ADD; join: ADD; B header; SVC.
+            let words=[writer|((wide as u32)<<31),0x540000a0|cond,0xb4000042,0x91000463,0x91000400,0x17fffffb,0xd4001001];
+            let read=|p:u64|p.checked_sub(PC).and_then(|v|words.get((v/4)as usize)).copied();
+            let mut u=Unit::new(kind,false);u.loopra=true;u.loopra2=true;u.cfgflags=on;u.regflags=false;
+            for p in [PC,PC+24] {let l=u.a.create_label();u.labels.insert(p,l);}
+            emit_block(&mut u,PC,&read);emit_block(&mut u,PC+24,&read);
+            assert!(!u.region_exits.is_empty());
+            let inst=u.a.instructions();
+            let branch=inst.iter().position(|i|i.flow_control()==iced_x86::FlowControl::ConditionalBranch).unwrap();
+            let store=inst.iter().position(|i|i.mnemonic()==Mnemonic::Sets).unwrap();
+            assert_eq!(store>branch,on&&x86_cc(flag_kind,cond).is_some(),"kind={flag_kind:?} cond={cond}");
+            let(host,_)=assemble(u,0);
+            for a in [0,1,5,u64::MAX,1<<63] {for b in [0,1,5,u64::MAX,1<<63] {for c2 in [0,1] {
+                let mut c=cpu();c.x[0]=a;c.x[1]=b;c.x[2]=c2;c.x[3]=0xfedcba9800000000;c.set_nzcv(9);
+                let mut reference=cpu();reference.x=c.x;reference.set_nzcv(9);let mut finished=false;
+                for _ in 0..128 {let p=reference.pc();let w=read(p).unwrap();
+                    if matches!(interp::exec(&mut reference,w),Err(interp::Exit::Svc(_))) {finished=true;break;}
+                    if reference.pc()==p {reference.set_pc(p+4);}}
+                if !finished {continue;}
+                unsafe {crate::jit::attesor_jit_enter(&mut *c,host);}
+                assert_eq!(c.x,reference.x,"on={on} cond={cond} a={a:x} b={b:x}");
+                assert_eq!(c.nzcv(),reference.nzcv());checked+=1;
+            }}}
+        }}}}}
+        eprintln!("CFG flag sink cases={checked}");
+    }
+
+    #[test]
+    fn cfgflags_observer_budget_and_fpcr_entry_barriers() {
+        for observer in [0xd4001001,0xd53b4200,0x9a010000,0x1e612000,0x1e612800] {
+            let words=[observer,0xeb01001f];
+            assert!(!private_flags_dead_at(PC,&|p|p.checked_sub(PC).and_then(|v|words.get((v/4)as usize)).copied()));
+        }
+        let long=vec![0xd503201fu32;129];
+        assert!(!private_flags_dead_at(PC,&|p|p.checked_sub(PC).and_then(|v|long.get((v/4)as usize)).copied()));
+        // The private body starts with a writer, but its FPCR guard precedes it.
+        let words=[0xeb01001f,0x54000080,0xeb03005f,0x1e612800,0x17fffffc,0xd4001001];
+        let read=|p:u64|p.checked_sub(PC).and_then(|v|words.get((v/4)as usize)).copied();
+        let mut u=Unit::new(StubKind::Plain,false);u.loopra=true;u.loopra2=true;u.cfgflags=true;u.regflags=false;
+        for p in [PC,PC+20] {let l=u.a.create_label();u.labels.insert(p,l);}
+        emit_block(&mut u,PC,&read);emit_block(&mut u,PC+20,&read);
+        assert!(!u.region_exits.is_empty());let(host,_)=assemble(u,0);
+        let mut c=cpu();c.fpcr=1<<25;c.x[0]=0;c.x[1]=1;c.x[2]=0;c.x[3]=0;
+        unsafe {crate::jit::attesor_jit_enter(&mut *c,host);}
+        assert_eq!(c.exit_reason,EXIT_INTERP);assert_eq!(c.pc(),PC+8);assert_eq!(c.nzcv(),0b1000);
+    }
+
+    #[test]
+    fn vscalar_direct_alias_nan_width_high_and_flags() {
+        if !has_avx()||disabled_classes()!=0 {return;}
+        let mut cases=0;
+        for double in [false,true] {
+        let patterns:Vec<u64>=if double {vec![0,0x8000000000000000,1,0x3ff0000000000000,
+            0x7fefffffffffffff,0x7ff0000000000000,0xfff0000000000000,
+            0x7ff8000000000042,0x7ff0000000000073,0xfff0000000000084]}
+            else {vec![0,0x80000000,1,0x3f800000,0x7f7fffff,0x7f800000,0xff800000,0x7fc00042,0x7f800073,0xff800084]};
+        for high in [false,true].into_iter().filter(|&h|!h||has_avx512()) {
+        for nan512 in [false,true].into_iter().filter(|&h|!h||has_avx512()) {
+        for kind in [StubKind::Plain,StubKind::Patchable] {
+        for known in [false,true] {
+        for opcode in 0..5 {
+        for(d,n,m)in[(0,1,2),(1,1,2),(2,1,2),(1,1,1),(0,1,1)] {
+            let shift=if high {22}else {0};let(d,n,m)=(d+shift,n+shift,m+shift);
+            let ty=(double as u32)<<22;
+            let load=|reg:u32,base:u32|(if double {0xfd400000}else {0xbd400000})|(base<<5)|reg;
+            let mut words=Vec::new();
+            if high {for r in 0..8 {words.push(load(r,2));}}
+            if known {words.push(load(n,0));words.push(load(m,1));}
+            let alu=if opcode==4 {0x1e21c000|ty|(n<<5)|d}
+                else {0x1e200800|ty|(opcode<<12)|(m<<16)|(n<<5)|d};
+            words.push(alu);words.push(0xf100054a);
+            words.push(0x54000001|((((-(words.len()as i32))as u32)&0x7ffff)<<5));
+            let exit=PC+words.len()as u64*4;words.push(0xd4001001);
+            let read=|p:u64|p.checked_sub(PC).and_then(|v|words.get((v/4)as usize)).copied();
+            let mut u=Unit::new(kind,false);u.loopra=true;u.loopra2=false;u.vloop=true;u.vchain=true;u.vscalar=true;
+            u.avx512=high;u.avx512_nan=nan512;
+            for p in [PC,exit] {let l=u.a.create_label();u.labels.insert(p,l);}
+            emit_block(&mut u,PC,&read);emit_block(&mut u,exit,&read);
+            assert!(u.region_exits[0].vslot(d).is_some());
+            let independent=d!=n&&(opcode==4||d!=m);
+            assert_eq!(!u.resident_cold_ranges.is_empty(),independent);
+            for(range,live,out)in &u.resident_cold_ranges {
+                check_cold_registers_with_output(&u.a.instructions()[range.clone()],*live,Some(*out)).unwrap();
+                assert!(check_cold_registers(&u.a.instructions()[range.clone()],*live).is_err());
+            }
+            let(host,_)=assemble(u,0);
+            for &a in &patterns {for &b in &patterns {
+                let mut c=cpu();
+                for r in 0..32 {c.v[r]=[0xfeedbeef00000000+r as u64,0x1234567800000000+r as u64];}
+                c.v[n as usize][0]=if double {a}else {0xdeadbeef00000000|a};
+                c.v[m as usize][0]=if double {b}else {0xdeadbeef00000000|b};
+                let padding=if double {1.25f64.to_bits()}else {1.25f32.to_bits()as u64};
+                c.x[0]=&a as *const _ as u64;c.x[1]=&b as *const _ as u64;c.x[2]=&padding as *const _ as u64;
+                c.x[10]=1+(a&1);
+                let mut reference=cpu();reference.x=c.x;reference.v=c.v;
+                interp::sys_sync_host_fp_mode(0);
+                for _ in 0..96 {let p=reference.pc();let w=read(p).unwrap();
+                    if matches!(interp::exec(&mut reference,w),Err(interp::Exit::Svc(_))) {break;}
+                    if reference.pc()==p {reference.set_pc(p+4);}}
+                interp::sys_sync_host_fp_mode(0);
+                unsafe {crate::jit::attesor_jit_enter(&mut *c,host);}
+                assert_eq!(c.v,reference.v,"D={double} high={high} nan512={nan512} known={known} op={opcode} dnm={d},{n},{m} ab={a:x},{b:x}");
+                assert_eq!(c.x,reference.x);assert_eq!(c.nzcv(),reference.nzcv());cases+=1;
+            }}
+            let mut guarded=cpu();guarded.fpcr=1<<25;guarded.x[10]=1;guarded.v[0]=[0x1234,0x5678];let before=guarded.v;
+            unsafe {crate::jit::attesor_jit_enter(&mut *guarded,host);}
+            assert_eq!(guarded.exit_reason,EXIT_INTERP);assert_eq!(guarded.pc(),PC);assert_eq!(guarded.v,before);
+        }}}}}}}
+        interp::sys_sync_host_fp_mode(0);eprintln!("resident scalar directed cases={cases}");
     }
 
     #[test]
