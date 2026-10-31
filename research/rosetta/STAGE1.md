@@ -104,3 +104,12 @@ header packing first appeared -7.36%, but three-round median -3.57% included a
 +2.67% regression, so OFF. Exact native MOV flag-fusion carrier then screened
 +5.96% slower, so OFF without repetition. Selected profile remains through
 funstack98. Do not turn these trials into production gains or sum old batches.
+
+## Codegen101 / guarded recursive call-free path candidate
+
+[RECLEAF101.md](RECLEAF101.md): original guest frames/computation retained;
+nonleaf/full native RAS retains old calls, inline return keeps raw LR/epoch
+checks.12 focused tests pass. Corrected release fib median14.409->13.333ms
+(-7.47%),39.38% native; paired gains16.00/7.11/0.65% are variable. Provisional
+experimental candidate only; no production change/full common-config60 claim.
+Initial release-only assembler label failure is preserved, not scored.
