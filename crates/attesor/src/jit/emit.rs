@@ -165,6 +165,8 @@ pub struct Unit {
     fpflags_sinks:u64,
     leafra: bool,
     leafinline: bool,
+    inlinegp:bool,
+    inlinegp_emissions:u64,
     leafflags: bool,
     inline_flag_continuations: HashMap<u64,Option<u32>>,
     inline_flag_elisions: u64,
@@ -614,6 +616,7 @@ impl Unit {
             fpflags_sinks:0,
             leafra: leafra_enabled(),
             leafinline: leafinline_enabled(),
+            inlinegp:inlinegp_enabled(),inlinegp_emissions:0,
             leafflags: leafflags_enabled(),
             inline_flag_continuations: HashMap::new(),
             inline_flag_elisions: 0,
@@ -2480,6 +2483,11 @@ fn vtrace_enabled() -> bool {
 
 fn inline_epoch_check(u:&Unit)->bool {u.callret||ibtc2_enabled()}
 
+fn inlinegp_enabled()->bool {
+    static F:std::sync::OnceLock<bool>=std::sync::OnceLock::new();
+    *F.get_or_init(||!jit_off("inlinegp")&&std::env::var("ATTESOR_JIT_ON").unwrap_or_default().split(',').any(|g|g=="inlinegp"))
+}
+
 pub(super) fn leafflags_enabled()->bool {
     static F:std::sync::OnceLock<bool>=std::sync::OnceLock::new();
     *F.get_or_init(||!jit_off("leafflags")&&std::env::var("ATTESOR_JIT_ON").unwrap_or_default().split(',').any(|g|g=="leafflags"))
@@ -2760,7 +2768,7 @@ pub(super) fn prepare_bgtrans() {
         loopra_enabled(), regioncache_enabled(), has_avx(), has_fma(),
         has_aes(), has_pclmul(), has_sha(), has_f16c(), loopra2_enabled(),
         has_avx512(), avx512_enabled(), avx512_nan_enabled(), super::fastenc_enabled(),
-        super::loops::census_enabled(), super::cost::probes(), vloop_enabled(), vloop2_enabled(), vchain_enabled(), vscalar_enabled(), funra_enabled(), funflags_enabled(), selectra_enabled(), regflags_enabled(), cfgflags_enabled(), xspill_enabled(), fmovra_enabled(), vpair_enabled(), vtrace_enabled(), vbatch_enabled(), bytestream_enabled(), recleaflazy_enabled(), recleaf_enabled(), movflags_enabled(), funedge_enabled(), funstack_enabled(), foldaddr_enabled(), fpflags_enabled(), fpguard_enabled(), fpstable_enabled(), addrhoist_enabled(), leafra_enabled(), csetfast_enabled(), csetpair_enabled(), leafinline_enabled(), leafflags_enabled(), super::bliccache::enabled());
+        super::loops::census_enabled(), super::cost::probes(), vloop_enabled(), vloop2_enabled(), vchain_enabled(), vscalar_enabled(), funra_enabled(), funflags_enabled(), selectra_enabled(), regflags_enabled(), cfgflags_enabled(), xspill_enabled(), fmovra_enabled(), vpair_enabled(), vtrace_enabled(), vbatch_enabled(), inlinegp_enabled(), bytestream_enabled(), recleaflazy_enabled(), recleaf_enabled(), movflags_enabled(), funedge_enabled(), funstack_enabled(), foldaddr_enabled(), fpflags_enabled(), fpguard_enabled(), fpstable_enabled(), addrhoist_enabled(), leafra_enabled(), csetfast_enabled(), csetpair_enabled(), leafinline_enabled(), leafflags_enabled(), super::bliccache::enabled());
 }
 
 /// Translate one basic block starting at `pc` into `u`. The caller must have
@@ -4546,11 +4554,36 @@ impl<'a> E<'a> {
         let deferred=if self.u.leafflags&&!inline_epoch_check(self.u)&&self.u.inline_flag_continuations.contains_key(&call_pc) {
             p.final_fused_cmp()
         }else {None};
+        // A bounded local assignment, not another standalone leaf/RET tier.
+        // Guard misses still see PRE-call state. All leaf effects are flushed
+        // before the existing post-return epoch guard or continuation observer.
+        let local_gp=self.u.inlinegp&&self.u.region.is_none()&&self.u.loop_cache.is_none()
+            &&!self.u.no_internal_jumps&&!self.u.commpage_checks&&disabled_classes()==0;
+        let native_start=self.u.a.instructions().len();let fallback_before=self.u.insns_fallback;
+        if local_gp {
+            // RET itself reads LR, but is not emitted by this exact inline leaf.
+            // Keep LR mapped/reloaded if ANY actual body member reads it.
+            let body_lr=words[..words.len()-1].iter().any(|&(_,w)|w!=0xd503201f&&cache_access(w).xr&(1<<30)!=0);
+            let used=p.used&if body_lr {u32::MAX}else {!(1<<30)};
+            assert!(used.count_ones()<=NLOOPREGS as u32);
+            let mut reg=[0xff;NLOOPREGS];for(s,n)in (0..32).filter(|&n|used&(1<<n)!=0).enumerate() {reg[s]=n as u8;}
+            let r=LoopRa{pc:call_pc,fast:self.new_label(),exit:self.new_label(),reg,dirty:0,vreg:[0xff;NVREGS],xreg:[0xff;NVREGS],flags:0xff};
+            r.reload_mask(&mut self.u.a,p.livein&used);self.u.region_exits.push(r);self.u.region=Some(r);
+        }
         for (i,&(at,w)) in words.iter().enumerate().take(words.len()-1) {
             self.u.look=words[i+1..].iter().map(|&(_,w)|w).collect();
             self.u.cache_uses=cache_next_uses(&self.u.look);self.u.dead_flags=deferred==Some(at);self.u.dead_v=0;
             let fuse_in=self.u.fuse.take();let mut e=E{u:self.u,pc:at,fuse_in,scalar_inputs:None};
             assert!(e.translate(w),"exact inline leaf whitelist must be native");
+        }
+        if local_gp {
+            assert!(GUEST_FAULTS_FATAL);
+            assert_eq!(self.u.insns_fallback,fallback_before);
+            assert!(!self.u.a.instructions()[native_start..].iter().any(|i|i.mnemonic()==iced_x86::Mnemonic::Call),"local inline GP scope acquired a helper");
+            let r=self.u.region.take().unwrap();r.writeback(&mut self.u.a);
+            let saved=self.u.region_exits.pop().unwrap();assert_eq!(saved.dirty,r.dirty);
+            assert_eq!(r.dirty&!p.written,0);self.u.inlinegp_emissions+=1;
+            if std::env::var_os("ATTESOR_INLINEGP_LOG").is_some() {eprintln!("inlinegp-leaf\t{call_pc:x}\t{target:x}\t{}",p.words.len());}
         }
         self.u.insns_translated+=p.words.len()as u64;self.u.look=look;self.u.fuse=None;self.u.dead_flags=false;
         self.rc_clear();self.u.notbi.clear();
@@ -10008,6 +10041,46 @@ mod loopra_tests {
         let mut c=cpu();c.x[22]=PC+0x7000;c.x[30]=0xabcdef;
         unsafe {crate::jit::attesor_jit_enter(&mut *c,host);}
         assert_eq!(c.exit_reason,EXIT_BLICCACHE);assert_eq!(c.exit_data,PC);assert_eq!(c.pc(),PC+0x7000);assert_eq!(c.x[30],PC+4);
+    }
+
+
+    #[test]
+    fn inlinegp_canonical_short_leaf_all_state_and_precall_guards() {
+        if disabled_classes()!=0||!super::super::precise_invalidation_enabled(){return;}
+        let mut checked=0;
+        for wide in [false,true] {for read_lr in [false,true] {for after in 0..3 {for callret in [false,true] {
+            let target=PC+0x4000;let site=PC+12;let sf=(wide as u32)<<31;
+            let mut leaf=vec![if wide {0xf9400008}else {0xb9400008},if wide {0xf9400029}else {0xb9400029},sf|0x6b09011f,sf|0x1a9fd7e8,sf|0x5a9fa100];
+            if read_lr {leaf.push(0xaa1e03ec);}leaf.push(0xd65f03c0);
+            let mut words=vec![0xf9000272,0xaa1403e0,0xaa1503e1,0xd63f0adf];
+            let entries=match after {
+                0=>{words.extend([0x7100001f,0x5400006c,0x52800170,0x14000002,0x528002d0,0xd4001001]);vec![0,4,6,8,9]},
+                1=>{words.extend([0x36f80060,0x52800170,0x14000002,0x528002d0,0xd4001001]);vec![0,4,5,7,8]},
+                _=>{words.extend([0x9a8ea1ad,0xd4001001]);vec![0,4,5]},
+            };
+            let read=|p:u64|if p>=target {leaf.get(((p-target)/4)as usize).copied()}else {p.checked_sub(PC).and_then(|o|words.get((o/4)as usize)).copied()};
+            super::super::bliccache::set_hint_for_test(site,target);
+            let mut u=Unit::new(StubKind::Patchable,false);u.inlinegp=true;u.leafinline=true;u.leafflags=true;u.loopra=true;u.loopra2=true;u.inline_ok=true;u.callret=callret;u.funra=false;u.leafra=false;
+            for &i in &entries {let l=u.a.create_label();u.labels.insert(PC+4*i,l);}
+            for &i in &entries {emit_block(&mut u,PC+4*i,&read);}
+            assert_eq!(u.inlinegp_emissions,1,"wide={wide} lr={read_lr} after={after}");assert!(u.region_exits.is_empty(),"local scope must not leak an assignment");assert!(u.region.is_none());assert_eq!(u.insns_fallback,0);
+            let(host,_)=assemble(u,0);
+            for guard in 0..3 {for initial in 0..16 {for (a,b)in [(0u64,0u64),(0,u64::MAX),(u64::MAX,1),(0x80000000,0x7fffffff)] {for tagged in [false,true] {
+                let epoch=std::sync::atomic::AtomicU64::new(1);let data=[a,b];let before=data;
+                let mut c=cpu();for n in 0..32 {c.x[n]=0xfedc123480000000+n as u64*31;c.v[n]=[0x7ff0000000000042+n as u64,0xdeadbeef00000000+n as u64];}
+                c.x[18]=if guard==2 {2}else {1};c.x[19]=&epoch as *const _ as u64;c.x[20]=data.as_ptr()as u64|if tagged {0xab00000000000000}else {0};c.x[21]=unsafe {data.as_ptr().add(1)}as u64|if tagged {0xff00000000000000}else {0};c.x[22]=target+if guard==1 {4}else {0};
+                c.fpcr=(((initial%4)as u64)<<22)|if initial&4!=0 {1<<24}else {0}|if initial&8!=0 {1<<25}else {0};c.fpsr=0x0800009f;c.set_nzcv(initial);
+                let mut r=cpu();r.x=c.x;r.v=c.v;r.fpcr=c.fpcr;r.fpsr=c.fpsr;r.set_nzcv(initial);let mut ended=false;
+                for _ in 0..64 {let at=r.pc();if guard!=0&&at==site {ended=true;break;}
+                    match interp::exec(&mut r,read(at).unwrap()) {Ok(())=>{},Err(interp::Exit::Svc(0x80))=>{ended=true;break;},Err(e)=>panic!("{e:?}")}
+                }assert!(ended);
+                epoch.store(1,std::sync::atomic::Ordering::SeqCst);c.epoch_ptr=&epoch as *const _ as u64;
+                unsafe {crate::jit::attesor_jit_enter(&mut *c,host);}
+                assert_eq!(c.x,r.x,"wide={wide} lr={read_lr} after={after} callret={callret} guard={guard} flags={initial}");assert_eq!(c.v,r.v);assert_eq!(c.nzcv(),r.nzcv());assert_eq!(c.fpcr,r.fpcr);assert_eq!(c.fpsr,r.fpsr);assert_eq!(c.pc(),r.pc());assert_eq!(data,before);
+                assert_eq!(c.exit_reason,match guard {0=>EXIT_SVC,1=>EXIT_LEAFINLINE_MISS,_=>EXIT_CONTINUE});assert_eq!(epoch.load(std::sync::atomic::Ordering::SeqCst),if guard==2 {2}else {1});checked+=1;
+            }}}}
+        }}}}
+        eprintln!("inlinegp full-state cases={checked}");
     }
 
     #[test]
