@@ -6,7 +6,7 @@ use super::*;
 use std::collections::BTreeMap;
 const MASK:u64=0x00ff_ffff_ffff_ffff;
 pub(super) struct Plan {words:BTreeMap<u64,u32>,sites:HashMap<u64,u32>,lo:i64,hi:i64}
-fn pair_word(w:u32)->bool {
+pub(super) fn pair_word(w:u32)->bool {
     w&0x3a000000==0x28000000 && w&0xc4000000==0x80000000
         && bits(w,9,5)==31 && bits(w,24,23)!=0
         && !(bit(w,22)!=0 && w&31==bits(w,14,10))
@@ -67,7 +67,7 @@ pub(super) fn emit(u:&mut Unit,pc:u64,p:Plan)->u64 {
     // Compile-time state from FAST must NOT flow into a mutually exclusive SLOW.
     u.region=Some(r);u.rc=RegCache::new();u.vc=VCache::new();u.vzero=[0;2];u.fuse=None;
     u.tbi_mask_live=mask_live;u.look=look;u.rc_frozen=false;u.dead_flags=false;
-    u.loop_exit_flags=None;u.loop_exit_compare=None;
+    u.loop_exit_flags=None;u.loop_exit_compare=None;u.pending_funedge=None;
     if u.notbi_enabled {u.notbi.clear();}
     let start=u.a.instructions().len();let slow_end=emit_block_body(u,pc,&read,None,false,start);
     assert_eq!(fast_end,slow_end);assert_eq!(u.insns_translated-translated,fast_count*2);

@@ -29,6 +29,8 @@ mod fp_batch;
 mod fold_addr;
 #[path = "fun_stack.rs"]
 mod fun_stack;
+#[path = "fun_edges.rs"]
+mod fun_edges;
 #[path = "fp_flags.rs"]
 mod fp_flags;
 #[path = "addr_hoist.rs"]
@@ -127,6 +129,10 @@ pub struct Unit {
     vpair: bool,
     vtrace: bool,
     vbatch:bool,
+    funedge:bool,
+    funedge_analysis:fun_edges::Analysis,
+    pending_funedge:Option<fun_edges::Edge>,
+    funedge_emissions:u64,
     funstack:bool,
     funstack_sites:HashMap<u64,u32>,
     funstack_emissions:u64,
@@ -572,6 +578,7 @@ impl Unit {
             vpair: vpair_enabled(),
             vtrace: vtrace_enabled(),
             vbatch:vbatch_enabled(),
+            funedge:funedge_enabled(),funedge_analysis:fun_edges::Analysis::default(),pending_funedge:None,funedge_emissions:0,
             funstack:funstack_enabled(),funstack_sites:HashMap::new(),funstack_emissions:0,
             foldaddr:foldaddr_enabled(),
             foldaddr_emissions:0,
@@ -2390,6 +2397,11 @@ fn addrhoist_enabled()->bool {
     *F.get_or_init(||!jit_off("addrhoist")&&std::env::var("ATTESOR_JIT_ON").unwrap_or_default().split(',').any(|g|g=="addrhoist"))
 }
 
+fn funedge_enabled()->bool {
+    static F:std::sync::OnceLock<bool>=std::sync::OnceLock::new();
+    *F.get_or_init(||!jit_off("funedge")&&std::env::var("ATTESOR_JIT_ON").unwrap_or_default().split(',').any(|g|g=="funedge"))
+}
+
 fn funstack_enabled()->bool {
     static F:std::sync::OnceLock<bool>=std::sync::OnceLock::new();
     *F.get_or_init(||!jit_off("funstack")&&std::env::var("ATTESOR_JIT_ON").unwrap_or_default().split(',').any(|g|g=="funstack"))
@@ -2707,7 +2719,7 @@ pub(super) fn prepare_bgtrans() {
         loopra_enabled(), regioncache_enabled(), has_avx(), has_fma(),
         has_aes(), has_pclmul(), has_sha(), has_f16c(), loopra2_enabled(),
         has_avx512(), avx512_enabled(), avx512_nan_enabled(), super::fastenc_enabled(),
-        super::loops::census_enabled(), super::cost::probes(), vloop_enabled(), vloop2_enabled(), vchain_enabled(), vscalar_enabled(), funra_enabled(), funflags_enabled(), selectra_enabled(), regflags_enabled(), cfgflags_enabled(), xspill_enabled(), fmovra_enabled(), vpair_enabled(), vtrace_enabled(), vbatch_enabled(), funstack_enabled(), foldaddr_enabled(), fpflags_enabled(), fpguard_enabled(), fpstable_enabled(), addrhoist_enabled(), leafra_enabled(), csetfast_enabled(), csetpair_enabled(), leafinline_enabled(), leafflags_enabled(), super::bliccache::enabled());
+        super::loops::census_enabled(), super::cost::probes(), vloop_enabled(), vloop2_enabled(), vchain_enabled(), vscalar_enabled(), funra_enabled(), funflags_enabled(), selectra_enabled(), regflags_enabled(), cfgflags_enabled(), xspill_enabled(), fmovra_enabled(), vpair_enabled(), vtrace_enabled(), vbatch_enabled(), funedge_enabled(), funstack_enabled(), foldaddr_enabled(), fpflags_enabled(), fpguard_enabled(), fpstable_enabled(), addrhoist_enabled(), leafra_enabled(), csetfast_enabled(), csetpair_enabled(), leafinline_enabled(), leafflags_enabled(), super::bliccache::enabled());
 }
 
 /// Translate one basic block starting at `pc` into `u`. The caller must have
@@ -2876,6 +2888,11 @@ fn emit_multi_region(u: &mut Unit, l: &super::loops::Loop, read: &dyn Fn(u64) ->
         u.region_labels.insert(p, label);
         if p != l.header { saved.push((p, u.labels.insert(p, label))); }
     }
+    u.funedge_analysis=if u.funedge && u.function_entry==Some(l.header)
+        && region.packed_flags().is_some() && !u.no_internal_jumps && !u.commpage_checks
+        && disabled_classes()==0 && u.inline_leaf_calls.is_empty() && !super::cost::probes() {
+        fun_edges::analyze(l)
+    }else {fun_edges::Analysis::default()};
     let lo = *l.words.first_key_value().unwrap().0;
     let hi = *l.words.last_key_value().unwrap().0 + 4;
     u.extra_guest_range = Some(u.extra_guest_range.map_or((lo, hi), |(a,b)| (a.min(lo),b.max(hi))));
@@ -2892,12 +2909,14 @@ fn emit_multi_region(u: &mut Unit, l: &super::loops::Loop, read: &dyn Fn(u64) ->
     }
     u.region_labels.clear();
     u.region = None;
+    u.funedge_analysis=fun_edges::Analysis::default();u.pending_funedge=None;
     u.cfgflags=cfgflags;
     end
 }
 
 fn emit_block_inner(u: &mut Unit, pc: u64, read: &dyn Fn(u64) -> Option<u32>, multi: Option<LoopRa>) -> u64 {
     super::loops::census(pc, read);
+    u.pending_funedge=None;
     u.fuse = None;
     u.loop_cache = None;
     u.region = multi;
@@ -3133,6 +3152,11 @@ fn emit_block_body(u:&mut Unit,pc:u64,read:&dyn Fn(u64)->Option<u32>,fp_sink:Opt
                         u.loop_exit_flags = None;
                         DEAD_FLAG_SKIPS.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
                     }
+                    if let Some(edge)=u.funedge_analysis.edges.get(&cur).copied() {
+                        assert_eq!(edge.cmp,insn);assert_eq!(edge.branch,nx);
+                        u.dead_flags=true;u.loop_exit_flags=None;u.loop_exit_compare=None;
+                        u.pending_funedge=Some(edge);
+                    }
                     if u.cfgflags && !u.region_labels.is_empty() && !u.commpage_checks
                         && !u.no_internal_jumps && disabled_classes()==0 && u.region.is_some_and(|r|r.packed_flags().is_none()) {
                         let successors=[target,cur+8];
@@ -3215,6 +3239,16 @@ fn emit_block_body(u:&mut Unit,pc:u64,read:&dyn Fn(u64)->Option<u32>,fp_sink:Opt
         e.u.dead_v = 0;
         e.u.vc_dest = [0xff; 2];
         let called = e.u.a.instructions()[code_start..].iter().any(|i| i.mnemonic() == iced_x86::Mnemonic::Call);
+        if let Some(&word)=e.u.funedge_analysis.proof.get(&cur) {
+            // Check every captured proof member against actual lowering. A
+            // future template introducing a helper must not silently keep proof.
+            assert_eq!(word,insn);assert!(translated);
+            assert!(!called||insn&0xfc000000==0x94000000,"funedge native proof acquired a helper");
+        }
+        if e.u.pending_funedge.is_some_and(|p|p.cmp_pc==cur) {
+            assert!(!called&&translated&&matches!(e.u.fuse,Some(FuseKind::Sub)));
+        }
+
         if e.u.skip_next || called {
             e.u.vc = VCache::new(); // fused pair (writes the next one's Vd too) or helper call (clobbers caller-saved V cache)
             // The audited scalar pair never writes r11, even on its cold path.
@@ -4537,6 +4571,27 @@ impl<'a> E<'a> {
     /// for the not-taken edge; successors retain the existing intra-unit/slot paths.
     /// Guest NZCV is in Cpu and is not modified by CBZ/TBZ or these host flags.
     fn flags_branch(&mut self, taken: u64, not_taken: u64, cc_not_taken: Cc) {
+        if let Some(p)=self.u.pending_funedge.take() {
+            assert_eq!((self.pc,taken,not_taken),(p.cmp_pc+4,p.taken,p.not_taken));
+            assert!(matches!(self.fuse_in,Some(FuseKind::Sub)));
+            // Decide on producer EFLAGS BEFORE materialization; target SP
+            // guards may clobber EFLAGS, so pack every LIVE edge before goto.
+            if !self.u.commpage_checks && !jit_off("tbimask") && !self.u.tbi_mask_live {
+                a!(self,mov(r11,0x00ff_ffff_ffff_ffffu64));
+            }
+            if !p.live_yes {
+                self.jcc(cc_not_taken.inverse(),self.u.region_labels[&taken]);
+                if p.live_no {self.flags_sub();}self.goto(not_taken);
+            }else {
+                assert!(!p.live_no);
+                self.jcc(cc_not_taken,self.u.region_labels[&not_taken]);
+                self.flags_sub();self.goto(taken);
+            }
+            self.u.funedge_emissions+=1;
+            if std::env::var_os("ATTESOR_FUNEDGE_LOG").is_some() {eprintln!("funedge-branch\t{:x}\tlive={},{}",p.cmp_pc,p.live_yes,p.live_no);}
+            return;
+        }
+
         if let Some(label) = self.u.region_labels.get(&taken).copied() {
             if !self.u.commpage_checks && !jit_off("tbimask") && !self.u.tbi_mask_live {
                 a!(self, mov(r11, 0x00ff_ffff_ffff_ffffu64));
@@ -10608,6 +10663,76 @@ mod loopra_tests {
     }
 
     #[test]
+    fn funra_edge_prefix_and_paths_reject_observers_reserved_missing_cycles() {
+        use std::collections::{BTreeMap,BTreeSet};
+        let make=|words:&[u32]|super::super::loops::Loop{header:PC,words:words.iter().enumerate().map(|(i,&w)|(PC+i as u64*4,w)).collect(),starts:BTreeSet::from([PC]),backedges:vec![]};
+        for (w,ok) in [(0xd503201f,true),(0xa9be4ff4,true),(0x910043fd,true),
+            (0xa94003e0,false),(0xad0007e0,false),(0x290007e0,false),(0xd51b4400,false),
+            (0x9a010000,false),(0xf9000001,false),(0x1e612000,false),(0x94000000,false),
+            (0x54000020,false),(0xd65f03c0,false),(0x1ac20800,false)] {
+            assert_eq!(fun_edges::prefix(&make(&[w,0x7100081f])).is_some(),ok,"prefix={w:x}");
+        }
+        assert!(fun_edges::prefix(&make(&[])).is_none());
+        let mut long=vec![0xd503201f;MAX_BLOCK_INSNS as usize];long.push(0x7100081f);assert!(fun_edges::prefix(&make(&long)).is_none());
+        let prefix=BTreeMap::from([(PC,0x7100081f)]);
+        for words in [vec![0x14000000],vec![0x94000001],vec![0x14000001],
+            vec![0xb4000040,0x7100081f,0xd65f03c0],vec![0xf9000001,0x7100081f],vec![0xd51b4200,0x7100081f]] {
+            assert!(fun_edges::dead(&make(&words),PC,Some(&prefix)).is_none(),"path={words:x?}");
+        }
+        assert!(fun_edges::dead(&make(&[0x94000000]),PC,None).is_none());
+        assert!(fun_edges::dead(&make(&[0x94000000]),PC,Some(&prefix)).is_some());
+    }
+
+    #[test]
+    fn funra_edge_all_conditions_live_edges_and_stack_guard_clobbers() {
+        if disabled_classes()!=0 {return;}
+        let mut checked=0;
+        for kind in [StubKind::Plain,StubKind::Patchable] {for stackfast in [false,true] {for sf in [false,true] {for dead_yes in [false,true] {for cond in 0..14 {
+            let cmp=if sf {0xeb02003f}else {0x6b02003f};let kill=if sf {0xeb04007f}else {0x6b04007f};
+            let words=if dead_yes {vec![0xa9bf7bf3,0x910003e9,cmp,0x54000060|cond,0xa8c17bf3,0xd65f03c0,kill,0xb4000080,0xd1000400,0x97fffff7,0x91000400,0xa8c17bf3,0xd65f03c0]}
+                else {vec![0xa9bf7bf3,0x910003e9,cmp,0x540000e0|cond,kill,0xb40000a0,0xd1000400,0x97fffff9,0x91000400,0x14000001,0xa8c17bf3,0xd65f03c0]};
+            let ret=PC+words.len()as u64*4;let read=|p:u64|p.checked_sub(PC).and_then(|v|words.get((v/4)as usize)).copied();
+            let mut u=Unit::new(kind,false);u.funedge=true;u.funra=true;u.funflags=true;u.funstack=stackfast;u.loopra=true;
+            let l=u.a.create_label();u.labels.insert(PC,l);emit_block(&mut u,PC,&read);assert!(u.funedge_emissions>0);assert_eq!(u.insns_fallback,0);let(host,_)=assemble(u,0);
+            for a in [0,1,u64::MAX,1<<63,i64::MAX as u64,0x80000000,0x7fffffff] {for b in [0,1,u64::MAX,1<<63,i64::MAX as u64,0x80000000,0x7fffffff] {for nv in 0..16 {
+                let mut stack=[0xfeed123456789abcu64;64];let initial=stack;
+                let mut c=cpu();for n in 0..32 {c.x[n]=0xfedcba9800000000+n as u64;c.v[n]=[0x7ff0000000000042+n as u64,0x8000000000000000+n as u64];}
+                c.x[0]=0;c.x[1]=a;c.x[2]=b;c.x[3]=a.wrapping_add(1);c.x[4]=b.wrapping_sub(1);c.x[30]=ret;
+                c.x[31]=(stack.as_mut_ptr()as u64+512)|if nv&1!=0 {0xab00000000000000}else {0};c.set_nzcv(nv);
+                let mut reference=cpu();reference.x=c.x;reference.v=c.v;reference.set_nzcv(nv);let mut steps=0;
+                while reference.pc()!=ret {let p=reference.pc();interp::exec(&mut reference,read(p).unwrap()).unwrap();if reference.pc()==p {reference.set_pc(p+4);}steps+=1;assert!(steps<32);}
+                let expected=stack;stack=initial;std::hint::black_box(&mut stack);
+                unsafe {crate::jit::attesor_jit_enter(&mut *c,host);}
+                assert_eq!(c.x,reference.x,"sf={sf} cond={cond} dead_yes={dead_yes} a={a:x} b={b:x}");assert_eq!(c.v,reference.v);assert_eq!(c.nzcv(),reference.nzcv());assert_eq!(c.pc(),ret);assert_eq!(c.exit_reason,EXIT_CONTINUE);assert_eq!(stack,expected);checked+=1;
+            }}}
+        }}}}}eprintln!("funedge all-condition/full-state/full-stack cases={checked}");
+    }
+
+    #[test]
+    fn funra_edge_deep_ras_and_new_callee_flags_on_epoch_exit() {
+        use std::sync::atomic::{AtomicU64,Ordering};
+        if disabled_classes()!=0 {return;}
+        for epoch_case in [false,true] {for kind in [StubKind::Plain,StubKind::Patchable] {for tagged in [false,true] {for stackfast in [false,true] {
+            let words=if epoch_case {vec![0xa9bf7bf3,0x910003e9,0x7100001f,0x540000a0,0xd1000400,0x97fffffb,0x91000400,0x14000002,0xf9000272,0xa8c17bf3,0xd65f03c0]}
+                else {vec![0xa9bf7bf3,0x910003e9,0x7100001f,0x54000080,0xd1000400,0x97fffffb,0x91000400,0xa8c17bf3,0xd65f03c0]};
+            let cont=PC+24;let ret=PC+words.len()as u64*4;let read=|p:u64|p.checked_sub(PC).and_then(|v|words.get((v/4)as usize)).copied();
+            let mut u=Unit::new(kind,false);u.funra=true;u.funflags=true;u.funedge=true;u.funstack=stackfast;u.loopra=true;
+            let l=u.a.create_label();u.labels.insert(PC,l);emit_block(&mut u,PC,&read);assert!(u.funedge_emissions>0);assert_eq!(u.insns_fallback,0);let(host,_)=assemble(u,0);
+            let mut resume=Unit::new(kind,false);resume.funra=false;resume.funedge=false;let l=resume.a.create_label();resume.labels.insert(cont,l);emit_block(&mut resume,cont,&read);let(continuation,_)=assemble(resume,6);
+            let epoch=AtomicU64::new(1);let mut stack:Vec<u64>=(0..4096).map(|n|0xfeed000000000000+n).collect();let initial=stack.clone();
+            let mut c=cpu();for n in 0..32 {c.x[n]=0xfeed000000000000+n as u64;c.v[n]=[n as u64,0xfff0000000000042+n as u64];}
+            c.x[0]=if epoch_case {1}else {300};c.x[18]=2;c.x[19]=&epoch as *const _ as u64;c.x[30]=ret;c.x[31]=(stack.as_mut_ptr()as u64+stack.len()as u64*8)|if tagged {0xab00000000000000}else {0};c.set_nzcv(13);c.epoch_ptr=&epoch as *const _ as u64;
+            let mut reference=cpu();reference.x=c.x;reference.v=c.v;reference.set_nzcv(13);let mut steps=0;
+            loop {let p=reference.pc();interp::exec(&mut reference,read(p).unwrap()).unwrap();if reference.pc()==p {reference.set_pc(p+4);}steps+=1;assert!(steps<10000);if reference.pc()==if epoch_case {cont}else {ret} {break;}}
+            let expected=stack.clone();stack.copy_from_slice(&initial);epoch.store(1,Ordering::SeqCst);
+            unsafe {crate::jit::attesor_jit_enter(&mut *c,host);}
+            if epoch_case {assert_eq!(epoch.load(Ordering::SeqCst),2);assert_eq!(c.entry_epoch,1);assert_eq!(c.pc(),cont);assert_eq!(c.nzcv(),6,"callee NEW flags, not incoming13 or caller2");}
+            else {let mut exits=0;while c.pc()!=ret {assert_eq!(c.pc(),cont);unsafe {crate::jit::attesor_jit_enter(&mut *c,continuation);}exits+=1;assert!(exits<400);}assert!(exits>0);}
+            assert_eq!(c.x,reference.x);assert_eq!(c.v,reference.v);assert_eq!(c.nzcv(),reference.nzcv());assert_eq!(c.pc(),reference.pc());assert_eq!(c.exit_reason,EXIT_CONTINUE);assert_eq!(stack,expected);
+        }}}}
+    }
+
+    #[test]
     fn funra_stack_proof_rejects_unknown_writers_and_complete_span() {
         let mut u=Unit::new(StubKind::Plain,false);u.funstack=true;u.function_entry=Some(PC);
         let mut r=LoopRa{pc:PC,fast:u.a.create_label(),exit:u.a.create_label(),reg:[0xff;NLOOPREGS],dirty:u32::MAX,vreg:[0xff;NVREGS],xreg:[0xff;NVREGS],flags:0xff};
@@ -10710,6 +10835,7 @@ mod loopra_tests {
             0x52800013,0x1400000b,0x52800013,0xaa0003f4,0x51000680,0x97fffff6,
             0xaa0003e8,0x51000a80,0x0b130113,0x71000e9f,0xaa0003f4,0x54ffff28,
             0x0b130000,0xa9417bfd,0xa8c24ff4,0xd65f03c0];
+        for edgefast in [false,true] {
         for stackfast in [false,true] {
         for kind in [StubKind::Plain,StubKind::Patchable] {
         for packed in [false,true] {
@@ -10720,10 +10846,11 @@ mod loopra_tests {
             let return_pc=PC+words.len()as u64*4;
             let read=|p:u64|p.checked_sub(PC).and_then(|n|words.get((n/4)as usize)).copied();
             assert!(functions::recursive(PC,&read).is_some());
-            let mut u=Unit::new(kind,false);u.funstack=stackfast;u.funra=true;u.funflags=packed;u.loopra=true;u.callret=outside_callret;
+            let mut u=Unit::new(kind,false);u.funedge=edgefast;u.funstack=stackfast;u.funra=true;u.funflags=packed;u.loopra=true;u.callret=outside_callret;
             let entry=u.a.create_label();u.labels.insert(PC,entry);
             emit_block(&mut u,PC,&read);
             assert_eq!(u.funstack_emissions>0,stackfast);
+            assert_eq!(u.funedge_emissions>0,edgefast&&packed);
             assert_eq!(u.insns_fallback,0);
             assert_eq!(u.region_exits.len(),1);assert_eq!(u.function_entry,None);
             assert_eq!(u.region_exits[0].packed_flags().is_some(),packed);
@@ -10752,7 +10879,7 @@ mod loopra_tests {
                 assert_eq!(c.v,r.v);assert_eq!(c.nzcv(),r.nzcv());
                 assert_eq!(c.exit_reason,EXIT_CONTINUE);
             }
-        }}}}}
+        }}}}}}
     }
 
     #[test]
