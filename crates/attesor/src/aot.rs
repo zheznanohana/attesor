@@ -22,7 +22,7 @@ use std::sync::{Arc, Mutex, RwLock, Weak};
 
 const MAGIC: &[u8; 8] = b"MCLAOT05";
 /// Bump when the translator's output changes.
-const TRANSLATOR_VERSION: u32 = 96;
+const TRANSLATOR_VERSION: u32 = 97;
 
 mod layout;
 
@@ -1177,7 +1177,7 @@ mod tests {
     // the same test binary, so UUID/version are held constant.
     #[test]
     fn g4_cache_identity_bits_and_incompatible_headers() {
-        assert_eq!(TRANSLATOR_VERSION,96);
+        assert_eq!(TRANSLATOR_VERSION,97);
         assert_eq!((flags_word()>>11)&1,crate::jit::flagreg::enabled() as u32);
         assert_eq!((flags_word()>>12)&3,crate::jit::isel2_mask());
         assert_eq!((flags_word()>>31)&1,crate::jit::hugepages_enabled() as u32);

@@ -25,6 +25,8 @@ mod functions;
 mod fp_trace;
 #[path = "fp_batch.rs"]
 mod fp_batch;
+#[path = "fold_addr.rs"]
+mod fold_addr;
 #[path = "fp_flags.rs"]
 mod fp_flags;
 #[path = "addr_hoist.rs"]
@@ -123,6 +125,8 @@ pub struct Unit {
     vpair: bool,
     vtrace: bool,
     vbatch:bool,
+    foldaddr:bool,
+    foldaddr_emissions:u64,
     vbatch_emissions:u64,
     fpflags: bool,
     fpguard: bool,
@@ -563,6 +567,8 @@ impl Unit {
             vpair: vpair_enabled(),
             vtrace: vtrace_enabled(),
             vbatch:vbatch_enabled(),
+            foldaddr:foldaddr_enabled(),
+            foldaddr_emissions:0,
             vbatch_emissions:0,
             fpflags: fpflags_enabled(),
             fpguard: fpguard_enabled(),
@@ -2378,6 +2384,11 @@ fn addrhoist_enabled()->bool {
     *F.get_or_init(||!jit_off("addrhoist")&&std::env::var("ATTESOR_JIT_ON").unwrap_or_default().split(',').any(|g|g=="addrhoist"))
 }
 
+fn foldaddr_enabled()->bool {
+    static F:std::sync::OnceLock<bool>=std::sync::OnceLock::new();
+    *F.get_or_init(||!jit_off("foldaddr")&&std::env::var("ATTESOR_JIT_ON").unwrap_or_default().split(',').any(|g|g=="foldaddr"))
+}
+
 fn vbatch_enabled()->bool {
     static F:std::sync::OnceLock<bool>=std::sync::OnceLock::new();
     *F.get_or_init(||!jit_off("vbatch")&&std::env::var("ATTESOR_JIT_ON").unwrap_or_default().split(',').any(|g|g=="vbatch"))
@@ -2685,7 +2696,7 @@ pub(super) fn prepare_bgtrans() {
         loopra_enabled(), regioncache_enabled(), has_avx(), has_fma(),
         has_aes(), has_pclmul(), has_sha(), has_f16c(), loopra2_enabled(),
         has_avx512(), avx512_enabled(), avx512_nan_enabled(), super::fastenc_enabled(),
-        super::loops::census_enabled(), super::cost::probes(), vloop_enabled(), vloop2_enabled(), vchain_enabled(), vscalar_enabled(), funra_enabled(), funflags_enabled(), selectra_enabled(), regflags_enabled(), cfgflags_enabled(), xspill_enabled(), fmovra_enabled(), vpair_enabled(), vtrace_enabled(), vbatch_enabled(), fpflags_enabled(), fpguard_enabled(), fpstable_enabled(), addrhoist_enabled(), leafra_enabled(), csetfast_enabled(), csetpair_enabled(), leafinline_enabled(), leafflags_enabled(), super::bliccache::enabled());
+        super::loops::census_enabled(), super::cost::probes(), vloop_enabled(), vloop2_enabled(), vchain_enabled(), vscalar_enabled(), funra_enabled(), funflags_enabled(), selectra_enabled(), regflags_enabled(), cfgflags_enabled(), xspill_enabled(), fmovra_enabled(), vpair_enabled(), vtrace_enabled(), vbatch_enabled(), foldaddr_enabled(), fpflags_enabled(), fpguard_enabled(), fpstable_enabled(), addrhoist_enabled(), leafra_enabled(), csetfast_enabled(), csetpair_enabled(), leafinline_enabled(), leafflags_enabled(), super::bliccache::enabled());
 }
 
 /// Translate one basic block starting at `pc` into `u`. The caller must have
@@ -2952,6 +2963,9 @@ fn emit_block_inner(u: &mut Unit, pc: u64, read: &dyn Fn(u64) -> Option<u32>, mu
                 &&!u.commpage_checks&&disabled_classes()==0 {
                 fp_flags::plan(pc,read,&|p|u.labels.contains_key(&p))
             }else {None};
+            if let Some(p)=plan.and_then(|p|fold_addr::plan(u,pc,p,region,read)) {
+                u.region_exits.push(region);fold_addr::emit(u,pc,p,region);u.labels.insert(pc,label);return pc+32;
+            }
             if let Some(p)=plan.and_then(|p|fp_batch::plan(u,pc,p,region,read)) {fp_batch::enter(u,p,region);batch=Some(p);}
             if let Some((p,base,index,shadow))=plan.filter(|_|u.addrhoist).and_then(|p|addr_hoist::plan(pc,p,read)).and_then(|p|
                 Some((p,region.reg.iter().position(|&n|n==p.rn as u8)?,region.reg.iter().position(|&n|n==p.rm as u8)?,region.reg.iter().rposition(|&n|n==0xff)?))) {
@@ -9461,6 +9475,71 @@ mod loopra_tests {
     }
 
     #[test]
+    fn fpflags_foldaddr_actual_range_guards_near_bit56() {
+        if !has_avx()||disabled_classes()!=0 {return;}
+        let words=[0xfc6d6a61,0xfd4001c2,0x1e620821,0x1e612800,0x910021ad,0x912581ce,0xf12581bf,0x54ffff21];
+        let read=|p:u64|p.checked_sub(PC).and_then(|o|words.get((o/4)as usize)).copied();
+        let mut u=Unit::new(StubKind::Plain,false);u.foldaddr=true;
+        let mut r=LoopRa{pc:PC,fast:u.a.create_label(),exit:u.a.create_label(),reg:[0xff;NLOOPREGS],dirty:0,vreg:[0xff;NVREGS],xreg:[0xff;NVREGS],flags:0xff};r.reg[..3].copy_from_slice(&[13,14,19]);r.vreg[..3].copy_from_slice(&[0,1,2]);
+        let fp=fp_flags::plan(PC,&read,&|_|false).unwrap();let p=fold_addr::plan(&u,PC,fp,r,&read).unwrap();
+        let mut entry=u.a.create_label();u.a.set_label(&mut entry).unwrap();u.labels.insert(PC,entry);
+        r.reload_mask(&mut u.a,u32::MAX);let mut slow=u.a.create_label();fold_addr::guards(&mut u,p,r,slow);
+        u.a.mov(qword_ptr(r15+off::AOT_LOOP_REGIONS),1i32).unwrap();u.a.mov(qword_ptr(r15+off::EXIT_REASON),EXIT_SVC as i32).unwrap();u.a.jmp(u.exit_label).unwrap();
+        u.a.set_label(&mut slow).unwrap();u.a.mov(qword_ptr(r15+off::AOT_LOOP_REGIONS),2i32).unwrap();u.a.mov(qword_ptr(r15+off::EXIT_REASON),EXIT_SVC as i32).unwrap();u.a.jmp(u.exit_label).unwrap();let(host,_)=assemble(u,0);
+        let mask=0x00ff_ffff_ffff_ffffu64;let mut cases=0;
+        for index in [0u64,8,16,2392,2400,2408,u64::MAX,1] {for base in [0,mask-2399,mask-2398,mask,0xab00000000001000] {
+            let valid=index<=2392&&index%8==0;let threshold=if valid {mask-((2400-index)/8*2400+7)}else {mask-7};
+            for ptr in [0,threshold,threshold+1,mask,0xff00000000001000] {
+                let expected=valid&&(base as u128+2392+7)<=mask as u128&&(ptr as u128+((2400-index.min(2400))/8)as u128*2400+7)<=mask as u128;
+                let mut c=cpu();c.x[13]=index;c.x[14]=ptr;c.x[19]=base;c.set_nzcv(15);let x=c.x;
+                unsafe {crate::jit::attesor_jit_enter(&mut *c,host);}assert_eq!(c.aot_loop_regions,if expected {1}else {2},"idx={index:x} base={base:x} ptr={ptr:x}");assert_eq!(c.x,x);assert_eq!(c.nzcv(),15);assert_eq!(c.exit_reason,EXIT_SVC);cases+=1;
+            }
+        }}
+        eprintln!("foldaddr actual range-guard cases={cases}; no guest data dereferenced");
+    }
+
+    #[test]
+    fn fpflags_foldaddr_dual_native_paths_exact_all_state() {
+        if !has_avx()||disabled_classes()!=0 {return;}
+        let(mut checked,mut rejected)=(0,0);
+        for double in [false,true] {for shifted in [false,true] {for high_names in [false,true] {for kind in [StubKind::Plain,StubKind::Patchable] {for product_first in [false,true] {for nan512 in [false,true].into_iter().filter(|&n|!n||has_avx512()) {
+            let d=if high_names {24}else {0};let(t,m)=(d+1,d+2);let size=if double {3}else {2};let step=if shifted {1}else {1<<size};let stride=5*(1<<size);let bound=8*step;let ty=(double as u32)<<22;let offset=if high_names {2}else {0};
+            let words=[(if double {0xfc606800}else {0xbc606800})|(10<<16)|if shifted {1<<12}else {0}|t,
+                (if double {0xfd400020}else {0xbd400020})|m|(offset<<10),0x1e200800|ty|(m<<16)|(t<<5)|t,
+                0x1e202800|ty|((if product_first {d}else {t})<<16)|((if product_first {t}else {d})<<5)|d,
+                0x9100014a|(step<<10),0x91000021|(stride<<10),0xf100015f|(bound<<10),0x54ffff21,0xd4001001];
+            let read=|p:u64|p.checked_sub(PC).and_then(|o|words.get((o/4)as usize)).copied();let exit=PC+32;
+            let mut u=Unit::new(kind,false);u.vbatch=false;u.foldaddr=true;u.fpflags=true;u.fpstable=false;u.fpguard=false;u.addrhoist=false;u.vloop=true;u.vchain=true;u.vscalar=true;u.loopra=true;u.loopra2=false;u.leafinline=false;u.avx512=has_avx512();u.avx512_nan=nan512;
+            for p in [PC,exit] {let l=u.a.create_label();u.labels.insert(p,l);}
+            emit_block(&mut u,PC,&read);emit_block(&mut u,exit,&read);assert_eq!(u.foldaddr_emissions,1);assert_eq!(u.insns_fallback,0);let(host,_)=assemble(u,0);
+            let vals:Vec<u64>=if double {vec![0,0x8000000000000000,1,0x7ff0000000000000,0xfff0000000000000,0x7ff8000000000042,0x7ff0000000000073,1.25f64.to_bits()]}
+                else {vec![0,0x80000000,1,0x7f800000,0xff800000,0x7fc00042,0x7f800073,1.25f32.to_bits()as u64]};
+            for a in 0..10 {for b in 0..10 {for iter_start in 0..8 {let start=iter_start*step as u64;for mode in 0..4 {for fz in [false,true] {for (tag_a,tag_b) in [(0u64,0u64),(0xab00000000000000,0),(0,0xff00000000000000),(0xab00000000000000,0xff00000000000000)] {
+                let mut left=[0u64;8];let mut right=[0u64;40];
+                for i in 0..8 {let x=if a<8 {vals[(a+i)%8]}else {let v=if a==8 {0.0}else {(i+1)as f64*0.1};if double {v.to_bits()}else {(v as f32).to_bits()as u64}};
+                    let y=if b<8 {vals[(b+3*i)%8]}else {let v=if b==8 {0.0}else {1.0+(i+1)as f64*0.125};if double {v.to_bits()}else {(v as f32).to_bits()as u64}};if double {left[i]=x;right[i*5+offset as usize]=y;}else {let ptr=left.as_mut_ptr()as *mut u32;unsafe {*ptr.add(i)=x as u32;*(right.as_mut_ptr()as *mut u32).add(i*5+offset as usize)=y as u32;}}}
+                let mut c=cpu();for r in 0..32 {c.x[r]=0xfeed000000000000+r as u64;c.v[r]=[0xface000000000000+r as u64,0xdeadbeef00000000+r as u64];}
+                c.x[0]=left.as_ptr()as u64|tag_a;c.x[1]=right.as_ptr()as u64|tag_b;c.x[10]=start;
+                // A nonzero valid start means the source pointer is already advanced.
+                c.x[1]=c.x[1].wrapping_add((start/step as u64)*stride as u64);
+                let acc=if a>=8&&b>=8 {if double {0.125f64.to_bits()}else {0.125f32.to_bits()as u64}}else {vals[(a+b)%8]};
+                c.v[d as usize][0]=if double {acc}else {0xface000000000000|acc};c.fpcr=(mode<<22)|if fz {1<<24}else {0};c.set_nzcv(15);
+                let mut r=cpu();r.x=c.x;r.v=c.v;r.fpcr=c.fpcr;r.set_nzcv(15);interp::sys_sync_host_fp_mode(r.fpcr);let mut steps=0;
+                loop {let p=r.pc();if p==exit {break;}interp::exec(&mut r,read(p).unwrap()).unwrap();if r.pc()==p {r.set_pc(p+4);}steps+=1;assert!(steps<=64);}
+                interp::sys_sync_host_fp_mode(c.fpcr);unsafe {crate::jit::attesor_jit_enter(&mut *c,host);}
+                assert_eq!(c.x,r.x,"D={double} scaled={shifted} names={high_names} first={product_first} a={a} b={b} start={start} mode={mode} FZ={fz}");assert_eq!(c.v,r.v);assert_eq!(c.nzcv(),r.nzcv());assert_eq!(c.fpcr,r.fpcr);assert_eq!(c.exit_reason,EXIT_SVC);
+                assert_eq!(c.aot_loop_regions,if tag_a==0&&tag_b==0 {1}else {2},"native path selection");
+                checked+=1;
+            }}}}}}
+            for mode in [1<<25,1<<26,1<<19] {let start=0;
+                let mut c=cpu();for r in 0..32 {c.x[r]=0xab00000000001000+r as u64;c.v[r]=[r as u64,0xdeadface];}c.x[10]=start;c.fpcr=mode;c.set_nzcv(15);let(x,v)=(c.x,c.v);
+                unsafe {crate::jit::attesor_jit_enter(&mut *c,host);}assert_eq!(c.exit_reason,EXIT_INTERP);assert_eq!(c.pc(),PC);assert_eq!(c.x,x);assert_eq!(c.v,v);assert_eq!(c.nzcv(),15);assert_eq!(c.fpcr,mode);rejected+=1;
+            }
+        }}}}}}
+        interp::sys_sync_host_fp_mode(0);eprintln!("foldaddr full-state cases={checked} unsupported-mode public rejections={rejected}");
+    }
+
+    #[test]
     fn fpflags_vbatch_four_ordered_iterations_exact_all_state() {
         if !has_avx()||!has_avx512()||disabled_classes()!=0 {return;}
         let(mut checked,mut rejected)=(0,0);
@@ -9471,7 +9550,7 @@ mod loopra_tests {
                 0x1e202800|ty|((if product_first {d}else {t})<<16)|((if product_first {t}else {d})<<5)|d,
                 0x9100014a|(step<<10),0x91000021|(stride<<10),0xf100015f|(bound<<10),0x54ffff21,0xd4001001];
             let read=|p:u64|p.checked_sub(PC).and_then(|o|words.get((o/4)as usize)).copied();let exit=PC+32;
-            let mut u=Unit::new(kind,false);u.vbatch=true;u.fpflags=true;u.fpstable=false;u.fpguard=false;u.addrhoist=false;u.vloop=true;u.vchain=true;u.vscalar=true;u.loopra=true;u.loopra2=false;u.leafinline=false;u.avx512=true;u.avx512_nan=nan512;
+            let mut u=Unit::new(kind,false);u.vbatch=true;u.foldaddr=false;u.fpflags=true;u.fpstable=false;u.fpguard=false;u.addrhoist=false;u.vloop=true;u.vchain=true;u.vscalar=true;u.loopra=true;u.loopra2=false;u.leafinline=false;u.avx512=true;u.avx512_nan=nan512;
             for p in [PC,exit] {let l=u.a.create_label();u.labels.insert(p,l);}
             emit_block(&mut u,PC,&read);emit_block(&mut u,exit,&read);assert_eq!(u.vbatch_emissions,1);assert_eq!(u.insns_fallback,0);let(host,_)=assemble(u,0);
             let vals:Vec<u64>=if double {vec![0,0x8000000000000000,1,0x7ff0000000000000,0xfff0000000000000,0x7ff8000000000042,0x7ff0000000000073,1.25f64.to_bits()]}

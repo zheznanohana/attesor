@@ -794,3 +794,48 @@ NV canonicalization and actual path coverage. UNIMPLEMENTED and no gain claimed.
 If that provides no gain, rotate to other named deficient categories or collect
 PC/profile evidence, not more blind micro-variants. Full six-category/common
 configuration60% including both qsort sizes remains active and incomplete.
+
+
+## Codegen97: full-EA native loop versioning (`foldaddr`, default OFF)
+
+A strict closed8-word scalar MAC source proof emits two PRIVATE native loops
+with the same raw GPR/V assignment and canonical exit. Public range checks prove
+index bounds/step alignment, all A effective addresses including the last byte,
+and B's entire remaining affine span plus the final pointer stay belowbit56.
+Unsigned checks also prove both pointers untagged. FAST folds both exact-width
+loads directly into x86 EAs, omitting LEA/AND, using the existing strictly rounded
+vchain pair. Tagged/unusual inputs go to the ORIGINAL native TBI-masked SLOW
+loop, not interpreter peeling. No pointer normalization, tag loss, FMA, input
+reread, guest-memory change or algorithm substitution. Every valid starting
+index, including the predecessor's peeled first iteration, is supported.
+
+Unsupported FPCR still rejects before any guest effect. Public-only mode check
+is justified by the previously audited read-only/thread-owned Cpu proof; both
+actual hot+cold versions must pass the noCall/FPCR-write check before registration.
+Unknown/system/store/helper/commpage/native-disabled paths do not enter this
+transform. Source CMP metadata is checked against captured source and exact
+backedge; checked span arithmetic covers all guards. Both private maps reset
+compile-time facts separately; neither private address is externally published.
+Original source invalidation, epoch, return and fault contracts unchanged.
+
+11 focused tests pass:1638400 new full X/V/NZCV/FPCR comparisons across S/D,
+scaled/unscaled EAs, starts0..7, nonzero B offset, both original ADD orders,
+Plain/Patchable, all rounding modes/FZ, SSE/AVX512 NaN repair and independent
+A/B tags0/AB/FF. Test-only Cpu-relative path markers verify untagged FAST and
+tagged SLOW, no interpreter fallback.192 unsupported-mode entries retain all
+incoming architectural state. A separate assembled RANGE-ONLY harness runs200
+near-bit56/overflow/tag/alignment cases against independent128-bit inequalities
+without dereferencing synthetic invalid data pointers. Source/barrier/captured
+metadata tests and all previous related cases pass. Whole workspace, real AOT
+loading, broad applications and concurrent invalidation were not rerun.
+
+One unchanged original bench screen: native22.997ms, control40.698ms, foldaddr
+39.425ms (-3.13%),58.33% native. All7 checksum lines match. A small single positive,
+not enough for adoption/60% or more repetitions under the user's fast-work rule.
+Keep foldaddr OFF the selected profile; production untouched. No cross-batch
+gain sum or all-category threshold acceptance. Full common-config goal remains
+active/incomplete. Next rotate to deficient recursive GPR work rather than more
+matmul variants. Source inspection rules out a pre-recursive-call spill shortcut:
+host_call already has no such writeback. Balanced SP-frame native versioning
+requires a real CFG/activation proof and preservation of all guest stack bytes;
+it is only a prepared hypothesis, not implemented/safe-by-ABI.
