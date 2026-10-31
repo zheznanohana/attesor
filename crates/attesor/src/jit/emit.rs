@@ -129,6 +129,8 @@ pub struct Unit {
     vpair: bool,
     vtrace: bool,
     vbatch:bool,
+    movflags:bool,
+    movflags_emissions:u64,
     funedge:bool,
     funedge_analysis:fun_edges::Analysis,
     pending_funedge:Option<fun_edges::Edge>,
@@ -578,6 +580,7 @@ impl Unit {
             vpair: vpair_enabled(),
             vtrace: vtrace_enabled(),
             vbatch:vbatch_enabled(),
+            movflags:movflags_enabled(),movflags_emissions:0,
             funedge:funedge_enabled(),funedge_analysis:fun_edges::Analysis::default(),pending_funedge:None,funedge_emissions:0,
             funstack:funstack_enabled(),funstack_sites:HashMap::new(),funstack_emissions:0,
             foldaddr:foldaddr_enabled(),
@@ -2397,6 +2400,11 @@ fn addrhoist_enabled()->bool {
     *F.get_or_init(||!jit_off("addrhoist")&&std::env::var("ATTESOR_JIT_ON").unwrap_or_default().split(',').any(|g|g=="addrhoist"))
 }
 
+fn movflags_enabled()->bool {
+    static F:std::sync::OnceLock<bool>=std::sync::OnceLock::new();
+    *F.get_or_init(||!jit_off("movflags")&&std::env::var("ATTESOR_JIT_ON").unwrap_or_default().split(',').any(|g|g=="movflags"))
+}
+
 fn funedge_enabled()->bool {
     static F:std::sync::OnceLock<bool>=std::sync::OnceLock::new();
     *F.get_or_init(||!jit_off("funedge")&&std::env::var("ATTESOR_JIT_ON").unwrap_or_default().split(',').any(|g|g=="funedge"))
@@ -2719,7 +2727,7 @@ pub(super) fn prepare_bgtrans() {
         loopra_enabled(), regioncache_enabled(), has_avx(), has_fma(),
         has_aes(), has_pclmul(), has_sha(), has_f16c(), loopra2_enabled(),
         has_avx512(), avx512_enabled(), avx512_nan_enabled(), super::fastenc_enabled(),
-        super::loops::census_enabled(), super::cost::probes(), vloop_enabled(), vloop2_enabled(), vchain_enabled(), vscalar_enabled(), funra_enabled(), funflags_enabled(), selectra_enabled(), regflags_enabled(), cfgflags_enabled(), xspill_enabled(), fmovra_enabled(), vpair_enabled(), vtrace_enabled(), vbatch_enabled(), funedge_enabled(), funstack_enabled(), foldaddr_enabled(), fpflags_enabled(), fpguard_enabled(), fpstable_enabled(), addrhoist_enabled(), leafra_enabled(), csetfast_enabled(), csetpair_enabled(), leafinline_enabled(), leafflags_enabled(), super::bliccache::enabled());
+        super::loops::census_enabled(), super::cost::probes(), vloop_enabled(), vloop2_enabled(), vchain_enabled(), vscalar_enabled(), funra_enabled(), funflags_enabled(), selectra_enabled(), regflags_enabled(), cfgflags_enabled(), xspill_enabled(), fmovra_enabled(), vpair_enabled(), vtrace_enabled(), vbatch_enabled(), movflags_enabled(), funedge_enabled(), funstack_enabled(), foldaddr_enabled(), fpflags_enabled(), fpguard_enabled(), fpstable_enabled(), addrhoist_enabled(), leafra_enabled(), csetfast_enabled(), csetpair_enabled(), leafinline_enabled(), leafflags_enabled(), super::bliccache::enabled());
 }
 
 /// Translate one basic block starting at `pc` into `u`. The caller must have
@@ -3239,6 +3247,16 @@ fn emit_block_body(u:&mut Unit,pc:u64,read:&dyn Fn(u64)->Option<u32>,fp_sink:Opt
         e.u.dead_v = 0;
         e.u.vc_dest = [0xff; 2];
         let called = e.u.a.instructions()[code_start..].iter().any(|i| i.mnemonic() == iced_x86::Mnemonic::Call);
+        if e.u.movflags && e.u.region.is_some() && !e.u.no_internal_jumps
+            && fuse_in.is_some() && insn&0x7fe0ffe0==0x2a0003e0
+            && translated && !called && !e.u.skip_next && e.u.fuse.is_none()
+            && e.u.a.instructions()[code_start..].iter().all(|i|i.rflags_modified()==0) {
+            // Exact GP MOV alias, with actual lowering audited to preserve ALL
+            // host flags. Guest NZCV materialization is NOT removed/deferred.
+            // Entry/helper/fallback barriers retain their existing resets.
+            e.u.fuse=fuse_in;e.u.movflags_emissions+=1;
+            if std::env::var_os("ATTESOR_MOVFLAGS_LOG").is_some() {eprintln!("movflags-carrier\t{cur:x}");}
+        }
         if let Some(&word)=e.u.funedge_analysis.proof.get(&cur) {
             // Check every captured proof member against actual lowering. A
             // future template introducing a helper must not silently keep proof.
@@ -10709,6 +10727,33 @@ mod loopra_tests {
     }
 
     #[test]
+    fn funra_movflags_all_conditions_raw_state_and_stack_guard_clobbers() {
+        if disabled_classes()!=0 {return;}
+        let mut checked=0;
+        for kind in [StubKind::Plain,StubKind::Patchable] {for stackfast in [false,true] {for sf in [false,true] {for dead_yes in [false,true] {for cond in 0..14 {
+            let cmp=if sf {0xeb02003f}else {0x6b02003f};let kill=if sf {0xeb04007f}else {0x6b04007f};
+            let words=if dead_yes {vec![0xa9bf7bf3,0x910003e9,cmp,0x54000060|cond,0xa8c17bf3,0xd65f03c0,kill,0xb4000080,0xd1000400,0x97fffff7,0x91000400,0xa8c17bf3,0xd65f03c0]}
+                else {vec![0xa9bf7bf3,0x910003e9,cmp,0x540000e0|cond,kill,0xb40000a0,0xd1000400,0x97fffff9,0x91000400,0x14000001,0xa8c17bf3,0xd65f03c0]};
+            let mut words:Vec<u32>=words;words.insert(3,if sf {0xaa0103ea}else {0x2a0103ea}); // MOV X/W10,X/W1 between CMP and B.cond
+            for w in &mut words {if *w&0xfc000000==0x94000000 {*w=0x94000000|((*w&0x03ffffff).wrapping_sub(1)&0x03ffffff);}}
+            let ret=PC+words.len()as u64*4;let read=|p:u64|p.checked_sub(PC).and_then(|v|words.get((v/4)as usize)).copied();
+            let mut u=Unit::new(kind,false);u.movflags=true;u.funedge=false;u.funra=true;u.funflags=true;u.funstack=stackfast;u.loopra=true;
+            let l=u.a.create_label();u.labels.insert(PC,l);emit_block(&mut u,PC,&read);assert!(u.movflags_emissions>0);assert_eq!(u.insns_fallback,0);let(host,_)=assemble(u,0);
+            for a in [0,1,u64::MAX,1<<63,i64::MAX as u64,0x80000000,0x7fffffff] {for b in [0,1,u64::MAX,1<<63,i64::MAX as u64,0x80000000,0x7fffffff] {for nv in 0..16 {
+                let mut stack=[0xfeed123456789abcu64;64];let initial=stack;
+                let mut c=cpu();for n in 0..32 {c.x[n]=0xfedcba9800000000+n as u64;c.v[n]=[0x7ff0000000000042+n as u64,0x8000000000000000+n as u64];}
+                c.x[0]=0;c.x[1]=a;c.x[2]=b;c.x[3]=a.wrapping_add(1);c.x[4]=b.wrapping_sub(1);c.x[30]=ret;
+                c.x[31]=(stack.as_mut_ptr()as u64+512)|if nv&1!=0 {0xab00000000000000}else {0};c.set_nzcv(nv);
+                let mut reference=cpu();reference.x=c.x;reference.v=c.v;reference.set_nzcv(nv);let mut steps=0;
+                while reference.pc()!=ret {let p=reference.pc();interp::exec(&mut reference,read(p).unwrap()).unwrap();if reference.pc()==p {reference.set_pc(p+4);}steps+=1;assert!(steps<32);}
+                let expected=stack;stack=initial;std::hint::black_box(&mut stack);
+                unsafe {crate::jit::attesor_jit_enter(&mut *c,host);}
+                assert_eq!(c.x,reference.x,"sf={sf} cond={cond} dead_yes={dead_yes} a={a:x} b={b:x}");assert_eq!(c.v,reference.v);assert_eq!(c.nzcv(),reference.nzcv());assert_eq!(c.pc(),ret);assert_eq!(c.exit_reason,EXIT_CONTINUE);assert_eq!(stack,expected);checked+=1;
+            }}}
+        }}}}}eprintln!("movflags all-condition/full-state/full-stack cases={checked}");
+    }
+
+    #[test]
     fn funra_edge_deep_ras_and_new_callee_flags_on_epoch_exit() {
         use std::sync::atomic::{AtomicU64,Ordering};
         if disabled_classes()!=0 {return;}
@@ -10835,6 +10880,7 @@ mod loopra_tests {
             0x52800013,0x1400000b,0x52800013,0xaa0003f4,0x51000680,0x97fffff6,
             0xaa0003e8,0x51000a80,0x0b130113,0x71000e9f,0xaa0003f4,0x54ffff28,
             0x0b130000,0xa9417bfd,0xa8c24ff4,0xd65f03c0];
+        for movfast in [false,true] {
         for edgefast in [false,true] {
         for stackfast in [false,true] {
         for kind in [StubKind::Plain,StubKind::Patchable] {
@@ -10846,11 +10892,12 @@ mod loopra_tests {
             let return_pc=PC+words.len()as u64*4;
             let read=|p:u64|p.checked_sub(PC).and_then(|n|words.get((n/4)as usize)).copied();
             assert!(functions::recursive(PC,&read).is_some());
-            let mut u=Unit::new(kind,false);u.funedge=edgefast;u.funstack=stackfast;u.funra=true;u.funflags=packed;u.loopra=true;u.callret=outside_callret;
+            let mut u=Unit::new(kind,false);u.movflags=movfast;u.funedge=edgefast;u.funstack=stackfast;u.funra=true;u.funflags=packed;u.loopra=true;u.callret=outside_callret;
             let entry=u.a.create_label();u.labels.insert(PC,entry);
             emit_block(&mut u,PC,&read);
             assert_eq!(u.funstack_emissions>0,stackfast);
             assert_eq!(u.funedge_emissions>0,edgefast&&packed);
+            assert_eq!(u.movflags_emissions>0,movfast);
             assert_eq!(u.insns_fallback,0);
             assert_eq!(u.region_exits.len(),1);assert_eq!(u.function_entry,None);
             assert_eq!(u.region_exits[0].packed_flags().is_some(),packed);
@@ -10879,7 +10926,7 @@ mod loopra_tests {
                 assert_eq!(c.v,r.v);assert_eq!(c.nzcv(),r.nzcv());
                 assert_eq!(c.exit_reason,EXIT_CONTINUE);
             }
-        }}}}}}
+        }}}}}}}
     }
 
     #[test]

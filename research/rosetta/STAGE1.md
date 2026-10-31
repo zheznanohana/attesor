@@ -96,3 +96,11 @@ fib32 median18.261->13.869ms (-24.05%),41.94% native over three rounds. Only two
 extra rounds followed a clear initial screen. Seven focused tests pass;
 production unchanged. `funstack` joins the experimental selected profile, not
 production defaults. This is not full common-config >=60% acceptance.
+
+## Codegen99–100 / rejected flag trials
+
+See [FUNEDGE99.md](FUNEDGE99.md) and [MOVFLAGS100.md](MOVFLAGS100.md). Conditional
+header packing first appeared -7.36%, but three-round median -3.57% included a
++2.67% regression, so OFF. Exact native MOV flag-fusion carrier then screened
++5.96% slower, so OFF without repetition. Selected profile remains through
+funstack98. Do not turn these trials into production gains or sum old batches.
