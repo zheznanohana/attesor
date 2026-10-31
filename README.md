@@ -171,6 +171,13 @@ attesor [选项] ./arm64-程序 [参数...]
 | `--selftest-jit CLASS N [SEED]` | JIT 差分自测（见下文） |
 | `--jit-dump HEX...` | 打印一段 arm64 指令翻译出的 x86 机器码 |
 
+### 本机整合版默认配置（codegen106）
+
+本机整合版的 `attesor` 默认开启已保留的优化配置；不再需要换用 `attesor-fast`。
+`attesor-fast` 保留为同配置的 JIT-only 入口，`attesor-safe` 可强制退回此前的保守配置。
+失败实验仍关闭；这不代表所有应用或 V8 都已验证加速。显式 `ATTESOR_JIT_ON/OFF` 仍可覆盖默认选择。
+首次启动可能重建翻译缓存。详见 [本机默认开启说明](research/rosetta/LOCAL-DEFAULTS106.md)。
+
 ## 环境变量
 
 | 变量 | 作用 |

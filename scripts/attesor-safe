@@ -1,0 +1,10 @@
+#!/bin/sh
+# Explicit recovery profile: force the pre-v106 conservative JIT feature list.
+# Existing JIT_OFF overrides are still honored; AOT mode is not changed here.
+set -eu
+HERE=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
+BIN=${ATTESOR_BIN:-"$HERE/attesor"}
+if [ ! -x "$BIN" ] && [ -z "${ATTESOR_BIN+x}" ]; then BIN="$HERE/../target/release/attesor"; fi
+if [ ! -x "$BIN" ]; then echo "attesor-safe: executable not found: $BIN" >&2; exit 127; fi
+export ATTESOR_JIT_ON='avx512,avx512nan,bgtrans,fastenc,flagreg,hugepages,isel2,loopra,nativefixups,notbi,offline-constprop,offline-dse,offline-layout-profile,pathcache,preciseinvalidate,process-qos,regioncache,slotreuse'
+exec "$BIN" "$@"

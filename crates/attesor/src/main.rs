@@ -48,14 +48,11 @@ fn usage() -> ! {
     std::process::exit(2);
 }
 
-/// v2 defaults: JIT/loader accelerators plus functional opt-ins that did not slow the DSH launch benchmark.
-/// Off: `callret` (slower JS/start), `jitcost`/`loopcensus` (diagnostics), `page16k` (aborts DSH startup),
-/// `tiered` (DSH launch timeouts), `rel32chain` (+21%), `ibtc2` (+19%), `sharedtrans` (+10%),
-/// `bliccache` (+8%) and `loopra2` (DSH launch regressions in combination) on DSH launch.
-/// An explicit ATTESOR_JIT_ON (even empty) replaces this list and ATTESOR_JIT_OFF still wins per token.
-const DEFAULT_ON: &str = "avx512,avx512nan,bgtrans,fastenc,flagreg,hugepages,isel2,loopra,nativefixups,\
-notbi,offline-constprop,offline-dse,offline-layout-profile,pathcache,preciseinvalidate,process-qos,\
-regioncache,slotreuse";
+/// Owner-selected local defaults: retained compiler optimizations through105.
+/// Failed/negative trials remain OFF. This is not a general-app stability claim.
+/// An explicit ATTESOR_JIT_ON (even empty) replaces the entire list;
+/// ATTESOR_JIT_OFF still wins per token. `attesor-safe` selects the old profile.
+const DEFAULT_ON: &str = "avx512,avx512nan,bgtrans,fastenc,flagreg,hugepages,isel2,loopra,nativefixups,notbi,offline-constprop,offline-dse,offline-layout-profile,pathcache,preciseinvalidate,process-qos,regioncache,slotreuse,vloop,loopra2,vchain,funra,funflags,selectra,vloop2,vscalar,cfgflags,vpair,vtrace,bliccache,leafinline,leafflags,fpflags,funstack,recleaf,inlinewide";
 
 fn main() {
     // Single-threaded here; children inherit, so execs keep the same configuration.
@@ -349,4 +346,19 @@ fn resolve_path(p: &str) -> String {
 #[test]
 fn fix2_kernel_worker() {
     if std::env::var_os("ATTESOR_TEST_KERNEL").is_some() { main(); }
+}
+
+#[cfg(test)]
+mod local_default_profile_tests {
+    use super::DEFAULT_ON;
+    #[test]
+    fn local_default_profile_matches_retained_fast_and_rejects_failed_trials() {
+        let fast=include_str!("../../../scripts/attesor-fast");
+        let expected=fast.lines().find_map(|l|l.trim().strip_prefix("ATTESOR_JIT_ON='").and_then(|s|s.strip_suffix("'"))).unwrap();
+        assert_eq!(DEFAULT_ON,expected);
+        let flags:std::collections::BTreeSet<_>=DEFAULT_ON.split(',').collect();
+        assert_eq!(flags.len(),DEFAULT_ON.split(',').count());
+        for f in ["vloop","loopra2","vchain","funra","funflags","selectra","vloop2","vscalar","cfgflags","vpair","vtrace","bliccache","leafinline","leafflags","fpflags","funstack","recleaf","inlinewide"] {assert!(flags.contains(f),"missing {f}");}
+        for f in ["regflags","xspill","fmovra","leafra","csetfast","csetpair","fpguard","addrhoist","fpstable","vbatch","foldaddr","funedge","movflags","recleaflazy","bytestream","inlinegp","callret","tiered","rel32chain","ibtc2","sharedtrans","loopcensus","jitcost","page16k"] {assert!(!flags.contains(f),"unselected {f}");}
+    }
 }

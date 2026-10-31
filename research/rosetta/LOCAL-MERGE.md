@@ -1,3 +1,7 @@
+> Superseded default policy: the owner subsequently requested default-on.
+> See [LOCAL-DEFAULTS106.md](LOCAL-DEFAULTS106.md). The v105 installation below
+> is a historical checkpoint, not the current default selection.
+
 # Local usable merge / 2026-10-31
 
 Merge the research source into the owner's local v2 branch. General `attesor`

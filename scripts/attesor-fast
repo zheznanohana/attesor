@@ -1,5 +1,5 @@
 #!/bin/sh
-# Explicit local research profile; general attesor defaults remain unchanged.
+# Explicit JIT-only entrypoint; ordinary attesor now uses this same profile.
 # No stable/general-app claim. Respect an explicitly supplied JIT_ON (even empty)
 # and retain the backend's JIT_OFF overrides. JIT-only is the measured mode.
 set -eu
