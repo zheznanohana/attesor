@@ -27,6 +27,8 @@ mod fp_trace;
 mod fp_batch;
 #[path = "fold_addr.rs"]
 mod fold_addr;
+#[path = "fun_stack.rs"]
+mod fun_stack;
 #[path = "fp_flags.rs"]
 mod fp_flags;
 #[path = "addr_hoist.rs"]
@@ -125,6 +127,9 @@ pub struct Unit {
     vpair: bool,
     vtrace: bool,
     vbatch:bool,
+    funstack:bool,
+    funstack_sites:HashMap<u64,u32>,
+    funstack_emissions:u64,
     foldaddr:bool,
     foldaddr_emissions:u64,
     vbatch_emissions:u64,
@@ -567,6 +572,7 @@ impl Unit {
             vpair: vpair_enabled(),
             vtrace: vtrace_enabled(),
             vbatch:vbatch_enabled(),
+            funstack:funstack_enabled(),funstack_sites:HashMap::new(),funstack_emissions:0,
             foldaddr:foldaddr_enabled(),
             foldaddr_emissions:0,
             vbatch_emissions:0,
@@ -2384,6 +2390,11 @@ fn addrhoist_enabled()->bool {
     *F.get_or_init(||!jit_off("addrhoist")&&std::env::var("ATTESOR_JIT_ON").unwrap_or_default().split(',').any(|g|g=="addrhoist"))
 }
 
+fn funstack_enabled()->bool {
+    static F:std::sync::OnceLock<bool>=std::sync::OnceLock::new();
+    *F.get_or_init(||!jit_off("funstack")&&std::env::var("ATTESOR_JIT_ON").unwrap_or_default().split(',').any(|g|g=="funstack"))
+}
+
 fn foldaddr_enabled()->bool {
     static F:std::sync::OnceLock<bool>=std::sync::OnceLock::new();
     *F.get_or_init(||!jit_off("foldaddr")&&std::env::var("ATTESOR_JIT_ON").unwrap_or_default().split(',').any(|g|g=="foldaddr"))
@@ -2696,7 +2707,7 @@ pub(super) fn prepare_bgtrans() {
         loopra_enabled(), regioncache_enabled(), has_avx(), has_fma(),
         has_aes(), has_pclmul(), has_sha(), has_f16c(), loopra2_enabled(),
         has_avx512(), avx512_enabled(), avx512_nan_enabled(), super::fastenc_enabled(),
-        super::loops::census_enabled(), super::cost::probes(), vloop_enabled(), vloop2_enabled(), vchain_enabled(), vscalar_enabled(), funra_enabled(), funflags_enabled(), selectra_enabled(), regflags_enabled(), cfgflags_enabled(), xspill_enabled(), fmovra_enabled(), vpair_enabled(), vtrace_enabled(), vbatch_enabled(), foldaddr_enabled(), fpflags_enabled(), fpguard_enabled(), fpstable_enabled(), addrhoist_enabled(), leafra_enabled(), csetfast_enabled(), csetpair_enabled(), leafinline_enabled(), leafflags_enabled(), super::bliccache::enabled());
+        super::loops::census_enabled(), super::cost::probes(), vloop_enabled(), vloop2_enabled(), vchain_enabled(), vscalar_enabled(), funra_enabled(), funflags_enabled(), selectra_enabled(), regflags_enabled(), cfgflags_enabled(), xspill_enabled(), fmovra_enabled(), vpair_enabled(), vtrace_enabled(), vbatch_enabled(), funstack_enabled(), foldaddr_enabled(), fpflags_enabled(), fpguard_enabled(), fpstable_enabled(), addrhoist_enabled(), leafra_enabled(), csetfast_enabled(), csetpair_enabled(), leafinline_enabled(), leafflags_enabled(), super::bliccache::enabled());
 }
 
 /// Translate one basic block starting at `pc` into `u`. The caller must have
@@ -3070,6 +3081,13 @@ fn emit_block_inner(u: &mut Unit, pc: u64, read: &dyn Fn(u64) -> Option<u32>, mu
         fp_flags::check_mode_emission(u,loop_body_start).expect("vbatch backend contract");
         return pc+32;
     }
+    if let Some(plan)=fun_stack::plan(u,pc,read) {
+        return fun_stack::emit(u,pc,plan);
+    }
+    emit_block_body(u,pc,read,fp_sink,fp_mode_hoisted,loop_body_start)
+}
+
+fn emit_block_body(u:&mut Unit,pc:u64,read:&dyn Fn(u64)->Option<u32>,fp_sink:Option<fp_flags::Plan>,fp_mode_hoisted:bool,loop_body_start:usize)->u64 {
     let mut cur = pc;
     let mut count = 0;
     loop {
@@ -5045,28 +5063,34 @@ impl<'a> E<'a> {
             }
             return true;
         }
+        self.access_gpr_at(rt,kind,load,rax,0)
+    }
+
+    // Shared GPR memory pipeline: keep exact access widths/order and register
+    // semantics here, including any future memory observation/invalidation hook.
+    fn access_gpr_at(&mut self,rt:u32,kind:u32,load:bool,base:AsmRegister64,disp:i32)->bool {
         if load {
             let dest = self.dst(rt,false,rcx);
             match kind {
-                0 => a!(self, movzx(r32_of(dest), byte_ptr(rax))),
-                1 => a!(self, movzx(r32_of(dest), word_ptr(rax))),
-                2 => a!(self, mov(r32_of(dest), dword_ptr(rax))),
-                3 => a!(self, mov(dest, qword_ptr(rax))),
-                16 => a!(self, movsx(dest, byte_ptr(rax))),
-                17 => a!(self, movsx(dest, word_ptr(rax))),
-                18 => a!(self, movsxd(dest, dword_ptr(rax))),
-                32 => a!(self, movsx(r32_of(dest), byte_ptr(rax))),
-                33 => a!(self, movsx(r32_of(dest), word_ptr(rax))),
+                0 => a!(self, movzx(r32_of(dest), byte_ptr(base + disp))),
+                1 => a!(self, movzx(r32_of(dest), word_ptr(base + disp))),
+                2 => a!(self, mov(r32_of(dest), dword_ptr(base + disp))),
+                3 => a!(self, mov(dest, qword_ptr(base + disp))),
+                16 => a!(self, movsx(dest, byte_ptr(base + disp))),
+                17 => a!(self, movsx(dest, word_ptr(base + disp))),
+                18 => a!(self, movsxd(dest, dword_ptr(base + disp))),
+                32 => a!(self, movsx(r32_of(dest), byte_ptr(base + disp))),
+                33 => a!(self, movsx(r32_of(dest), word_ptr(base + disp))),
                 _ => return false,
             }
             self.stx(rt, dest, false);
         } else {
             let value = self.src(rt,false,true,rcx);
             match kind {
-                0 => a!(self, mov(byte_ptr(rax), r8_of(value))),
-                1 => a!(self, mov(word_ptr(rax), r16_of(value))),
-                2 => a!(self, mov(dword_ptr(rax), r32_of(value))),
-                3 => a!(self, mov(qword_ptr(rax), value)),
+                0 => a!(self, mov(byte_ptr(base + disp), r8_of(value))),
+                1 => a!(self, mov(word_ptr(base + disp), r16_of(value))),
+                2 => a!(self, mov(dword_ptr(base + disp), r32_of(value))),
+                3 => a!(self, mov(qword_ptr(base + disp), value)),
                 _ => return false,
             }
         }
@@ -5074,6 +5098,9 @@ impl<'a> E<'a> {
     }
 
     fn pair(&mut self, insn: u32) -> bool {
+        if self.u.funstack_sites.get(&self.pc)==Some(&insn) {
+            return fun_stack::pair(self,insn);
+        }
         let opc = bits(insn, 31, 30);
         let v = bit(insn, 26) != 0;
         let idx = bits(insn, 24, 23);
@@ -10581,6 +10608,81 @@ mod loopra_tests {
     }
 
     #[test]
+    fn funra_stack_proof_rejects_unknown_writers_and_complete_span() {
+        let mut u=Unit::new(StubKind::Plain,false);u.funstack=true;u.function_entry=Some(PC);
+        let mut r=LoopRa{pc:PC,fast:u.a.create_label(),exit:u.a.create_label(),reg:[0xff;NLOOPREGS],dirty:u32::MAX,vreg:[0xff;NVREGS],xreg:[0xff;NVREGS],flags:0xff};
+        r.reg[0]=31;u.region=Some(r);u.region_labels.insert(PC,r.fast);
+        for (extra,accept) in [(0x910043fd,true), // ADD FP,SP,#16, not a SP writer
+            (0x910043ff,true), // ADD SP,SP,#16, affine
+            (0x110003ff,false), // WSP zero extension cannot preserve raw tags
+            (0x9100001f,false), // ADD SP,X0,#0, arbitrary replacement
+            (0x8b2063ff,false), // extended ADD may write SP
+            (0xf9000001,false), // non-SP memory could invoke a helper
+            (0xd51b4400,false), // system/observer barrier
+            (0xa94003e0,false), // duplicate load destinations
+            (0xad0007e0,false)] { // SIMD pair not in this GPR proof
+            let words=[0xa9be4ff4,extra,0xd65f03c0];
+            let read=|p:u64|p.checked_sub(PC).and_then(|v|words.get((v/4)as usize)).copied();
+            assert_eq!(fun_stack::plan(&u,PC,&read).is_some(),accept,"word={extra:x}");
+        }
+    }
+
+    #[test]
+    fn funra_stack_actual_range_guards_near_bit56_no_data_deref() {
+        let mask=0x00ff_ffff_ffff_ffffu64;let mut cases=0;
+        for kind in [StubKind::Plain,StubKind::Patchable] {for (lo,hi) in [(-32,0),(0,32),(-512,511)] {
+            let mut u=Unit::new(kind,false);let mut entry=u.a.create_label();u.a.set_label(&mut entry).unwrap();u.labels.insert(PC,entry);
+            let mut slow=u.a.create_label();u.a.mov(rcx,qword_ptr(r15+off::X+31*8)).unwrap();
+            fun_stack::guard(&mut u,rcx,lo,hi,slow);
+            u.a.mov(qword_ptr(r15+off::AOT_LOOP_REGIONS),1i32).unwrap();u.a.mov(qword_ptr(r15+off::EXIT_REASON),EXIT_SVC as i32).unwrap();u.a.jmp(u.exit_label).unwrap();
+            u.a.set_label(&mut slow).unwrap();u.a.mov(qword_ptr(r15+off::AOT_LOOP_REGIONS),2i32).unwrap();u.a.mov(qword_ptr(r15+off::EXIT_REASON),EXIT_SVC as i32).unwrap();u.a.jmp(u.exit_label).unwrap();let(host,_)=assemble(u,0);
+            for raw in [0,1,31,32,511,512,mask-hi as u64,mask-hi as u64+1,mask,u64::MAX,0xab00000000008000] {
+                let mut c=cpu();c.x[31]=raw;c.set_nzcv(15);let x=c.x;
+                let expected=raw as i128+lo as i128>=0&&raw as u128+hi as u128<=mask as u128;
+                unsafe {crate::jit::attesor_jit_enter(&mut *c,host);}assert_eq!(c.aot_loop_regions,if expected {1}else {2});assert_eq!(c.x,x);assert_eq!(c.nzcv(),15);cases+=1;
+            }
+        }}eprintln!("funstack actual range-guard cases={cases}; no guest data dereferenced");
+    }
+
+    #[test]
+    fn funra_stack_deep_ras_overflow_and_epoch_canonical_full_state() {
+        use std::sync::atomic::{AtomicU64,Ordering};
+        if disabled_classes()!=0 {return;}
+        for epoch_case in [false,true] {for kind in [StubKind::Plain,StubKind::Patchable] {for tagged in [false,true] {
+            // Linear recursion exercises >256 native-frame limit, NOT Fibonacci
+            // replacement. The second source changes epoch inside an open call.
+            let words=if epoch_case {vec![0xa9bf7bf3,0x910003e9,0xb40000a0,0xd1000400,0xf9000272,0x97fffffb,0x91000400,0xa8c17bf3,0xd65f03c0]}
+                else {vec![0xa9bf7bf3,0x910003e9,0xb4000080,0xd1000400,0x97fffffc,0x91000400,0xa8c17bf3,0xd65f03c0]};
+            let cont=PC+if epoch_case {24}else {20};let return_pc=PC+words.len()as u64*4;
+            let read=|p:u64|p.checked_sub(PC).and_then(|v|words.get((v/4)as usize)).copied();
+            let mut u=Unit::new(kind,false);u.funra=true;u.funstack=true;u.loopra=true;u.funflags=true;
+            let l=u.a.create_label();u.labels.insert(PC,l);emit_block(&mut u,PC,&read);
+            assert!(u.funstack_emissions>=2,"epoch={epoch_case} emissions={} regions={} recursive={}",u.funstack_emissions,u.region_exits.len(),functions::recursive(PC,&read).is_some());assert_eq!(u.insns_fallback,0);let(host,_)=assemble(u,0);
+            // Dispatcher reentry after RAS saturation is the ORIGINAL native
+            // continuation, not bypassing the marker/return/epoch contract.
+            let mut continuation=Unit::new(kind,false);continuation.funra=false;continuation.funstack=false;
+            let l=continuation.a.create_label();continuation.labels.insert(cont,l);emit_block(&mut continuation,cont,&read);
+            let(resume,_)=assemble(continuation,((cont-PC)/4)as usize);
+            let epoch=AtomicU64::new(1);let mut stack:Vec<u64>=(0..4096).map(|n|0xfeed000000000000+n).collect();let initial=stack.clone();
+            let mut c=cpu();for n in 0..32 {c.x[n]=0xfeed000000000000+n as u64;c.v[n]=[n as u64,0x12345678+n as u64];}
+            c.x[0]=if epoch_case {1}else {300};c.x[18]=2;c.x[19]=&epoch as *const _ as u64;c.x[30]=return_pc;
+            c.x[31]=(stack.as_mut_ptr()as u64+stack.len()as u64*8)|if tagged {0xab00000000000000}else {0};c.set_nzcv(13);c.epoch_ptr=&epoch as *const _ as u64;
+            let mut reference=cpu();reference.x=c.x;reference.v=c.v;reference.set_nzcv(c.nzcv());
+            let mut steps=0;
+            loop {
+                let p=reference.pc();interp::exec(&mut reference,read(p).unwrap()).unwrap();if reference.pc()==p {reference.set_pc(p+4);}
+                steps+=1;assert!(steps<10000);
+                if reference.pc()==if epoch_case {cont}else {return_pc} {break;}
+            }
+            let expected_stack=stack.clone();stack.copy_from_slice(&initial);epoch.store(1,Ordering::SeqCst);
+            unsafe {crate::jit::attesor_jit_enter(&mut *c,host);}
+            if epoch_case {assert_eq!(epoch.load(Ordering::SeqCst),2);assert_eq!(c.entry_epoch,1);assert_eq!(c.pc(),cont);}
+            else {let mut exits=0;while c.pc()!=return_pc {assert_eq!(c.pc(),cont);unsafe {crate::jit::attesor_jit_enter(&mut *c,resume);}exits+=1;assert!(exits<400);}assert!(exits>0,"deep case must hit the existing RAS boundary");}
+            assert_eq!(c.x,reference.x,"epoch={epoch_case} tagged={tagged}");assert_eq!(c.v,reference.v);assert_eq!(c.nzcv(),reference.nzcv());assert_eq!(c.pc(),reference.pc());assert_eq!(c.exit_reason,EXIT_CONTINUE);assert_eq!(stack,expected_stack,"every guest stack byte");
+        }}}
+    }
+
+    #[test]
     fn funra_packed_cmp_flags_all_conditions_and_canonical_roundtrip() {
         for cond in 0..16 {
             let mut u=Unit::new(StubKind::Plain,false);
@@ -10608,6 +10710,7 @@ mod loopra_tests {
             0x52800013,0x1400000b,0x52800013,0xaa0003f4,0x51000680,0x97fffff6,
             0xaa0003e8,0x51000a80,0x0b130113,0x71000e9f,0xaa0003f4,0x54ffff28,
             0x0b130000,0xa9417bfd,0xa8c24ff4,0xd65f03c0];
+        for stackfast in [false,true] {
         for kind in [StubKind::Plain,StubKind::Patchable] {
         for packed in [false,true] {
         for outside_callret in [false,true] {
@@ -10617,15 +10720,18 @@ mod loopra_tests {
             let return_pc=PC+words.len()as u64*4;
             let read=|p:u64|p.checked_sub(PC).and_then(|n|words.get((n/4)as usize)).copied();
             assert!(functions::recursive(PC,&read).is_some());
-            let mut u=Unit::new(kind,false);u.funra=true;u.funflags=packed;u.loopra=true;u.callret=outside_callret;
+            let mut u=Unit::new(kind,false);u.funstack=stackfast;u.funra=true;u.funflags=packed;u.loopra=true;u.callret=outside_callret;
             let entry=u.a.create_label();u.labels.insert(PC,entry);
             emit_block(&mut u,PC,&read);
+            assert_eq!(u.funstack_emissions>0,stackfast);
+            assert_eq!(u.insns_fallback,0);
             assert_eq!(u.region_exits.len(),1);assert_eq!(u.function_entry,None);
             assert_eq!(u.region_exits[0].packed_flags().is_some(),packed);
             assert_eq!(u.extra_guest_range,Some((PC,return_pc)));
             let(host,_)=assemble(u,0);
             for n in [0,1,2,5,10,16,0x80000000,0xffffffff] {
-                let mut stack=vec![0u64;2048];
+                let mut stack:Vec<u64>=(0..2048).map(|i|0xfeed000000000000u64+i).collect();
+                let initial_stack=stack.clone();
                 let top=stack.as_mut_ptr()as u64+stack.len()as u64*8;
                 let mut c=cpu();
                 for i in 0..32 {c.x[i]=0x1234567890000000+i as u64;c.v[i]=[i as u64,0xfeed+i as u64];}
@@ -10638,13 +10744,15 @@ mod loopra_tests {
                     interp::exec(&mut r,w).unwrap();if r.pc()==p {r.set_pc(p+4);}
                     steps+=1;assert!(steps<100000);
                 }
+                let expected_stack=stack.clone();stack.copy_from_slice(&initial_stack);
                 unsafe {crate::jit::attesor_jit_enter(&mut *c,host);}
                 assert_eq!(c.pc(),return_pc,"n={n} tamper={tamper}");
                 assert_eq!(c.x,r.x,"n={n} tamper={tamper} caller_callret={outside_callret}");
+                assert_eq!(stack,expected_stack,"full guest stack bytes stackfast={stackfast}");
                 assert_eq!(c.v,r.v);assert_eq!(c.nzcv(),r.nzcv());
                 assert_eq!(c.exit_reason,EXIT_CONTINUE);
             }
-        }}}}
+        }}}}}
     }
 
     #[test]

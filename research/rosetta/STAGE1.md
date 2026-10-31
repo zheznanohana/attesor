@@ -87,3 +87,12 @@ matmul median 74.902 -> 68.270 ms (-8.9% elapsed, 32.4% native); N-body
 about 6%; the candidate is **not** promoted to production defaults. First-round
 gains of 26–30% were optimistic and are not used as confirmed numbers. No target
 is confirmed above 60%. Desktop clock/cache variability remains a limitation.
+
+## Codegen98 / later targeted stack result
+
+See [FUNSTACK98.md](FUNSTACK98.md). Per-basic-block raw-SP range versioning,
+shared exact-width memory backend and original native tagged SLOW path improve
+fib32 median18.261->13.869ms (-24.05%),41.94% native over three rounds. Only two
+extra rounds followed a clear initial screen. Seven focused tests pass;
+production unchanged. `funstack` joins the experimental selected profile, not
+production defaults. This is not full common-config >=60% acceptance.
