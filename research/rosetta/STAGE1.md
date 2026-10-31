@@ -113,3 +113,11 @@ checks.12 focused tests pass. Corrected release fib median14.409->13.333ms
 (-7.47%),39.38% native; paired gains16.00/7.11/0.65% are variable. Provisional
 experimental candidate only; no production change/full common-config60 claim.
 Initial release-only assembler label failure is preserved, not scored.
+
+## Codegen102 / rejected lazy-flag recipe and hotspot diagnostic
+
+[RECLEAFLAZY102.md](RECLEAFLAZY102.md): exact private CMP operand recipes retain
+all observer repairs/guards;15 focused tests pass. One screen +3.19% slower, OFF
+without repetition. One separate instrumented kernels diagnostic (not scored)
+points to sorting and four byte-classification loops. Census disables bgtrans,
+so it is not proof of normal background-tier behavior. Production unchanged.

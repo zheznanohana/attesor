@@ -4,9 +4,11 @@
 use super::*;
 use std::collections::{BTreeMap,BTreeSet};
 #[derive(Clone)]
-pub(super) struct Plan {header:u64,cmp:u32,branch_pc:u64,cond:u32,leaf:u64,taken:bool,words:BTreeMap<u64,u32>,starts:BTreeSet<u64>}
+pub(super) struct Plan {header:u64,cmp:u32,branch_pc:u64,cond:u32,leaf:u64,taken:bool,words:BTreeMap<u64,u32>,starts:BTreeSet<u64>,lazy:BTreeMap<u64,BTreeMap<u64,u32>>}
 #[derive(Clone,Copy)]
-pub(super) struct Context {pub branch_pc:u64,pub leaf:u64,next:u64,continuation:CodeLabel}
+pub(super) struct Recipe {pub cmp:u32}
+#[derive(Clone,Copy)]
+pub(super) struct Context {pub branch_pc:u64,pub leaf:u64,pub recipe:Option<Recipe>,next:u64,continuation:CodeLabel}
 fn gp(w:u32)->bool {
     fun_stack::pair_word(w)||w&0x3b000000==0x39000000&&bit(w,26)==0&&bits(w,23,22)<=1
         ||((w&0x1f800000==0x11000000||w&0x1f200000==0x0b000000
@@ -54,11 +56,21 @@ pub(super) fn plan(l:&super::super::loops::Loop)->Option<Plan> {
             let yes=pc.wrapping_add((sext(bits(w,23,5)as u64,19)<<2)as u64);let no=pc+4;
             for (entry,taken) in [(yes,true),(no,false)] {
                 if let Some(body)=leaf(l,entry,&prefix) {
+                    let mut lazy=BTreeMap::new();
+                    // Only CMP-immediate, no leaf NZCV readers/writers. Caller
+                    // continuation must definitely kill the value before ANY
+                    // observer; RET/public/missing/helper paths remain live.
+                    if cmp&0x7f80001f==0x7100001f&&body.values().all(|&v|!reads_flags(v)&&!writes_all_flags(v)) {
+                        let entry=fun_edges::prefix(l);
+                        for (&at,&call) in &l.words {if call&0xfc000000==0x94000000 {
+                            if let Some(proof)=fun_edges::dead(l,at+4,entry.as_ref()) {lazy.insert(at+4,proof);}
+                        }}
+                    }
                     let mut words=prefix.clone();words.extend(body);
                     if words.len()>32 {continue;}
                     let mut starts:BTreeSet<u64>=l.starts.iter().filter(|p|words.contains_key(p)).copied().collect();
                     starts.insert(l.header);starts.insert(entry);
-                    return Some(Plan{header:l.header,cmp,branch_pc:pc,cond:w&15,leaf:entry,taken,words,starts});
+                    return Some(Plan{header:l.header,cmp,branch_pc:pc,cond:w&15,leaf:entry,taken,words,starts,lazy});
                 }
             }return None;
         }
@@ -71,6 +83,9 @@ fn reset(u:&mut Unit,r:LoopRa,pc:u64,read:&dyn Fn(u64)->Option<u32>) {
     u.pending_funedge=None;u.dead_flags=false;u.dead_v=0;u.vc_dest=[0xff;2];u.tbi_mask_live=!jit_off("tbimask");
     u.loop_exit_flags=None;u.loop_exit_compare=None;if u.notbi_enabled {u.notbi.clear();}
     u.look.clear();let mut at=pc+4;while u.look.len()<LOOKAHEAD {let Some(w)=read(at)else {break;};u.look.push(w);if is_terminator(w){break;}at+=4;}
+}
+pub(super) fn witnesses(p:&Plan)->BTreeMap<u64,u32> {
+    p.lazy.values().flat_map(|w|w.iter().map(|(&pc,&w)|(pc,w))).collect()
 }
 pub(super) fn emit(e:&mut E<'_>,p:Plan,next:u64) {
     assert!(e.u.recleaf_context.is_none());let r=e.u.region.unwrap();let original_labels=e.u.region_labels.clone();
@@ -91,7 +106,8 @@ pub(super) fn emit(e:&mut E<'_>,p:Plan,next:u64) {
     if !jit_off("tbimask") {e.u.a.mov(r11,0x00ff_ffff_ffff_ffffu64).unwrap();}
     #[cfg(test)] e.u.a.add(qword_ptr(r15+off::AOT_LOOP_REGIONS),0x100000i32).unwrap();
     let analysis=std::mem::take(&mut e.u.funedge_analysis);
-    e.u.recleaf_context=Some(Context{branch_pc:p.branch_pc,leaf:p.leaf,next,continuation});
+    let recipe=(e.u.recleaflazy&&r.packed_flags().is_some()&&p.lazy.contains_key(&next)).then_some(Recipe{cmp:p.cmp});
+    e.u.recleaf_context=Some(Context{branch_pc:p.branch_pc,leaf:p.leaf,recipe,next,continuation});
     e.u.region_labels=p.starts.iter().map(|&pc|(pc,e.u.a.create_label())).collect();
     let read=|pc|p.words.get(&pc).copied();
     for &pc in &p.starts {
@@ -109,6 +125,7 @@ pub(super) fn emit(e:&mut E<'_>,p:Plan,next:u64) {
     #[cfg(test)] e.u.a.add(qword_ptr(r15+off::AOT_LOOP_REGIONS),0x100i32).unwrap();
     e.u.a.jmp(miss).unwrap(); // distinct labels even without test-only counter
     e.u.a.set_label(&mut miss).unwrap();e.u.recleaf_emissions+=1;
+    if recipe.is_some() {e.u.recleaf_lazy_emissions+=1;if std::env::var_os("ATTESOR_RECLEAFLAZY_LOG").is_some(){eprintln!("recleaflazy-site\t{:x}",e.pc);}}
     if std::env::var_os("ATTESOR_RECLEAF_LOG").is_some() {eprintln!("recleaf-site\t{:x}\tleaf={:x}\twords={}",e.pc,p.leaf,p.words.len());}
     e.host_call(next,|e|e.goto(p.header));
 }
@@ -123,8 +140,26 @@ pub(super) fn ret(e:&mut E<'_>,ctx:Context) {
     // then jump to an internal label as if it were a public reload entry.
     if !e.u.tbi_mask_live&&!jit_off("tbimask") {e.u.a.mov(r11,0x00ff_ffff_ffff_ffffu64).unwrap();}
     e.u.a.jmp(ctx.continuation).unwrap();
-    e.u.a.set_label(&mut stale).unwrap();e.st_pc_and_exit(ctx.next);
+    e.u.a.set_label(&mut stale).unwrap();if let Some(recipe)=ctx.recipe {repair(e,recipe);}e.st_pc_and_exit(ctx.next);
     e.u.a.set_label(&mut mismatch).unwrap();
-    e.u.a.mov(qword_ptr(r15+off::PC),rax).unwrap();e.u.a.mov(qword_ptr(r15+off::EXIT_REASON),EXIT_CONTINUE as i32).unwrap();
+    // Each cold entry independently sees the operand representation. Preserve
+    // RAW target while repair/flags_sub clobbers RAX; don't normalize tags.
+    e.u.a.mov(rdx,rax).unwrap();if let Some(recipe)=ctx.recipe {repair(e,recipe);}
+    e.u.a.mov(qword_ptr(r15+off::PC),rdx).unwrap();e.u.a.mov(qword_ptr(r15+off::EXIT_REASON),EXIT_CONTINUE as i32).unwrap();
     e.u.a.mov(qword_ptr(r15+off::EXIT_DATA),0i32).unwrap();let exit=e.dispatcher_exit();e.u.a.jmp(exit).unwrap();
+}
+
+// This slot is NOT a guest GPR: during the proven private interval it carries
+// source CMP's operand, not packed NZCV. No recipe crosses an observer/public
+// writeback without repair. Successful continuation must kill it first.
+pub(super) fn snapshot(e:&mut E<'_>,recipe:Recipe) {
+    let sf=bit(recipe.cmp,31)!=0;let dst=e.u.region.unwrap().packed_flags().unwrap();
+    let src=e.src(bits(recipe.cmp,9,5),true,sf,rax);e.copy(dst,src,sf);e.u.fuse=None;
+    #[cfg(test)] e.u.a.add(qword_ptr(r15+off::AOT_LOOP_REGIONS),0x200000i32).unwrap();
+}
+fn repair(e:&mut E<'_>,recipe:Recipe) {
+    let value=e.u.region.unwrap().packed_flags().unwrap();let sf=bit(recipe.cmp,31)!=0;
+    let imm=(bits(recipe.cmp,21,10)<<if bit(recipe.cmp,22)!=0 {12}else {0})as i32;
+    if sf {e.u.a.cmp(value,imm).unwrap();}else {e.u.a.cmp(r32_of(value),imm).unwrap();}
+    assert!(!e.u.dead_flags);e.flags_sub();
 }

@@ -131,6 +131,9 @@ pub struct Unit {
     vpair: bool,
     vtrace: bool,
     vbatch:bool,
+    recleaflazy:bool,
+    recleaf_lazy_proof:std::collections::BTreeMap<u64,u32>,
+    recleaf_lazy_emissions:u64,
     recleaf:bool,
     recleaf_plan:Option<rec_leaf::Plan>,
     recleaf_context:Option<rec_leaf::Context>,
@@ -587,6 +590,7 @@ impl Unit {
             vpair: vpair_enabled(),
             vtrace: vtrace_enabled(),
             vbatch:vbatch_enabled(),
+            recleaflazy:recleaflazy_enabled(),recleaf_lazy_proof:std::collections::BTreeMap::new(),recleaf_lazy_emissions:0,
             recleaf:recleaf_enabled(),recleaf_plan:None,recleaf_context:None,recleaf_emissions:0,
             movflags:movflags_enabled(),movflags_emissions:0,
             funedge:funedge_enabled(),funedge_analysis:fun_edges::Analysis::default(),pending_funedge:None,funedge_emissions:0,
@@ -2408,6 +2412,11 @@ fn addrhoist_enabled()->bool {
     *F.get_or_init(||!jit_off("addrhoist")&&std::env::var("ATTESOR_JIT_ON").unwrap_or_default().split(',').any(|g|g=="addrhoist"))
 }
 
+fn recleaflazy_enabled()->bool {
+    static F:std::sync::OnceLock<bool>=std::sync::OnceLock::new();
+    *F.get_or_init(||!jit_off("recleaflazy")&&std::env::var("ATTESOR_JIT_ON").unwrap_or_default().split(',').any(|g|g=="recleaflazy"))
+}
+
 fn recleaf_enabled()->bool {
     static F:std::sync::OnceLock<bool>=std::sync::OnceLock::new();
     *F.get_or_init(||!jit_off("recleaf")&&std::env::var("ATTESOR_JIT_ON").unwrap_or_default().split(',').any(|g|g=="recleaf"))
@@ -2740,7 +2749,7 @@ pub(super) fn prepare_bgtrans() {
         loopra_enabled(), regioncache_enabled(), has_avx(), has_fma(),
         has_aes(), has_pclmul(), has_sha(), has_f16c(), loopra2_enabled(),
         has_avx512(), avx512_enabled(), avx512_nan_enabled(), super::fastenc_enabled(),
-        super::loops::census_enabled(), super::cost::probes(), vloop_enabled(), vloop2_enabled(), vchain_enabled(), vscalar_enabled(), funra_enabled(), funflags_enabled(), selectra_enabled(), regflags_enabled(), cfgflags_enabled(), xspill_enabled(), fmovra_enabled(), vpair_enabled(), vtrace_enabled(), vbatch_enabled(), recleaf_enabled(), movflags_enabled(), funedge_enabled(), funstack_enabled(), foldaddr_enabled(), fpflags_enabled(), fpguard_enabled(), fpstable_enabled(), addrhoist_enabled(), leafra_enabled(), csetfast_enabled(), csetpair_enabled(), leafinline_enabled(), leafflags_enabled(), super::bliccache::enabled());
+        super::loops::census_enabled(), super::cost::probes(), vloop_enabled(), vloop2_enabled(), vchain_enabled(), vscalar_enabled(), funra_enabled(), funflags_enabled(), selectra_enabled(), regflags_enabled(), cfgflags_enabled(), xspill_enabled(), fmovra_enabled(), vpair_enabled(), vtrace_enabled(), vbatch_enabled(), recleaflazy_enabled(), recleaf_enabled(), movflags_enabled(), funedge_enabled(), funstack_enabled(), foldaddr_enabled(), fpflags_enabled(), fpguard_enabled(), fpstable_enabled(), addrhoist_enabled(), leafra_enabled(), csetfast_enabled(), csetpair_enabled(), leafinline_enabled(), leafflags_enabled(), super::bliccache::enabled());
 }
 
 /// Translate one basic block starting at `pc` into `u`. The caller must have
@@ -2917,6 +2926,9 @@ fn emit_multi_region(u: &mut Unit, l: &super::loops::Loop, read: &dyn Fn(u64) ->
     u.recleaf_plan=if u.recleaf&&u.function_entry==Some(l.header)&&!u.commpage_checks
         &&!u.no_internal_jumps&&!u.quick&&!u.xspill&&disabled_classes()==0&&u.inline_leaf_calls.is_empty()
         &&!super::cost::probes() {rec_leaf::plan(l)}else {None};
+    u.recleaf_lazy_proof=if u.recleaflazy&&region.packed_flags().is_some() {
+        u.recleaf_plan.as_ref().map(rec_leaf::witnesses).unwrap_or_default()
+    }else {std::collections::BTreeMap::new()};
     let lo = *l.words.first_key_value().unwrap().0;
     let hi = *l.words.last_key_value().unwrap().0 + 4;
     u.extra_guest_range = Some(u.extra_guest_range.map_or((lo, hi), |(a,b)| (a.min(lo),b.max(hi))));
@@ -2934,7 +2946,7 @@ fn emit_multi_region(u: &mut Unit, l: &super::loops::Loop, read: &dyn Fn(u64) ->
     u.region_labels.clear();
     u.region = None;
     u.funedge_analysis=fun_edges::Analysis::default();u.pending_funedge=None;
-    u.recleaf_plan=None;u.recleaf_context=None;
+    u.recleaf_plan=None;u.recleaf_context=None;u.recleaf_lazy_proof.clear();
     u.cfgflags=cfgflags;
     end
 }
@@ -3280,6 +3292,10 @@ fn emit_block_body(u:&mut Unit,pc:u64,read:&dyn Fn(u64)->Option<u32>,fp_sink:Opt
             assert_eq!(word,insn);assert!(translated);
             assert!(!called||insn&0xfc000000==0x94000000,"funedge native proof acquired a helper");
         }
+        if let Some(&word)=e.u.recleaf_lazy_proof.get(&cur) {
+            assert_eq!(word,insn);assert!(translated);
+            assert!(!called||insn&0xfc000000==0x94000000,"recipe continuation proof acquired helper");
+        }
         if e.u.pending_funedge.is_some_and(|p|p.cmp_pc==cur) {
             assert!(!called&&translated&&matches!(e.u.fuse,Some(FuseKind::Sub)));
         }
@@ -3382,6 +3398,11 @@ impl<'a> E<'a> {
         };
         if dis & class != 0 {
             return false;
+        }
+        if let Some(ctx)=self.u.recleaf_context {
+            if let Some(recipe)=ctx.recipe {
+                if self.pc==ctx.branch_pc-4 {assert_eq!(insn,recipe.cmp);rec_leaf::snapshot(self,recipe);return true;}
+            }
         }
         match op0 {
             0b1000 | 0b1001 => self.dp_imm(insn),
@@ -10850,6 +10871,90 @@ mod loopra_tests {
     }
 
     #[test]
+    fn funra_recleaflazy_proof_rejects_readers_writers_and_live_continuations() {
+        let good=[0xa9bf7bf3,0x910003e9,0x7100001f,0x540000a0,0xd1000400,0x97fffffb,0x71000e7f,0x91000400,0xa8c17bf3,0xd65f03c0];
+        let planning=|w:&[u32]| {
+            let read=|p:u64|p.checked_sub(PC).and_then(|v|w.get((v/4)as usize)).copied();
+            functions::recursive(PC,&read).and_then(|l|rec_leaf::plan(&l))
+        };
+        assert!(!rec_leaf::witnesses(&planning(&good).unwrap()).is_empty());
+        for (index,word) in [(2,0x6b02001f), // RR: no single-operand recipe
+            (6,0xd503201f), // continuation RET before kill
+            (6,0x14000000), // cycle
+            (6,0x54000020), // NZCV reader before kill
+            (6,0xf9000270), // uncertain memory before kill
+            (8,0x71000e7f), // leaf writes NZCV
+            (8,0x54000020)] { // leaf reads NZCV
+            let mut w=good;w[index]=word;let p=planning(&w).expect("eager101 fallback still valid");
+            assert!(rec_leaf::witnesses(&p).is_empty(),"index={index} word={word:x}");
+        }
+        let mut cut=functions::recursive(PC,&|p|p.checked_sub(PC).and_then(|v|good.get((v/4)as usize)).copied()).unwrap();
+        cut.words.remove(&(PC+24));assert!(rec_leaf::witnesses(&rec_leaf::plan(&cut).unwrap()).is_empty());
+    }
+
+    #[test]
+    fn funra_recleaflazy_all_conditions_cold_observers_full_state() {
+        use std::sync::atomic::{AtomicU64,Ordering};
+        if disabled_classes()!=0 {return;}
+        let mut checked=0;
+        for sf in [false,true] {for cond in 0..14 {for mode in 0..3 {for kind in [StubKind::Plain,StubKind::Patchable] {for lazy in [false,true] {
+            let cmp=if sf {0xf100081f}else {0x7100081f};
+            // Root chooses nonleaf, then MOV X0,X18 selects an arbitrary input
+            // for the actual inlined leaf. Leaf changes X0 AFTER CMP: repair
+            // MUST use the saved operand, not its current value.
+            let store=if mode==2 {0xf90007f0}else {0xf9000270};
+            let words=[0xa9bf7bf3,0x910003e9,cmp,0x540000a0|cond,0xaa1203e0,0x97fffffb,0x71000e7f,0x14000003,0x91004400,store,0xa8c17bf3,0xd65f03c0];
+            let read=|p:u64|p.checked_sub(PC).and_then(|v|words.get((v/4)as usize)).copied();let cont=PC+24;let ret=PC+48;
+            let values=[0u64,1,2,3,u64::MAX,1<<63,i64::MAX as u64,0x80000000,0x7fffffff,0xffffffff,0xab00000000000001];
+            let leaf=|value:u64| {let mut p=cpu();p.x[0]=value;interp::exec(&mut p,cmp).unwrap();p.cond(cond)};
+            let Some(root)=values.iter().copied().find(|&v|!leaf(v))else {continue;};
+            let mut u=Unit::new(kind,false);u.recleaf=true;u.recleaflazy=lazy;u.funra=true;u.funflags=true;u.funstack=true;u.loopra=true;
+            let l=u.a.create_label();u.labels.insert(PC,l);emit_block(&mut u,PC,&read);assert_eq!(u.recleaf_lazy_emissions>0,lazy);assert_eq!(u.insns_fallback,0);let(host,_)=assemble(u,0);
+            for value in values.into_iter().filter(|&v|leaf(v)) {for nv in 0..16 {
+                let epoch=AtomicU64::new(1);let mut data=0u64;let mut stack=[0xfeed123456789abcu64;64];let initial=stack;
+                let raw_target=if nv&1!=0 {0xab00000000000000|cont}else {ret+4};
+                let mut c=cpu();for n in 0..32 {c.x[n]=0xfedcba9800000000+n as u64;c.v[n]=[0x7ff0000000000042+n as u64,0xfeed000000000000+n as u64];}
+                c.x[0]=root;c.x[18]=value;c.x[16]=if mode==2 {raw_target}else {2};
+                c.x[19]=if mode==1 {&epoch as *const _ as u64}else {&mut data as *mut _ as u64};
+                c.x[30]=ret;c.x[31]=(stack.as_mut_ptr()as u64+512)|if nv&1!=0 {0xab00000000000000}else {0};
+                c.set_nzcv(nv);c.fpcr=(nv as u64&3)<<22|if nv&4!=0 {1<<24}else {0};c.fpsr=0x9f;c.epoch_ptr=&epoch as *const _ as u64;
+                let mut r=cpu();r.x=c.x;r.v=c.v;r.set_nzcv(nv);r.fpcr=c.fpcr;r.fpsr=c.fpsr;
+                let stop=if mode==1 {cont}else if mode==2 {raw_target}else {ret};let mut steps=0;
+                while r.pc()!=stop {let p=r.pc();interp::exec(&mut r,read(p).unwrap()).unwrap();if r.pc()==p {r.set_pc(p+4);}steps+=1;assert!(steps<64);}
+                let expected_stack=stack;let expected_data=data;stack=initial;std::hint::black_box(&mut stack);data=0;std::hint::black_box(&mut data);epoch.store(1,Ordering::SeqCst);
+                unsafe {crate::jit::attesor_jit_enter(&mut *c,host);}
+                assert!(c.aot_loop_regions>=if lazy {0x300000}else {0x100000},"actual snapshot path");
+                if mode==1 {assert_eq!(epoch.load(Ordering::SeqCst),2);assert_eq!(c.entry_epoch,1);}
+                assert_eq!(c.x,r.x,"sf={sf} cond={cond} mode={mode} lazy={lazy} operand={value:x}");assert_eq!(c.v,r.v);assert_eq!(c.nzcv(),r.nzcv(),"cold flags operand={value:x} AFTER source ADD");assert_eq!(c.fpcr,r.fpcr);assert_eq!(c.fpsr,r.fpsr);assert_eq!(c.pc(),stop);assert_eq!(c.exit_reason,EXIT_CONTINUE);assert_eq!(c.exit_data,0);assert_eq!(stack,expected_stack);assert_eq!(data,expected_data);checked+=1;
+            }}
+        }}}}}eprintln!("recleaflazy full-state/FPCR/FPSR/stack observer cases={checked}");
+    }
+
+    #[test]
+    fn funra_recleaflazy_multiple_sites_eager_return_and_ras_full() {
+        if disabled_classes()!=0 {return;}
+        for deep in [false,true] {for kind in [StubKind::Plain,StubKind::Patchable] {for lazy in [false,true] {for tagged in [false,true] {
+            let words=if deep {vec![0xa9bf7bf3,0x910003e9,0x7100001f,0x540000a0,0xd1000400,0x97fffffb,0x71000e7f,0x91000400,0xa8c17bf3,0xd65f03c0]}
+                else {vec![0xa9bf7bf3,0x910003e9,0x7100001f,0x540000c0,0xd1000400,0x97fffffb,0x97fffffa,0x91000400,0x14000001,0xa8c17bf3,0xd65f03c0]};
+            let read=|p:u64|p.checked_sub(PC).and_then(|v|words.get((v/4)as usize)).copied();let ret=PC+words.len()as u64*4;
+            let mut u=Unit::new(kind,false);u.recleaf=true;u.recleaflazy=lazy;u.funra=true;u.funflags=true;u.funstack=true;u.loopra=true;
+            let l=u.a.create_label();u.labels.insert(PC,l);emit_block(&mut u,PC,&read);assert_eq!(u.recleaf_lazy_emissions,if lazy {1}else {0});assert_eq!(u.insns_fallback,0);let(host,_)=assemble(u,0);
+            // The first of two callsites is lazy (next is exact self call);
+            // the second MUST be eager because ADD;RET never kills flags.
+            let mut resume=Unit::new(kind,false);resume.funra=false;let l=resume.a.create_label();resume.labels.insert(PC+24,l);emit_block(&mut resume,PC+24,&read);let(continuation,_)=assemble(resume,6);
+            let mut stack:Vec<u64>=(0..4096).map(|n|0xfeed000000000000+n).collect();let initial=stack.clone();let mut c=cpu();for n in 0..32 {c.x[n]=0xfedcba9800000000+n as u64;c.v[n]=[n as u64,0x7ff0000000000042+n as u64];}
+            c.x[0]=if deep {300}else {1};c.x[30]=ret;c.x[31]=(stack.as_mut_ptr()as u64+stack.len()as u64*8)|if tagged {0xab00000000000000}else {0};c.set_nzcv(13);c.fpcr=0x04c00000;c.fpsr=0x9f;
+            let mut r=cpu();r.x=c.x;r.v=c.v;r.set_nzcv(13);r.fpcr=c.fpcr;r.fpsr=c.fpsr;let mut steps=0;
+            while r.pc()!=ret {let p=r.pc();interp::exec(&mut r,read(p).unwrap()).unwrap();if r.pc()==p {r.set_pc(p+4);}steps+=1;assert!(steps<10000);}
+            let expected=stack.clone();stack.copy_from_slice(&initial);unsafe {crate::jit::attesor_jit_enter(&mut *c,host);}
+            let mut exits=0;while c.pc()!=ret {assert!(deep);assert_eq!(c.pc(),PC+24);unsafe {crate::jit::attesor_jit_enter(&mut *c,continuation);}exits+=1;assert!(exits<400);}
+            if deep {assert!(exits>0);assert!(c.aot_loop_regions>=0x100&&c.aot_loop_regions<0x100000,"full RAS refuses inline/snapshot");}
+            else {assert!(c.aot_loop_regions>=if lazy {0x400000}else {0x200000});}
+            assert_eq!(c.x,r.x);assert_eq!(c.v,r.v);assert_eq!(c.nzcv(),r.nzcv());assert_eq!(c.fpcr,r.fpcr);assert_eq!(c.fpsr,r.fpsr);assert_eq!(c.exit_reason,EXIT_CONTINUE);assert_eq!(stack,expected);
+        }}}}
+    }
+
+    #[test]
     fn funra_stack_proof_rejects_unknown_writers_and_complete_span() {
         let mut u=Unit::new(StubKind::Plain,false);u.funstack=true;u.function_entry=Some(PC);
         let mut r=LoopRa{pc:PC,fast:u.a.create_label(),exit:u.a.create_label(),reg:[0xff;NLOOPREGS],dirty:u32::MAX,vreg:[0xff;NVREGS],xreg:[0xff;NVREGS],flags:0xff};
@@ -10952,6 +11057,7 @@ mod loopra_tests {
             0x52800013,0x1400000b,0x52800013,0xaa0003f4,0x51000680,0x97fffff6,
             0xaa0003e8,0x51000a80,0x0b130113,0x71000e9f,0xaa0003f4,0x54ffff28,
             0x0b130000,0xa9417bfd,0xa8c24ff4,0xd65f03c0];
+        for lazy in [false,true] {
         for leaf_fast in [false,true] {
         for movfast in [false,true] {
         for edgefast in [false,true] {
@@ -10965,13 +11071,14 @@ mod loopra_tests {
             let return_pc=PC+words.len()as u64*4;
             let read=|p:u64|p.checked_sub(PC).and_then(|n|words.get((n/4)as usize)).copied();
             assert!(functions::recursive(PC,&read).is_some());
-            let mut u=Unit::new(kind,false);u.recleaf=leaf_fast;u.movflags=movfast;u.funedge=edgefast;u.funstack=stackfast;u.funra=true;u.funflags=packed;u.loopra=true;u.callret=outside_callret;
+            let mut u=Unit::new(kind,false);u.recleaflazy=lazy;u.recleaf=leaf_fast;u.movflags=movfast;u.funedge=edgefast;u.funstack=stackfast;u.funra=true;u.funflags=packed;u.loopra=true;u.callret=outside_callret;
             let entry=u.a.create_label();u.labels.insert(PC,entry);
             emit_block(&mut u,PC,&read);
             assert_eq!(u.funstack_emissions>0,stackfast);
             assert_eq!(u.funedge_emissions>0,edgefast&&packed);
             assert_eq!(u.movflags_emissions>0,movfast);
             assert_eq!(u.recleaf_emissions>0,leaf_fast);
+            assert_eq!(u.recleaf_lazy_emissions>0,lazy&&leaf_fast&&packed);
             assert_eq!(u.insns_fallback,0);
             assert_eq!(u.region_exits.len(),1);assert_eq!(u.function_entry,None);
             assert_eq!(u.region_exits[0].packed_flags().is_some(),packed);
@@ -11001,7 +11108,7 @@ mod loopra_tests {
                 assert_eq!(c.v,r.v);assert_eq!(c.nzcv(),r.nzcv());
                 assert_eq!(c.exit_reason,EXIT_CONTINUE);
             }
-        }}}}}}}}
+        }}}}}}}}}
     }
 
     #[test]
