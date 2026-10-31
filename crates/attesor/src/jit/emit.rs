@@ -165,6 +165,8 @@ pub struct Unit {
     fpflags_sinks:u64,
     leafra: bool,
     leafinline: bool,
+    inlinewide:bool,
+    inlinewide_emissions:u64,
     inlinegp:bool,
     inlinegp_emissions:u64,
     leafflags: bool,
@@ -616,6 +618,7 @@ impl Unit {
             fpflags_sinks:0,
             leafra: leafra_enabled(),
             leafinline: leafinline_enabled(),
+            inlinewide:inlinewide_enabled(),inlinewide_emissions:0,
             inlinegp:inlinegp_enabled(),inlinegp_emissions:0,
             leafflags: leafflags_enabled(),
             inline_flag_continuations: HashMap::new(),
@@ -2483,6 +2486,11 @@ fn vtrace_enabled() -> bool {
 
 fn inline_epoch_check(u:&Unit)->bool {u.callret||ibtc2_enabled()}
 
+fn inlinewide_enabled()->bool {
+    static F:std::sync::OnceLock<bool>=std::sync::OnceLock::new();
+    *F.get_or_init(||!jit_off("inlinewide")&&std::env::var("ATTESOR_JIT_ON").unwrap_or_default().split(',').any(|g|g=="inlinewide"))
+}
+
 fn inlinegp_enabled()->bool {
     static F:std::sync::OnceLock<bool>=std::sync::OnceLock::new();
     *F.get_or_init(||!jit_off("inlinegp")&&std::env::var("ATTESOR_JIT_ON").unwrap_or_default().split(',').any(|g|g=="inlinegp"))
@@ -2768,7 +2776,7 @@ pub(super) fn prepare_bgtrans() {
         loopra_enabled(), regioncache_enabled(), has_avx(), has_fma(),
         has_aes(), has_pclmul(), has_sha(), has_f16c(), loopra2_enabled(),
         has_avx512(), avx512_enabled(), avx512_nan_enabled(), super::fastenc_enabled(),
-        super::loops::census_enabled(), super::cost::probes(), vloop_enabled(), vloop2_enabled(), vchain_enabled(), vscalar_enabled(), funra_enabled(), funflags_enabled(), selectra_enabled(), regflags_enabled(), cfgflags_enabled(), xspill_enabled(), fmovra_enabled(), vpair_enabled(), vtrace_enabled(), vbatch_enabled(), inlinegp_enabled(), bytestream_enabled(), recleaflazy_enabled(), recleaf_enabled(), movflags_enabled(), funedge_enabled(), funstack_enabled(), foldaddr_enabled(), fpflags_enabled(), fpguard_enabled(), fpstable_enabled(), addrhoist_enabled(), leafra_enabled(), csetfast_enabled(), csetpair_enabled(), leafinline_enabled(), leafflags_enabled(), super::bliccache::enabled());
+        super::loops::census_enabled(), super::cost::probes(), vloop_enabled(), vloop2_enabled(), vchain_enabled(), vscalar_enabled(), funra_enabled(), funflags_enabled(), selectra_enabled(), regflags_enabled(), cfgflags_enabled(), xspill_enabled(), fmovra_enabled(), vpair_enabled(), vtrace_enabled(), vbatch_enabled(), inlinewide_enabled(), inlinegp_enabled(), bytestream_enabled(), recleaflazy_enabled(), recleaf_enabled(), movflags_enabled(), funedge_enabled(), funstack_enabled(), foldaddr_enabled(), fpflags_enabled(), fpguard_enabled(), fpstable_enabled(), addrhoist_enabled(), leafra_enabled(), csetfast_enabled(), csetpair_enabled(), leafinline_enabled(), leafflags_enabled(), super::bliccache::enabled());
 }
 
 /// Translate one basic block starting at `pc` into `u`. The caller must have
@@ -2797,7 +2805,12 @@ pub fn emit_block(u: &mut Unit, pc: u64, read: &dyn Fn(u64) -> Option<u32>) -> u
                     ||w&0xfc000000==0x94000000||super::loops::indirect_call_reg(w).is_some()));
             l.starts.extend(u.labels.keys().filter(|p|l.words.contains_key(p)).copied());
             let mut n=0;for &p in l.words.keys() {if l.starts.contains(&p)||n==MAX_BLOCK_INSNS {l.starts.insert(p);n=0;}n+=1;}
-            if safe&&l.starts.len()<=32&&l.words.len()<=256&&l.reducible() {
+            // Keep all native/target/epoch/reducibility/source-word proofs;
+            // only the bounded number of private starts changes under opt-in.
+            if safe&&l.starts.len()<=(if u.inlinewide {64}else {32})&&l.words.len()<=256&&l.reducible() {
+                if l.starts.len()>32 {u.inlinewide_emissions+=1;
+                    if std::env::var_os("ATTESOR_INLINEWIDE_LOG").is_some() {eprintln!("inlinewide-region\t{pc:x}\t{}\t{}",l.starts.len(),l.words.len());}
+                }
                 if std::env::var_os("ATTESOR_LEAFINLINE_LOG").is_some() {eprintln!("leafinline-region\t{pc:x}\t{}\t{}",l.words.len(),plans.len());}
                 u.inline_call_words=plans.keys().map(|&p|(p,l.words[&p])).collect();
                 if u.leafflags&&!inline_epoch_check(u) {
@@ -10043,6 +10056,40 @@ mod loopra_tests {
         assert_eq!(c.exit_reason,EXIT_BLICCACHE);assert_eq!(c.exit_data,PC);assert_eq!(c.pc(),PC+0x7000);assert_eq!(c.x[30],PC+4);
     }
 
+
+    #[test]
+    fn inlinewide_bounded_many_block_call_loop_state_and_guards() {
+        if disabled_classes()!=0||!super::super::precise_invalidation_enabled(){return;}
+        let target=PC+0x4000;let site=PC+12;let mut checked=0;
+        let leaf=[0xb9400008,0xb9400029,0x6b09011f,0x1a9fd7e8,0x5a9fa100,0xd65f03c0];
+        for cells in [27,32] {for enabled in [false,true] {
+            // Independently authored branch diamonds, no Apple bytes. One
+            // original native comparator call per iteration, public entry at0.
+            let mut words=vec![0xf9000272,0xaa1403e0,0xaa1503e1,0xd63f0adf];
+            for i in 0..cells {words.extend([0x7100005f|((i as u32)<<10),0x54000040,0x9100054a,0xd503201f]);}
+            words.push(0xf10006f7);let at=words.len();words.push(0x54000001|(((-(at as i32)as u32)&0x7ffff)<<5));let exit=PC+words.len()as u64*4;words.push(0xd4001001);
+            let read=|p:u64|if p>=target {leaf.get(((p-target)/4)as usize).copied()}else {p.checked_sub(PC).and_then(|o|words.get((o/4)as usize)).copied()};
+            super::super::bliccache::set_hint_for_test(site,target);
+            let l=super::super::loops::allocation_with_calls(PC,&read,&|p,_|p==site).unwrap();assert!(l.reducible());assert!(l.starts.len()>32);assert!(l.words.len()<256);
+            let mut u=Unit::new(StubKind::Patchable,false);u.inlinewide=enabled;u.inlinegp=false;u.leafinline=true;u.leafflags=true;u.loopra=true;u.loopra2=true;u.inline_ok=true;u.funra=false;u.leafra=false;u.callret=false;
+            let entries:Vec<_>=l.starts.iter().copied().chain(std::iter::once(exit)).collect();
+            for &p in &entries {let label=u.a.create_label();u.labels.insert(p,label);}
+            for &p in &entries {emit_block(&mut u,p,&read);}
+            assert_eq!(u.inlinewide_emissions,if enabled&&cells==27 {1}else {0},"cells={cells} enabled={enabled}");assert_eq!(u.insns_fallback,0);
+            if cells==32 {continue;}let(host,_)=assemble(u,0);
+            for guard in 0..3 {for initial in 0..16 {for tagged in [false,true] {for count in [1,3] {
+                let epoch=std::sync::atomic::AtomicU64::new(1);let data=[if initial&1==0 {u64::MAX}else {0},if initial&2==0 {1}else {0xffffffff}];let before=data;
+                let mut c=cpu();for n in 0..32 {c.x[n]=0xfedc123480000000+n as u64*31;c.v[n]=[0x7ff0000000000042+n as u64,0xdeadbeef00000000+n as u64];}
+                c.x[2]=initial as u64;c.x[18]=if guard==2 {2}else {1};c.x[19]=&epoch as *const _ as u64;c.x[20]=data.as_ptr()as u64|if tagged {0xab00000000000000}else {0};c.x[21]=unsafe {data.as_ptr().add(1)}as u64;c.x[22]=target+if guard==1 {4}else {0};c.x[23]=count;c.set_nzcv(initial);c.fpcr=(((initial%4)as u64)<<22)|if initial&8!=0 {1<<25}else {0};c.fpsr=0x0800009f;
+                let mut r=cpu();r.x=c.x;r.v=c.v;r.fpcr=c.fpcr;r.fpsr=c.fpsr;r.set_nzcv(initial);let mut ended=false;
+                for _ in 0..1000 {let at=r.pc();if guard!=0&&at==site {ended=true;break;}
+                    match interp::exec(&mut r,read(at).unwrap()) {Ok(())=>{},Err(interp::Exit::Svc(0x80))=>{ended=true;break;},Err(e)=>panic!("{e:?}")}
+                }assert!(ended);epoch.store(1,std::sync::atomic::Ordering::SeqCst);c.epoch_ptr=&epoch as *const _ as u64;
+                unsafe {crate::jit::attesor_jit_enter(&mut *c,host);}
+                assert_eq!(c.x,r.x,"enabled={enabled} guard={guard} count={count} NZCV={initial}");assert_eq!(c.v,r.v);assert_eq!(c.nzcv(),r.nzcv());assert_eq!(c.pc(),r.pc());assert_eq!(c.fpcr,r.fpcr);assert_eq!(c.fpsr,r.fpsr);assert_eq!(data,before);assert_eq!(c.exit_reason,match guard {0=>EXIT_SVC,1=>EXIT_LEAFINLINE_MISS,_=>EXIT_CONTINUE});checked+=1;
+            }}}}
+        }}eprintln!("inlinewide full-state cases={checked}; over64 and OFF rejected");
+    }
 
     #[test]
     fn inlinegp_canonical_short_leaf_all_state_and_precall_guards() {
