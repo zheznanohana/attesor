@@ -1,0 +1,20 @@
+#!/bin/sh
+# Explicit local research profile; general attesor defaults remain unchanged.
+# No stable/general-app claim. Respect an explicitly supplied JIT_ON (even empty)
+# and retain the backend's JIT_OFF overrides. JIT-only is the measured mode.
+set -eu
+HERE=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
+BIN=${ATTESOR_BIN:-"$HERE/attesor"}
+if [ ! -x "$BIN" ] && [ -z "${ATTESOR_BIN+x}" ]; then
+    BIN="$HERE/../target/release/attesor"
+fi
+if [ ! -x "$BIN" ]; then
+    echo "attesor-fast: executable not found: $BIN" >&2
+    exit 127
+fi
+if [ -z "${ATTESOR_JIT_ON+x}" ]; then
+    ATTESOR_JIT_ON='avx512,avx512nan,bgtrans,fastenc,flagreg,hugepages,isel2,loopra,nativefixups,notbi,offline-constprop,offline-dse,offline-layout-profile,pathcache,preciseinvalidate,process-qos,regioncache,slotreuse,vloop,loopra2,vchain,funra,funflags,selectra,vloop2,vscalar,cfgflags,vpair,vtrace,bliccache,leafinline,leafflags,fpflags,funstack,recleaf,inlinewide'
+    export ATTESOR_JIT_ON
+fi
+export ATTESOR_NO_AOT_BUILD=1
+exec "$BIN" --no-aot "$@"

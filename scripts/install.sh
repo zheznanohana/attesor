@@ -24,6 +24,7 @@ mkdir -p "$PREFIX/native"
 for l in libattesornative libattesorvimage libattesorvdsp libattesorcompression libattesorcrypto libattesorimageio; do install -S -m 755 "native/out/$l.dylib" "$PREFIX/native/"; done
 mkdir -p "$PREFIX/gpu"
 install -S -m 755 "$BIN" "$PREFIX/attesor"
+install -S -m 755 scripts/attesor-fast "$PREFIX/attesor-fast"
 for l in libmclbridge libmclmetal libattesorui libattesorexec; do install -S -m 755 "gpu/out/$l.dylib" "$PREFIX/gpu/"; done
 for s in gpu/chromium-gpu scripts/vscode-gpu scripts/etcher-gpu; do install -S -m 755 "$s" "$PREFIX/$(basename "$s")"; done
 ln -sf chromium-gpu "$PREFIX/chromium"; ln -sf vscode-gpu "$PREFIX/code"; ln -sf etcher-gpu "$PREFIX/etcher"
