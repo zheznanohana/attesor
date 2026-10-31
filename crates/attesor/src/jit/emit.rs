@@ -27,6 +27,8 @@ mod fp_trace;
 mod fp_batch;
 #[path = "fold_addr.rs"]
 mod fold_addr;
+#[path = "byte_stream.rs"]
+mod byte_stream;
 #[path = "fun_stack.rs"]
 mod fun_stack;
 #[path = "fun_edges.rs"]
@@ -147,6 +149,9 @@ pub struct Unit {
     funstack:bool,
     funstack_sites:HashMap<u64,u32>,
     funstack_emissions:u64,
+    bytestream:bool,
+    bytestream_site:Option<(u64,u32)>,
+    bytestream_emissions:u64,
     foldaddr:bool,
     foldaddr_emissions:u64,
     vbatch_emissions:u64,
@@ -595,6 +600,7 @@ impl Unit {
             movflags:movflags_enabled(),movflags_emissions:0,
             funedge:funedge_enabled(),funedge_analysis:fun_edges::Analysis::default(),pending_funedge:None,funedge_emissions:0,
             funstack:funstack_enabled(),funstack_sites:HashMap::new(),funstack_emissions:0,
+            bytestream:bytestream_enabled(),bytestream_site:None,bytestream_emissions:0,
             foldaddr:foldaddr_enabled(),
             foldaddr_emissions:0,
             vbatch_emissions:0,
@@ -2437,6 +2443,11 @@ fn funstack_enabled()->bool {
     *F.get_or_init(||!jit_off("funstack")&&std::env::var("ATTESOR_JIT_ON").unwrap_or_default().split(',').any(|g|g=="funstack"))
 }
 
+fn bytestream_enabled()->bool {
+    static F:std::sync::OnceLock<bool>=std::sync::OnceLock::new();
+    *F.get_or_init(||!jit_off("bytestream")&&std::env::var("ATTESOR_JIT_ON").unwrap_or_default().split(',').any(|g|g=="bytestream"))
+}
+
 fn foldaddr_enabled()->bool {
     static F:std::sync::OnceLock<bool>=std::sync::OnceLock::new();
     *F.get_or_init(||!jit_off("foldaddr")&&std::env::var("ATTESOR_JIT_ON").unwrap_or_default().split(',').any(|g|g=="foldaddr"))
@@ -2749,7 +2760,7 @@ pub(super) fn prepare_bgtrans() {
         loopra_enabled(), regioncache_enabled(), has_avx(), has_fma(),
         has_aes(), has_pclmul(), has_sha(), has_f16c(), loopra2_enabled(),
         has_avx512(), avx512_enabled(), avx512_nan_enabled(), super::fastenc_enabled(),
-        super::loops::census_enabled(), super::cost::probes(), vloop_enabled(), vloop2_enabled(), vchain_enabled(), vscalar_enabled(), funra_enabled(), funflags_enabled(), selectra_enabled(), regflags_enabled(), cfgflags_enabled(), xspill_enabled(), fmovra_enabled(), vpair_enabled(), vtrace_enabled(), vbatch_enabled(), recleaflazy_enabled(), recleaf_enabled(), movflags_enabled(), funedge_enabled(), funstack_enabled(), foldaddr_enabled(), fpflags_enabled(), fpguard_enabled(), fpstable_enabled(), addrhoist_enabled(), leafra_enabled(), csetfast_enabled(), csetpair_enabled(), leafinline_enabled(), leafflags_enabled(), super::bliccache::enabled());
+        super::loops::census_enabled(), super::cost::probes(), vloop_enabled(), vloop2_enabled(), vchain_enabled(), vscalar_enabled(), funra_enabled(), funflags_enabled(), selectra_enabled(), regflags_enabled(), cfgflags_enabled(), xspill_enabled(), fmovra_enabled(), vpair_enabled(), vtrace_enabled(), vbatch_enabled(), bytestream_enabled(), recleaflazy_enabled(), recleaf_enabled(), movflags_enabled(), funedge_enabled(), funstack_enabled(), foldaddr_enabled(), fpflags_enabled(), fpguard_enabled(), fpstable_enabled(), addrhoist_enabled(), leafra_enabled(), csetfast_enabled(), csetpair_enabled(), leafinline_enabled(), leafflags_enabled(), super::bliccache::enabled());
 }
 
 /// Translate one basic block starting at `pc` into `u`. The caller must have
@@ -3025,6 +3036,9 @@ fn emit_block_inner(u: &mut Unit, pc: u64, read: &dyn Fn(u64) -> Option<u32>, mu
             if !u.commpage_checks && !jit_off("tbimask") {
                 u.a.mov(r11, 0x00ff_ffff_ffff_ffffu64).unwrap();
                 u.tbi_mask_live = true;
+            }
+            if let Some(p)=byte_stream::plan(u,pc,region,read) {
+                u.region_exits.push(region);let end=byte_stream::emit(u,pc,p,region);u.labels.insert(pc,label);return end;
             }
             let plan=if u.fpflags&&multi.is_none()&&region.vreg[0]!=0xff&&u.vchain&&has_avx()
                 &&!u.commpage_checks&&disabled_classes()==0 {
@@ -4908,6 +4922,8 @@ impl<'a> E<'a> {
     }
 
     fn ldst(&mut self, insn: u32) -> bool {
+        if self.u.bytestream_site==Some((self.pc,insn)) {return byte_stream::load(self,insn);}
+
         if let Some((p,shadow))=self.u.addr_shadow.filter(|(p,_)|p.at==self.pc&&p.word==insn) {
             if let Some((index,dst))=self.region_slot(p.rm).zip(self.u.region.and_then(|r|r.vslot(insn&31))) {
                 let mem=qword_ptr(LOOPREGS[shadow]+LOOPREGS[index]*(1i32<<p.scale));let d=VREGS[dst];let double=insn>>30==3;
@@ -9615,6 +9631,64 @@ mod loopra_tests {
 
     fn cpu() -> Box<Cpu> {
         let mut c = Cpu::new(); crate::jit::setup_cpu(&mut c); c.set_pc(PC); c
+    }
+
+
+    // Exact four loop bodies from our unchanged kernels-arm64 (-O2); not an
+    // emitter pattern match or replacement of the guest classification.
+    const BYTE_STREAM_WORDS:[[u32;17];4]=[[0x3840156c,0x93407d2d,0xcb0d010e,0x8b0d010d,0x7200019f,0x9a8d01cd,0x5200052e,0x7219019f,0x9a8811ad,0x1a8e112e,0x11000529,0x12000929,0x7100fd9f,0x1a8981c9,0x9a8881a8,0xf100054a,0x54fffe01],
+[0x38401589,0x1100056d,0x120009ad,0x5200056e,0x93407d6f,0xcb0f0110,0x8b0f010f,0x7200013f,0x9a8f020f,0x7219013f,0x9a8f010f,0x1a8b01cb,0x7101013f,0x1a8b31ab,0x9a8f3108,0xf100054a,0x54fffe01],
+[0x3840154c,0x1100056d,0x120009ad,0x5200056e,0x93407d6f,0xcb0f0110,0x8b0f010f,0x7200019f,0x9a8f020f,0x7219019f,0x9a8f010f,0x1a8b01cb,0x7101019f,0x1a8b31ab,0x9a8f3108,0xf1000529,0x54fffe01],
+[0x3840166a,0x1100056c,0x1200098c,0x5200056d,0x93407d6e,0xcb0e010f,0x8b0e010e,0x7200015f,0x9a8e01ee,0x7219015f,0x9a8e010e,0x1a8b01ab,0x7101015f,0x1a8b318b,0x9a8e3108,0xf1000529,0x54fffe01]];
+    #[test]
+    fn bytestream_scope_rejects_alias_write_memory_cut_reserved() {
+        let mut u=Unit::new(StubKind::Plain,false);u.bytestream=true;
+        let mut r=LoopRa{pc:PC,fast:u.a.create_label(),exit:u.a.create_label(),reg:[0xff;NLOOPREGS],dirty:0,vreg:[0xff;NVREGS],xreg:[0xff;NVREGS],flags:0xff};r.reg[..2].copy_from_slice(&[11,10]);
+        let good=BYTE_STREAM_WORDS[0];let check=|u:&Unit,w:&[u32]|byte_stream::plan(u,PC,r,&|p|p.checked_sub(PC).and_then(|o|w.get((o/4)as usize)).copied());
+        assert!(check(&u,&good).is_some());
+        for(i,bad)in [(0,0x3840156b),(0,0x3840156a),(1,0x9100056b),(1,0x9100054a),(1,0xf9400020),(1,0x3840156c),(1,0x1ee02000),(1,0xffffffff),(1,0x0bc00000),(1,0x1a800800),(15,0xf100094a),(15,0x7100054a),(16,0x54fffe00)] {
+            let mut w=good;w[i]=bad;assert!(check(&u,&w).is_none(),"{i}: {bad:x}");
+        }
+        let label=u.a.create_label();u.labels.insert(PC+4,label);assert!(check(&u,&good).is_none());u.labels.clear();
+        u.bytestream=false;assert!(check(&u,&good).is_none());
+    }
+    #[test]
+    fn bytestream_actual_range_guard_no_synthetic_dereference() {
+        let mut u=Unit::new(StubKind::Plain,false);
+        let mut r=LoopRa{pc:PC,fast:u.a.create_label(),exit:u.a.create_label(),reg:[0xff;NLOOPREGS],dirty:0,vreg:[0xff;NVREGS],xreg:[0xff;NVREGS],flags:0xff};r.reg[..2].copy_from_slice(&[11,10]);
+        let mut entry=u.a.create_label();u.a.set_label(&mut entry).unwrap();u.labels.insert(PC,entry);r.reload_mask(&mut u.a,u32::MAX);
+        let mut slow=u.a.create_label();byte_stream::guards(&mut u,r,11,10,slow);
+        u.a.mov(qword_ptr(r15+off::AOT_LOOP_REGIONS),1i32).unwrap();u.a.jmp(u.exit_label).unwrap();
+        u.a.set_label(&mut slow).unwrap();u.a.mov(qword_ptr(r15+off::AOT_LOOP_REGIONS),2i32).unwrap();u.a.jmp(u.exit_label).unwrap();
+        let(host,_)=assemble(u,0);let mask=0x00ff_ffff_ffff_ffffu64;
+        for n in [0,1,2,8,mask,mask+1,mask+2,u64::MAX] {for ptr in [0,1,mask-7,mask-1,mask,mask+1,0xab00000000001000,u64::MAX] {
+            let mut c=cpu();c.x[10]=n;c.x[11]=ptr;let x=c.x;
+            unsafe {crate::jit::attesor_jit_enter(&mut *c,host);}
+            let expected=n>0&&(ptr as u128+n as u128-1)<=mask as u128;
+            assert_eq!(c.aot_loop_regions,if expected {1}else {2},"ptr={ptr:x} count={n}");assert_eq!(c.x,x);
+        }}
+    }
+    #[test]
+    fn bytestream_original_four_loops_exact_fast_slow_raw_state() {
+        for (which,body) in BYTE_STREAM_WORDS.into_iter().enumerate() {for kind in [StubKind::Plain,StubKind::Patchable] {for internal_exit in [false,true] {
+            let mut words=body.to_vec();words.push(0xd4001001);let exit=PC+17*4;
+            let read=|p:u64|p.checked_sub(PC).and_then(|o|words.get((o/4)as usize)).copied();
+            let mut u=Unit::new(kind,false);u.bytestream=true;u.loopra=true;u.loopra2=true;u.regioncache=false;u.selectra=true;u.leafinline=false;
+            for p in [PC,exit].into_iter().filter(|&p|p==PC||internal_exit) {let l=u.a.create_label();u.labels.insert(p,l);}
+            emit_block(&mut u,PC,&read);if internal_exit {emit_block(&mut u,exit,&read);}assert_eq!(u.bytestream_emissions,1,"loop {which}");assert_eq!(u.insns_fallback,0);
+            let(host,_)=assemble(u,0);let ptr=bits(body[0],9,5)as usize;let count=(body[15]&31)as usize;
+            for tag in [0,0xab00000000000000] {for nzcv in 0..16 {
+                let bytes=[0x55,0,1,63,64,65,127,128,129,254,255,42,7,0x80,0x81,0x7f];let before=bytes;
+                let n=[1,2,8][nzcv as usize%3];let mut c=cpu();
+                for i in 0..32 {c.x[i]=(0xfeed000080000000u64+i as u64*0x10001).wrapping_add(nzcv as u64);c.v[i]=[0x7ff0000000000042+i as u64,0xdeadbeef00000000+i as u64];}
+                c.x[ptr]=bytes.as_ptr()as u64+1|tag;c.x[count]=n;c.fpcr=((nzcv%4)<<22)as u64|if nzcv&4!=0 {1<<24}else {0}|if nzcv&8!=0 {1<<25}else {0};c.fpsr=0x0800009f;c.set_nzcv(nzcv);
+                let mut r=cpu();r.x=c.x;r.v=c.v;r.fpcr=c.fpcr;r.fpsr=c.fpsr;r.set_nzcv(nzcv);
+                for _ in 0..200 {if !internal_exit&&r.pc()==exit {break;}match {let word=read(r.pc()).unwrap();interp::exec(&mut r,word)} {Ok(())=>{},Err(interp::Exit::Svc(0x80))=>break,Err(e)=>panic!("{e:?}")}}
+                unsafe {crate::jit::attesor_jit_enter(&mut *c,host);}
+                assert_eq!(c.x,r.x,"loop={which} tag={tag:x} nzcv={nzcv}");assert_eq!(c.v,r.v);assert_eq!(c.nzcv(),r.nzcv());assert_eq!(c.fpcr,r.fpcr);assert_eq!(c.fpsr,r.fpsr);assert_eq!(c.pc(),r.pc());assert_eq!(c.exit_reason,if internal_exit {EXIT_SVC}else {EXIT_CONTINUE});if internal_exit {assert_eq!(c.exit_data,0x80);}else if kind==StubKind::Plain {assert_eq!(c.exit_data,0);}else {assert_ne!(c.exit_data,0);}assert_eq!(bytes,before);
+                assert_eq!(c.aot_loop_regions,if tag==0 {1}else {2});
+            }}
+        }}}
     }
 
     #[test]
